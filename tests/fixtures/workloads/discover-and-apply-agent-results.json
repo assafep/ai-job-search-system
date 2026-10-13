@@ -1,0 +1,12 @@
+{
+  "job-discovery": {
+    "candidates": [
+      {
+        "company": "Example Systems",
+        "role": "Senior Backend Engineer",
+        "posting_url": "https://example.test/jobs/backend",
+        "relevance_evidence": ["senior level", "backend"]
+      }
+    ]
+  }
+}

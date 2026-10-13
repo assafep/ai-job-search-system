@@ -1,0 +1,12 @@
+name: reconcile
+trigger:
+  type: schedule
+  cadence: daily
+steps:
+  - recheck_missed_events
+  - recover_incomplete_workloads
+  - reconcile_external_statuses
+  - renew_subscriptions
+  - report_errors_and_pending_approvals
+side_effects: through_data_layer_and_approval_policy
+

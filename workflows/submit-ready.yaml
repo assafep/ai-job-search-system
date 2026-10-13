@@ -1,0 +1,12 @@
+name: submit-ready
+trigger:
+  type: application_submission_schedule
+steps:
+  - read_ready_application
+  - validate_stored_package
+  - ready_queue_authorizes_submission
+  - submit_through_browser_adapter
+  - persist_observed_submission_receipt
+  - move_to_manual_apply_required_on_any_failed_auto_apply_with_explanation
+  - move_to_applied_only_after_confirmed_receipt
+side_effects: through_data_layer_and_submission_adapter

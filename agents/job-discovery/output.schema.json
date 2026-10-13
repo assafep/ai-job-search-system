@@ -1,0 +1,1 @@
+{"type":"object","required":["candidates"],"properties":{"candidates":{"type":"array","items":{"type":"object","required":["company","role","posting_url"],"properties":{"company":{"type":"string"},"role":{"type":"string"},"posting_url":{"type":"string"},"relevance_evidence":{"type":"array","items":{"type":"string"}}}}}}}

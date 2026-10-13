@@ -1,0 +1,10 @@
+{
+  "posting": {
+    "company": "Example Systems",
+    "role": "Senior Backend Engineer",
+    "description": "Build reliable distributed backend services."
+  },
+  "candidate_profile": {"name": "Candidate", "years_backend": 10},
+  "calendar_link": "https://calendly.com/example/intro"
+}
+

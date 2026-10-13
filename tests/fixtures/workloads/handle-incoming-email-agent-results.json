@@ -1,0 +1,7 @@
+{
+  "correspondence": {
+    "intent": "schedule_interview",
+    "proposed_action": "draft_response",
+    "draft": "Please use my scheduling link to choose a convenient time."
+  }
+}

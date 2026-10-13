@@ -1,0 +1,12 @@
+config/runtime.json
+config/applicant_profile.json
+config/workloads.json
+config/approvals.json
+config/*.tmp
+config/*.lock
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.env
+node_modules/
+config/browser-sessions/

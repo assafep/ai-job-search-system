@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/job-search/applicant-profile.schema.json",
+  "title": "Applicant Profile",
+  "type": "object",
+  "required": ["schema_version", "personal", "professional", "employment"],
+  "properties": {
+    "schema_version": {"type": "integer", "minimum": 1},
+    "updated_on": {"type": "string"},
+    "source_resume": {"type": "object"},
+    "personal": {"type": "object"},
+    "professional": {"type": "object"},
+    "skills": {"type": "object"},
+    "employment": {"type": "array"},
+    "education": {"type": "array"},
+    "certifications": {"type": "array"},
+    "languages_listed_in_resume": {"type": "array"},
+    "application_defaults": {"type": "object"},
+    "job_search": {
+      "type": "object",
+      "properties": {
+        "countries": {"type": "array", "items": {"type": "string", "pattern": "^[A-Z]{2}$"}},
+        "search_terms": {"type": "array", "items": {"type": "string"}},
+        "search_terms_source": {"type": "string"}
+      }
+    },
+    "unprovided_answers": {"type": "object"},
+    "sources": {"type": "object"},
+    "usage_notes": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,6 @@
+{
+  "trigger": {"type": "manual_test", "requested_at": "2026-10-12T00:00:00Z"},
+  "job_sources": ["fixture"],
+  "approval_mode": "dry_run"
+}
+

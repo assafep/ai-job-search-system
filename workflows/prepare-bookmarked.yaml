@@ -1,0 +1,10 @@
+name: prepare-bookmarked
+trigger:
+  type: queued_application
+steps:
+  - read_bookmarked_application
+  - personalize_application
+  - generate_application_pdf
+  - automatically_move_saved_package_to_ready_for_auto_apply
+  - move_preparation_failures_to_manual_apply_required_with_explanation
+side_effects: through_data_layer_and_runtime

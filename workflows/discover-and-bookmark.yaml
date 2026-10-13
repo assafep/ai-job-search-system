@@ -1,0 +1,10 @@
+name: discover-and-bookmark
+trigger:
+  type: schedule
+  cadence: daily
+steps:
+  - discover_jobs
+  - normalize_and_deduplicate
+  - score_against_resume
+  - bookmark_candidates
+side_effects: through_data_layer

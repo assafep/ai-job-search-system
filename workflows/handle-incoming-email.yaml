@@ -1,0 +1,10 @@
+name: handle-incoming-email
+trigger:
+  type: incoming_email
+steps:
+  - match_thread_to_application
+  - classify_recruitment_intent
+  - update_state_or_prepare_response
+  - request_or_apply_approval
+side_effects: through_data_layer_and_approval_policy
+

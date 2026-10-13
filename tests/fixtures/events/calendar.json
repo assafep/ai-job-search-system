@@ -1,0 +1,8 @@
+{
+  "event_type": "calendar_event",
+  "event_id": "calendar-fixture-1",
+  "payload": {
+    "application_id": "app-fixture-1",
+    "meeting_id": "meeting-fixture-1"
+  }
+}

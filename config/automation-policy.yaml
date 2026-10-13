@@ -1,0 +1,6 @@
+# Side-effect and approval policy.
+submit_job_application: allow
+send_recruitment_email: ask
+update_persistent_state: allow
+create_interview_research: allow
+promote_prepared_application: allow

@@ -1,0 +1,17 @@
+.git
+.idea
+.pytest_cache
+__pycache__
+*.pyc
+*.pyo
+*.log
+config/runtime.json
+config/applicant_profile.json
+config/workloads.json
+config/approvals.json
+config/*.tmp
+.env
+venv
+.venv
+node_modules
+config/browser-sessions

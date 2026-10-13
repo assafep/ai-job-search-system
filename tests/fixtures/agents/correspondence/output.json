@@ -1,0 +1,6 @@
+{
+  "intent": "schedule_interview",
+  "proposed_action": "draft_response",
+  "draft": "Thanks for reaching out. Please use my scheduling link to choose a convenient time."
+}
+

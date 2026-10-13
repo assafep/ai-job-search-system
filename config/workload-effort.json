@@ -1,0 +1,12 @@
+{
+  "default": "medium",
+  "workflows": {
+    "discover-and-bookmark": "medium",
+    "discover-and-apply": "medium",
+    "prepare-bookmarked": "medium",
+    "submit-ready": "medium",
+    "prepare-interview": "medium",
+    "handle-incoming-email": "medium",
+    "reconcile": "medium"
+  }
+}

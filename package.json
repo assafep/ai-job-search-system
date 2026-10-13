@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "description": "Local browser adapter for the job-search workload",
+  "dependencies": {
+    "playwright": "1.56.1"
+  }
+}

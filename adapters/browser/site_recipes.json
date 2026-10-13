@@ -1,0 +1,25 @@
+{
+  "jobify": {
+    "playbook": "playbooks/jobify.md",
+    "actions": {
+      "inspect_application_handoff": {"op": "inspect", "selector": "#servingFTModal"},
+      "open_application_handoff": {"op": "click", "selector": "button[data-bs-target=\"#servingFTModal\"]", "index": 1},
+      "follow_application_handoff": {"op": "click", "selector": "#servingFTModal #main"},
+      "upload_registration_pdf": {"op": "upload", "selector": "label[for=\"cv\"]", "creates_account": true},
+      "accept_registration_terms": {"op": "check", "selector": "#agreeTerms", "checked": true, "creates_account": true},
+      "continue_registration": {"op": "click", "selector": "#continueUploadBtn", "wait_ms": 1000, "creates_account": true}
+    }
+  },
+  "rvc": {
+    "playbook": "playbooks/rvc.md",
+    "actions": {
+      "open_application": {"op": "click", "role": "button", "text": "Apply Now"},
+      "upload_registration_pdf": {"op": "upload", "selector": "button:has-text(\"SELECT FILE\")", "creates_account": true},
+      "confirm_profile": {"op": "click", "role": "button", "text": "Confirm & Next →", "creates_account": true}
+    }
+  },
+  "echojobs": {
+    "playbook": "playbooks/echojobs.md",
+    "actions": {}
+  }
+}
