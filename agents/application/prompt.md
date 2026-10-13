@@ -1,5 +1,6 @@
 Prepare a tailored application package and identify any missing information.
-Base tailoring on the supplied `job_posting.description` and `resume_text`,
+Base tailoring on the supplied `job_posting.description` and `resume_text`;
+the posting is loaded from the locally saved bookmark artifact.
 not on the title, company name, or assumptions about its industry. For batch
 applications, use the matching full description in `job_postings`. Never
 retrieve external information yourself. If a full description is missing,

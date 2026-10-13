@@ -32,7 +32,12 @@ def test_eight_threads_serialize_reads_and_writes_through_shared_client():
         list(pool.map(work, range(8)))
     assert peak[0] == 1
     assert set(methods) == {'GET', 'POST'}
-    assert client.storage_statistics() == {'requests': 80, 'peak_concurrent_requests': 1, 'active_requests': 0}
+    statistics = client.storage_statistics()
+    assert {key: statistics[key] for key in ('requests', 'peak_concurrent_requests', 'active_requests')} == {
+        'requests': 80, 'peak_concurrent_requests': 1, 'active_requests': 0}
+    assert statistics['operations']['GET /applications/{id}']['requests'] == 40
+    assert statistics['operations']['POST /applications/{id}/events']['requests'] == 40
+    assert sum(item['wait_seconds'] for item in statistics['operations'].values()) > 0
 
 
 def test_workload_json_writes_do_not_clobber_each_other(tmp_path):

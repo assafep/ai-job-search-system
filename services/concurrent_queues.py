@@ -69,7 +69,9 @@ def run(persistence, registry, runtime, agent_provider, workers=8):
                         outcome = {'workflow': 'prepare-bookmarked', 'workload_id': envelope['workload_id'],
                                    'status': 'failed', 'error': str(exc)}
                     results.append(dict(outcome, application_id=app_id, application=application))
-                app = persistence.get_application(app_id)
+                # Submission reads the current application itself. Preparation
+                # may have changed its status since the initial queue snapshot.
+                app = persistence.get_application(app_id) if application['status'] == 'Bookmarked' else application
                 if app['status'] == 'Ready for Auto-Apply':
                     envelope = dispatch('application_submission_schedule', {'application_id': app_id},
                                         run_id + ':submit:' + app_id, registry)

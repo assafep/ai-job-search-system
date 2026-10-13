@@ -1,6 +1,7 @@
 """Lifecycle boundary between queued workloads and stateless workflow execution."""
 
 import argparse
+import base64
 import json
 import sys
 from dataclasses import asdict
@@ -85,10 +86,20 @@ class WorkflowRuntime:
         elif hasattr(self.persistence_client, "get_application"):
             context["application"] = self.persistence_client.get_application(application_id)
         if workflow == "prepare-bookmarked":
-            from adapters.job_boards.posting_details import fetch_posting_details
+            from adapters.job_boards.posting_details import parse_saved_posting
             from pypdf import PdfReader
             application = context.get("application") or {}
-            context["job_posting"] = fetch_posting_details(application["posting_url"])
+            artifacts = self.persistence_client.list_artifacts(application_id)
+            posting_artifact = next((item for item in artifacts
+                                     if str(item.get('name', '')).startswith('Job Posting - ')), None)
+            if not posting_artifact:
+                raise ValueError('saved posting content is missing; bookmark must be refreshed before preparation')
+            artifact_id = posting_artifact.get('artifact_id')
+            saved = self.persistence_client.read_artifact(application_id, artifact_id)
+            raw = saved.get('content') if isinstance(saved, dict) else None
+            if raw is None and isinstance(saved, dict) and saved.get('content_base64'):
+                raw = base64.b64decode(saved['content_base64'])
+            context["job_posting"] = parse_saved_posting(raw)
             context["resume_text"] = '\n'.join(
                 page.extract_text() or '' for page in PdfReader(context["source_resume_path"]).pages)
         if hasattr(self.persistence_client, "list_events"):

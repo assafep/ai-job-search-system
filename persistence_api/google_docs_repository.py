@@ -518,7 +518,7 @@ class GoogleDocsRepository(Repository):
         return self._append_event_batch(document, tab, application_id, event_type, data, idempotency_key)
 
     def _append_event_batch(self, document, tab, application_id, event_type, data=None,
-                            idempotency_key=None, additional_requests=()):
+                            idempotency_key=None, additional_requests=(), cache_result=True):
         payload = data or {}
         event_date = str(payload.get("date", date.today()))
         if not is_date_paragraph(event_date):
@@ -566,7 +566,7 @@ class GoogleDocsRepository(Repository):
             "bullets": bullets,
             "source": payload.get("source", "data layer"),
         })
-        if idempotency_key:
+        if idempotency_key and cache_result:
             self._idempotency[idempotency_key] = event
         return event
 
@@ -716,7 +716,7 @@ class GoogleDocsRepository(Repository):
                     "date": str(date.today()),
                     "bullets": ["Moved to {}".format(target)] + (data or {}).get("bullets", []),
                     "source": (data or {}).get("source", "data layer"),
-                }, idempotency_key)
+                }, idempotency_key, cache_result=False)
                 result = self.get_application(application_id)
                 self._idempotency[idempotency_key] = result
                 return result
@@ -737,7 +737,7 @@ class GoogleDocsRepository(Repository):
             "date": str(date.today()),
             "bullets": ["Moved from {} to {}".format(current_state, target)] + (data or {}).get("bullets", []),
             "source": (data or {}).get("source", "data layer"),
-        }, idempotency_key, additional_requests=[move])
+        }, idempotency_key, additional_requests=[move], cache_result=False)
         result = self.get_application(application_id)
         if idempotency_key:
             self._idempotency[idempotency_key] = result

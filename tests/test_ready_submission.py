@@ -4,6 +4,13 @@ from persistence_api.repository import MemoryRepository
 from services.document_generator import generate_application_pdf
 from dataclasses import asdict
 import pytest
+from services.application_package import cover_matches_application
+
+
+def test_pdf_wrapping_does_not_reject_correct_company_and_role():
+    application = {'company': 'Example Systems', 'role': 'Senior Backend Engineer'}
+    assert cover_matches_application('Dear Example\nSystems, applying for Senior Backend\nEngineer.', application)
+    assert not cover_matches_application('Dear Example Systems, applying for Junior Frontend Engineer.', application)
 
 
 class Client:

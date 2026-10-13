@@ -38,6 +38,18 @@ prevents two copies of this runner from sharing the operational JSON files.
 Do not run a separate daemon/worker process against the same registries during
 this run. The PDF report includes observed worker/storage concurrency counts.
 
+Storage performance: journal reads share a five-second snapshot. Every journal
+mutation starts from fresh state and invalidates the snapshot after its write.
+State changes and their explanatory events use one atomic Google Docs batch.
+Drive folder/file identities are cached for up to 60 seconds; file contents and
+missing receipts are never cached. Report checkpoints upload after ten completed
+postings or 60 seconds at a completion boundary, plus the initial and final
+snapshots. Application state and submission receipts are still persisted before
+dependent actions. The report includes request times, combined worker wait times,
+and checkpoint counts. Tune the cache, checkpoint, and HTTP timeout values in
+`.env.example` through the process environment; restart the API after code or
+backend environment changes. A queue's reported finish precedes final PDF upload.
+
 Successful saved packages move automatically to `Ready for Auto-Apply`, without
 a human-review gate. To migrate prior review holds and reconsume every item in
 the current Bookmarked queue, run

@@ -12,8 +12,6 @@ def test_google_transition_passes_idempotency_key_to_status_event(monkeypatch):
     repository.client.get_document = lambda: {"revisionId": "rev-1", "tabs": []}
     repository.client.batch_update = lambda requests, revision_id=None: calls.append((requests, revision_id))
     repository.get_application = lambda application_id: {"application_id": application_id, "status": "Interviewing"}
-    repository.append_event = lambda application_id, event_type, data=None, idempotency_key=None: calls.append(
-        (application_id, event_type, idempotency_key))
 
     # State-tab lookup is only used for the move request.
     monkeypatch.setattr(
@@ -23,7 +21,13 @@ def test_google_transition_passes_idempotency_key_to_status_event(monkeypatch):
     result = repository.transition("app-1", "Interviewing", idempotency_key="transition-1")
 
     assert result["status"] == "Interviewing"
-    assert ("app-1", "status_changed", "transition-1") in calls
+    assert len(calls) == 1
+    requests, revision = calls[0]
+    assert revision == 'rev-1'
+    assert requests[0]['updateDocumentTabProperties']['tabProperties']['parentTabId'] == 'state-interviewing'
+    event_text = next(item['insertText']['text'] for item in requests if 'insertText' in item)
+    assert 'Moved from Applied to Interviewing' in event_text
+    assert 'Operation idempotency key: transition-1' in event_text
     assert repository._idempotency["transition-1"] == result
 
 
@@ -37,9 +41,10 @@ def test_google_transition_appends_event_when_move_already_committed(monkeypatch
     repository.client.get_document = lambda: {"revisionId": "rev-1", "tabs": []}
     result = {"application_id": "app-1", "status": "Interviewing"}
     repository.get_application = lambda application_id: result
-    repository.append_event = lambda application_id, event_type, data=None, idempotency_key=None: calls.append(
-        (application_id, event_type, idempotency_key))
+    repository.client.batch_update = lambda requests, revision_id=None: calls.append(requests)
 
     assert repository.transition("app-1", "Interviewing", idempotency_key="transition-retry") == result
-    assert ("app-1", "status_changed", "transition-retry") in calls
+    assert len(calls) == 1
+    assert not any('updateDocumentTabProperties' in item for item in calls[0])
+    assert 'Operation idempotency key: transition-retry' in calls[0][0]['insertText']['text']
     assert repository._idempotency["transition-retry"] == result

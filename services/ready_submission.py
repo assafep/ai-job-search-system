@@ -98,7 +98,6 @@ class ReadySubmission:
                 self._record_confirmed(application_id, receipt)
                 return dict(receipt, replayed=True)
             if receipt['status'] == 'Submission unconfirmed':
-                self._record_manual_required(application_id, receipt)
                 return dict(receipt, blockers=['Previous submission is unconfirmed; verify its outcome before attempting another submission.'], replayed=True)
             # Old runs may have left a pending approval receipt. Ready for
             # Auto-Apply now authorizes submission, so discard that stale
@@ -106,7 +105,6 @@ class ReadySubmission:
             if receipt.get('approval_pending'):
                 receipt = None
             else:
-                self._record_manual_required(application_id, receipt)
                 return dict(receipt, replayed=True)
         if app['status'] != 'Ready for Auto-Apply':
             raise ValueError('submission requires Ready for Auto-Apply; found ' + app['status'])
@@ -151,8 +149,6 @@ class ReadySubmission:
         self.persistence.store_file(self.receipt_path(application_id), json.dumps(receipt).encode(), 'application/json')
         if result['status'] in {'Submitted successfully', 'Already submitted'}:
             self._record_confirmed(application_id, receipt)
-        else:
-            self._record_manual_required(application_id, receipt)
         return receipt
 
     def run_one(self, application_id):
@@ -161,7 +157,7 @@ class ReadySubmission:
         workload_id = envelope['workload_id']
         record = self.registry.get(workload_id)
         if record.status == 'succeeded':
-            return self._receipt(application_id) or {'status': 'Already processed'}
+            return dict(self._receipt(application_id) or {'status': 'Already processed'}, replayed=True)
         self.registry.claim(workload_id)
         try:
             result = self.execute(application_id, workload_id)

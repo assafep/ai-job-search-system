@@ -11,6 +11,7 @@ import re
 from .test_runner import AGENTS, resolve, read_json, validate_output
 from .document_generator import ensure_scheduling_link, generate_application_pdf
 from persistence_api.journal_format import normalize_posting_url
+from adapters.job_boards.posting_details import fetch_posting_details, posting_content_bytes, posting_artifact_name
 
 
 SCHEDULING_INTENTS = {
@@ -151,6 +152,7 @@ def plan_persistence_writes(workflow_name, context, agent_results):
                     "role": candidate["role"],
                     "posting_url": candidate["posting_url"],
                     "data": {"relevance_evidence": candidate.get("relevance_evidence", [])},
+                    "capture_posting_content": workflow_name == "discover-and-bookmark",
                     "idempotency_key": _idempotency_key(
                         {"workload_id": candidate["posting_url"]}, "discovered-application"),
                 })
@@ -308,6 +310,25 @@ def execute_persistence_writes(operations, persistence_client, dry_run=True):
                 posting_url = getattr(result, "posting_url", None)
             if application_id and posting_url:
                 application_ids_by_url[normalize_posting_url(posting_url)] = application_id
+            if operation.get('capture_posting_content'):
+                details = fetch_posting_details(posting_url)
+                artifact = persistence_client.store_artifact(
+                    application_id,
+                    posting_artifact_name(operation['company'], operation['role']),
+                    posting_content_bytes(details),
+                    'application/json',
+                    (operation.get('idempotency_key') or '') + '-posting-content',
+                )
+                drive_file_id = artifact.get('drive_file_id') if isinstance(artifact, dict) else getattr(artifact, 'drive_file_id', None)
+                artifact_id = artifact.get('artifact_id') if isinstance(artifact, dict) else getattr(artifact, 'artifact_id', None)
+                reference = ('https://drive.google.com/file/d/{}/view'.format(drive_file_id)
+                             if drive_file_id and not str(drive_file_id).startswith('memory://')
+                             else 'artifact://{}'.format(artifact_id))
+                event = persistence_client.append_event(
+                    application_id, 'posting_content_saved',
+                    {'bullets': ['Posting content: {}'.format(reference)], 'source': 'job discovery agent'},
+                    (operation.get('idempotency_key') or '') + '-posting-content-event')
+                results.extend([artifact, event])
             continue
         if operation["operation"] == "generate_and_store_artifact":
             resume_pdf = None
