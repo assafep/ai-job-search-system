@@ -25,25 +25,28 @@ the in-memory test backend.
 ## Journal model
 
 The canonical application states are `Bookmarked`, `Ready for Auto-Apply`,
-`Manual Apply Required`, `Applied`, `Interviewing`, `Rejected`, and `Offer`.
+`Manual Apply Required`, `Dead Letters Queue`, `Applied`, `Interviewing`, `Rejected`, and `Offer`.
 Every posting in `Ready for Auto-Apply` is authorized for automatic submission;
-do not create or wait for a human approval request for that queue. Every failed
-auto-apply attempt moves the posting to the manual queue, with an explanatory
+do not create or wait for a human approval request for that queue. Ordinary failed
+auto-apply attempts move the posting to the manual queue, with an explanatory
 transition event attributed to the auto-apply agent. Unconfirmed submission
 requires manual reconciliation before any retry. Successful package storage advances
 Bookmarked postings automatically; no human-review gate is allowed before
 Ready for Auto-Apply. Automatic submission must not consume the manual queue.
-Failed Bookmarked-package preparation also transitions to Manual Apply Required,
+System errors and failed Bookmarked-package preparation transition to Dead Letters Queue,
 with an explanatory event and a deterministic idempotency key. Never recreate
 deleted postings or regress Applied/Interviewing/terminal states on failure.
 The Interviews Journal has one
 top-level tab for each state and one application child tab under its current
 state. Nested research tabs are children of an application and are not
 applications.
+System errors before submission move to Dead Letters Queue. Ordinary application blockers still require manual application. Unconfirmed
+submission takes precedence over system-error routing and requires manual
+reconciliation. Dead letters are excluded from automatic processing.
 
 Use `POST /journal/migrate-application-states` for an explicitly requested
 legacy lifecycle migration. It renames `Ready To Apply` in place, preserving
-children and history, and adds `Manual Apply Required`. It refuses ambiguous
+children and history, and adds `Manual Apply Required` and `Dead Letters Queue`. It refuses ambiguous
 old/new duplicate state containers; never merge or delete those automatically.
 
 Use the API to:

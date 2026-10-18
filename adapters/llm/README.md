@@ -16,3 +16,10 @@ select it with `AGENT_PROVIDER=adapters.llm.openai_provider:provider`.
 For a single-user local workspace, `codex_provider` runs `codex exec` with the
 agent's output schema and uses the existing Codex CLI login. Configure
 `AGENT_PROVIDER=adapters.llm.codex_provider:provider`; no API key is required.
+
+Scout uses `coding_agent`. Set `CODING_AGENT` to the local command (`grok` or
+`codex`), or persist it as `scout.coding_agent` in `config/runtime.json`.
+Environment settings override runtime settings. The launcher does not choose a model unless `CODING_AGENT_MODEL` or `scout.model` is
+set, and it does not send `XAI_API_KEY`. When the context contains
+`read_posting_url`, an agent that can browse is asked to open that URL.
+`DISCOVERY_PROVIDER=module:attribute` replaces this launcher.

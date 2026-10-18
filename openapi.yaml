@@ -11,10 +11,59 @@ info:
 security:
   - BearerAuth: []
 paths:
+  /journal/tabs/{tab_id}/bookmark:
+    post:
+      operationId: bookmarkStagedTab
+      description: Move one existing position from Replay or Relay to Bookmarked, preserving its tab and history.
+      parameters:
+        - name: tab_id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [idempotency_key]
+              properties:
+                idempotency_key: {type: string}
+      responses:
+        '200':
+          description: Bookmarked application
+          content:
+            application/json:
+              schema: {type: object}
+        '400': {description: Invalid staging tab or missing idempotency key}
+  /journal/queues:
+    get:
+      operationId: journalQueueCounts
+      description: Count current positions in every queue, including zeros. A monitor polls this once a second.
+      responses:
+        '200':
+          description: Queue counts keyed by status
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {type: integer}
+  /journal/tabs:
+    get:
+      operationId: listJournalTabs
+      description: Read journal tab titles, parent IDs, and paragraphs, including operator staging tabs.
+      responses:
+        '200':
+          description: Journal tabs
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {type: object}
   /journal/migrate-application-states:
     post:
       operationId: migrateApplicationStates
-      description: Explicitly rename the legacy ready state tab in place and add Manual Apply Required. Preserves all child tabs and history; safe to repeat. Refuses ambiguous duplicate tabs.
+      description: Explicitly rename the legacy ready state tab in place and add Manual Apply Required and Dead Letters Queue. Preserves all child tabs and history; safe to repeat. Refuses ambiguous duplicate tabs.
       responses:
         '200':
           description: Migrated journal status
@@ -54,7 +103,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [Bookmarked, Ready for Auto-Apply, Manual Apply Required, Applied, Interviewing, Rejected, Offer]
+            enum: [Bookmarked, Ready for Auto-Apply, Manual Apply Required, Dead Letters Queue, Applied, Interviewing, Rejected, Offer, Replay, Duplicate]
       responses:
         '200':
           description: Applications
@@ -346,7 +395,7 @@ components:
         company: {type: string}
         role: {type: string}
         posting_url: {type: string, format: uri}
-        status: {type: string, enum: [Bookmarked, Ready for Auto-Apply, Manual Apply Required, Applied, Interviewing, Rejected, Offer]}
+        status: {type: string, enum: [Bookmarked, Ready for Auto-Apply, Manual Apply Required, Dead Letters Queue, Applied, Interviewing, Rejected, Offer, Replay, Duplicate]}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
         next_action: {type: string, nullable: true}
@@ -431,7 +480,7 @@ components:
       type: object
       required: [target]
       properties:
-        target: {type: string, enum: [Bookmarked, Ready for Auto-Apply, Manual Apply Required, Applied, Interviewing, Rejected, Offer]}
+        target: {type: string, enum: [Bookmarked, Ready for Auto-Apply, Manual Apply Required, Dead Letters Queue, Applied, Interviewing, Rejected, Offer, Replay, Duplicate]}
         data: {type: object}
         idempotency_key: {type: string}
     Event:

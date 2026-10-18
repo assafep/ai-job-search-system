@@ -20,7 +20,7 @@ def submit(context):
     node = shutil.which('node')
     chrome = os.environ.get('BROWSER_EXECUTABLE') or shutil.which('google-chrome') or shutil.which('chromium')
     if not node or not chrome:
-        return {'status': 'Blocked', 'blockers': ['Local Node.js and Chrome are required by the browser submission adapter.']}
+        return {'status': 'Blocked', 'failure_kind': 'system_error', 'blockers': ['Local Node.js and Chrome are required by the browser submission adapter.']}
     with tempfile.TemporaryDirectory(prefix='job-application-') as directory:
         name = os.path.basename(context['package']['name'])
         package_path = os.path.join(directory, name)

@@ -19,6 +19,7 @@ def adapter_from_environment():
 def unavailable(context):
     return {
         'status': 'Blocked',
+        'failure_kind': 'system_error',
         'confirmation_text': None,
         'application_reference': None,
         'blockers': ['No browser submission adapter is configured. Set JOB_SUBMISSION_ADAPTER=module:callable to a supported browser integration.'],

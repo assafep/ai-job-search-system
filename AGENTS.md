@@ -24,15 +24,29 @@ run the onboarding command described in `README.md`.
 
 ## Application and reporting policy
 
+- For scout replay, run `python3 -m services.replay_scout` (with the configured
+  runtime environment). Do not reconstruct inline scripts. It processes all
+  positions under Replay, has the scout model open each exact URL, and runs
+  scouting/bookmarking only. It prints phase timings and reuses identical saved
+  content. Use `--application-id` only when the user selects one position.
+- When the user requests a particular workload or queue without specifying a
+  count, process all eligible positions in that requested scope. "Only
+  auto-apply" limits the workflow, not the number of positions. Do not interpret
+  a command's default limit as a user-requested count. If the user names a
+  specific position, keep execution scoped to that position; honor any explicit
+  count or instruction to stop or not run.
 - Do not require human review before moving a successfully prepared, saved
   application package from `Bookmarked` to `Ready for Auto-Apply`.
 - Every failed auto-apply attempt must move to `Manual Apply Required`; its
   transition event must include the auto-apply agent's failure explanation.
   Ready for Auto-Apply items must be submitted automatically. Unconfirmed
   submissions must be reconciled manually before anyone retries them.
-- Failed `prepare-bookmarked` workloads must also move the posting to
-  `Manual Apply Required`, with the preparation failure reason in the transition
-  event. This includes retrieval, validation, generation, and storage failures.
+- System errors (including configuration, unexpected exceptions, invalid agent
+  output, and preparation retrieval/validation/generation/storage failures) move
+  the posting to `Dead Letters Queue`, with the reason in the transition event.
+  This overrides manual routing for system errors before submission. Unconfirmed
+  submissions still require manual reconciliation. Dead letters are never
+  consumed automatically; an operator must restore the appropriate source state.
 - User-facing activity reports must be readable PDFs, not JSON. Machine-readable
   checkpoints may remain JSON under workload-owned internal state.
 - Concurrent queue runs must share a synchronized persistence client and locked

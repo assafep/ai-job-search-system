@@ -1,11 +1,14 @@
 ALLOWED_TRANSITIONS = {
-    "Bookmarked": {"Ready for Auto-Apply", "Manual Apply Required"},
-    "Ready for Auto-Apply": {"Applied", "Manual Apply Required"},
-    "Manual Apply Required": {"Applied", "Ready for Auto-Apply"},
-    "Applied": {"Interviewing", "Rejected"},
-    "Interviewing": {"Interviewing", "Offer", "Rejected"},
+    "Replay": {"Bookmarked", "Manual Apply Required", "Rejected", "Duplicate", "Dead Letters Queue"},
+    "Bookmarked": {"Ready for Auto-Apply", "Manual Apply Required", "Duplicate", "Dead Letters Queue"},
+    "Ready for Auto-Apply": {"Applied", "Manual Apply Required", "Duplicate", "Dead Letters Queue"},
+    "Manual Apply Required": {"Applied", "Ready for Auto-Apply", "Duplicate", "Dead Letters Queue"},
+    "Applied": {"Interviewing", "Rejected", "Offer", "Dead Letters Queue"},
+    "Interviewing": {"Interviewing", "Offer", "Rejected", "Dead Letters Queue"},
+    "Dead Letters Queue": {"Replay", "Bookmarked", "Ready for Auto-Apply", "Manual Apply Required", "Applied", "Interviewing", "Duplicate"},
     "Rejected": set(),
     "Offer": set(),
+    "Duplicate": set(),
 }
 
 

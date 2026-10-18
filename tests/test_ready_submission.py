@@ -102,13 +102,14 @@ def test_unsupported_site_failure_records_reason_and_moves_to_manual():
     assert any('Unsupported recruiting site' in str(e.data.get('bullets', [])) for e in events)
 
 
-def test_preflight_failure_is_explained_and_routed_to_manual():
+def test_preflight_failure_is_explained_and_routed_to_dead_letters():
     client, runner = make_runner(lambda ctx: pytest.fail('invalid package must not reach browser'))
     client.list_artifacts = lambda id: []
     result = runner.run_one(client.id)
     assert result['status'] == 'Blocked'
     assert 'combined cover-letter/resume PDF' in result['blockers'][0]
-    assert client.get_application(client.id)['status'] == 'Manual Apply Required'
+    assert result['failure_kind'] == 'system_error'
+    assert client.get_application(client.id)['status'] == 'Dead Letters Queue'
 
 
 def test_human_verification_rejection_prevents_automatic_resubmission():

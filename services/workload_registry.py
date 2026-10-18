@@ -5,6 +5,7 @@ mutations continue to go through the persistence API and the Interviews Journal.
 """
 
 from dataclasses import dataclass, field
+from copy import deepcopy
 from datetime import datetime, timezone
 import json
 import os
@@ -29,6 +30,7 @@ class WorkloadRecord:
     error: str = None
     created_at: str = field(default_factory=timestamp)
     updated_at: str = field(default_factory=timestamp)
+    result: dict = None
 
 
 class WorkloadRegistry:
@@ -67,6 +69,7 @@ class WorkloadRegistry:
                 "error": record.error,
                 "created_at": record.created_at,
                 "updated_at": record.updated_at,
+                "result": record.result,
             }
             for workload_id, record in self.records.items()
         }
@@ -180,6 +183,17 @@ class WorkloadRegistry:
     def get(self, workload_id):
         """Return a workload record without changing its lifecycle state."""
         return self._get(workload_id)
+
+    @synchronized
+    def snapshot(self):
+        return deepcopy(list(self.records.values()))
+
+    @synchronized
+    def checkpoint_result(self, workload_id, result):
+        record = self._get(workload_id)
+        record.result = deepcopy(result)
+        record.updated_at = timestamp()
+        self._persist()
 
     def _get(self, workload_id):
         if workload_id not in self.records:

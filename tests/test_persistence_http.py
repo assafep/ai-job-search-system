@@ -207,13 +207,18 @@ def test_readiness_distinguishes_liveness_from_backend_availability(monkeypatch)
     assert responses[-1] == (200, {"ok": True})
 
 
-def test_application_status_filter_rejects_unknown_state(monkeypatch):
+def test_application_status_filter_accepts_replay_and_rejects_unknown_state(monkeypatch):
     monkeypatch.setattr(main, "repository", MemoryRepository())
     handler = object.__new__(main.Handler)
-    handler.path = "/applications?status=Unknown"
+    handler.path = "/applications?status=Replay"
     responses = []
     handler.send_json = lambda status, value: responses.append((status, value))
 
+    handler.do_GET()
+
+    assert responses[-1] == (200, [])
+
+    handler.path = "/applications?status=Unknown"
     handler.do_GET()
 
     assert responses[-1][0] == 400
@@ -255,3 +260,46 @@ def test_journal_status_and_explicit_repair_endpoints(monkeypatch):
     assert responses[-1][0] == 200
     assert responses[-1][1]["missing_states"] == []
     assert responses[-1][1]["duplicate_states"] == []
+
+
+def test_replay_tab_bookmark_moves_position_once(monkeypatch):
+    repository = MemoryRepository()
+    monkeypatch.setattr(main, "repository", repository)
+    application = repository.create_application("Example", "Backend", "https://example.test/job")
+    application.status = "Replay"
+    handler = object.__new__(main.Handler)
+    responses = []
+    handler.send_json = lambda status, value: responses.append((status, value))
+    handler.path = "/journal/tabs"
+    handler.do_GET()
+    tabs = responses[-1][1]
+    assert responses[-1][0] == 200
+    assert any(tab["title"] == "Replay" and tab["parent_tab_id"] is None for tab in tabs)
+    child = next(tab for tab in tabs if tab["tab_id"] == application.application_id)
+    assert child["title"] == "Example / Backend"
+    assert child["parent_tab_id"] == "state:Replay"
+    assert any(paragraph["text"].startswith("Posting URL: https://example.test/job") for paragraph in child["paragraphs"])
+
+    payload = json.dumps({"idempotency_key": "bookmark-1"}).encode("utf-8")
+    handler.path = "/journal/tabs/{}/bookmark".format(application.application_id)
+    handler.headers = {"Content-Length": str(len(payload))}
+    handler.rfile = io.BytesIO(payload)
+    handler.do_POST()
+    assert responses[-1][0] == 200
+    assert repository.get_application(application.application_id).status == "Bookmarked"
+    assert [event.event_type for event in repository.list_events(application.application_id)
+            if event.event_type == "replay_bookmarked"] == ["replay_bookmarked"]
+
+    handler.rfile = io.BytesIO(payload)
+    handler.do_POST()
+    assert responses[-1][0] == 200
+    assert len([event for event in repository.list_events(application.application_id)
+                if event.event_type == "replay_bookmarked"]) == 1
+
+    application.status = "Applied"
+    rejected = json.dumps({"idempotency_key": "bookmark-2"}).encode("utf-8")
+    handler.headers = {"Content-Length": str(len(rejected))}
+    handler.rfile = io.BytesIO(rejected)
+    handler.do_POST()
+    assert responses[-1][0] == 400
+    assert repository.get_application(application.application_id).status == "Applied"

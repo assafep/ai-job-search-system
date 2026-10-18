@@ -85,6 +85,30 @@ def validate(config):
         parsed = urlsplit(value.strip()) if isinstance(value, str) else None
         if not parsed or parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
             raise ValueError("scheduling.calendly_url must be a valid HTTP URL")
+    _optional_log(config, "activity_log")
+    _optional_log(config, "api_log")
+    scout = config.get('scout', {})
+    if not isinstance(scout, dict):
+        raise ValueError('scout configuration must be an object')
+    for key in ('coding_agent', 'model'):
+        if key in scout and (not isinstance(scout[key], str) or not scout[key].strip()):
+            raise ValueError('scout.' + key + ' must be a non-empty string')
+
+
+def _optional_log(config, name):
+    section = config.get(name, {})
+    if section is None:
+        section = {}
+    if not isinstance(section, dict):
+        raise ValueError(name + " configuration must be an object")
+    enabled = section.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise ValueError(name + ".enabled must be true or false")
+    path = section.get("path")
+    if enabled and (not isinstance(path, str) or not path.strip()):
+        raise ValueError(name + ".path is required when logging is enabled")
+    if path is not None and not isinstance(path, str):
+        raise ValueError(name + ".path must be a file path")
 
 
 def calendly_url(config):

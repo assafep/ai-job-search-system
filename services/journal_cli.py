@@ -11,7 +11,7 @@ def main(argv=None, client=None):
     parser = argparse.ArgumentParser(description="Inspect or repair journal state tabs")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("status", help="read journal state-tab status")
-    migrate = subparsers.add_parser('migrate-application-states', help='rename legacy ready tab and add manual queue')
+    migrate = subparsers.add_parser('migrate-application-states', help='rename legacy ready tab and add manual and dead-letter queues')
     migrate.add_argument('--apply', action='store_true', help='explicitly apply the lifecycle migration')
     repair = subparsers.add_parser("repair", help="repair missing state tabs")
     repair.add_argument(

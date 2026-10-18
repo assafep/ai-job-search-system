@@ -22,10 +22,11 @@ OUTCOMES = {'Submitted successfully', 'Already submitted', 'Prepared but not sub
 
 
 class ReadySubmission:
-    def __init__(self, persistence, registry, adapter=None):
+    def __init__(self, persistence, registry, adapter=None, manage_state=True):
         self.persistence = persistence
         self.registry = registry
         self.adapter = adapter or adapter_from_environment()
+        self.manage_state = manage_state
 
     @staticmethod
     def receipt_path(application_id):
@@ -50,6 +51,8 @@ class ReadySubmission:
         confirmation = receipt.get('confirmation_text') or receipt.get('application_reference')
         if not confirmation:
             raise ValueError('a successful submission requires observed confirmation evidence')
+        if not self.manage_state:
+            return
         self.persistence.append_event(application_id, 'application_submitted', {
             'bullets': ['Application submitted successfully.', 'Confirmation: ' + str(confirmation)],
             'source': 'submission workflow',
@@ -61,16 +64,20 @@ class ReadySubmission:
             }, 'submission-applied-' + application_id)
 
     def _record_manual_required(self, application_id, receipt):
+        if not self.manage_state:
+            return
         if receipt.get('status') in {'Submitted successfully', 'Already submitted'}:
             return
         application = self.persistence.get_application(application_id)
-        if application['status'] in {'Ready for Auto-Apply', 'Manual Apply Required'}:
-            self.persistence.transition(application_id, 'Manual Apply Required', {
+        target = ('Dead Letters Queue' if receipt.get('failure_kind') == 'system_error'
+                  and receipt.get('status') != 'Submission unconfirmed' else 'Manual Apply Required')
+        if application['status'] in {'Ready for Auto-Apply', target}:
+            self.persistence.transition(application_id, target, {
                 'source': 'auto-apply agent',
                 'bullets': ['Auto-apply failed: ' + '; '.join(receipt.get('blockers') or [receipt.get('status', 'Unknown failure')]),
                             *(['Submission outcome is unconfirmed. Verify whether it was received before applying again.']
                               if receipt.get('status') == 'Submission unconfirmed' else [])],
-            }, 'submission-manual-failure-' + application_id)
+            }, 'submission-failure-{}-{}'.format(target, application_id))
 
     def execute(self, application_id, workload_id):
         try:
@@ -83,6 +90,8 @@ class ReadySubmission:
                 receipt = self._receipt(application_id) or {'status': 'Blocked'}
                 receipt = dict(receipt, application_id=application_id,
                                blockers=['Auto-apply error: ' + str(exc)])
+                if receipt['status'] == 'Blocked':
+                    receipt['failure_kind'] = 'system_error'
                 self.persistence.store_file(self.receipt_path(application_id), json.dumps(receipt).encode(), 'application/json')
                 self._record_manual_required(application_id, receipt)
                 return receipt

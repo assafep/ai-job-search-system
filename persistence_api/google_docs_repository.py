@@ -19,6 +19,7 @@ from datetime import date
 
 from .journal_format import (
     STATE_TABS,
+    ALL_STATES,
     event_text,
     is_date_paragraph,
     normalize_posting_url,
@@ -190,7 +191,7 @@ def state_tabs(document):
     counts = {}
     for tab in document.get("tabs") or []:
         title = tab_title(tab)
-        if title in STATE_TABS and not tab_properties(tab).get("parentTabId"):
+        if title in ALL_STATES and not tab_properties(tab).get("parentTabId"):
             counts[title] = counts.get(title, 0) + 1
             result[title] = tab
     missing = [name for name in STATE_TABS if name not in result]
@@ -200,7 +201,7 @@ def state_tabs(document):
                 ", ".join(missing), ", ".join(STATE_TABS)
             )
         )
-    duplicates = [name for name in STATE_TABS if counts.get(name, 0) > 1]
+    duplicates = [name for name in ALL_STATES if counts.get(name, 0) > 1]
     if duplicates:
         raise ValueError("journal has duplicate top-level state tabs: " + ", ".join(duplicates))
     return result
@@ -339,6 +340,45 @@ class GoogleDocsRepository(Repository):
     def journal_status(self):
         return journal_status(self.client.get_document())
 
+    def journal_tabs(self):
+        return [{'tab_id': tab_id(tab), 'title': tab_title(tab),
+                 'parent_tab_id': tab_properties(tab).get('parentTabId'),
+                 'paragraphs': tab_paragraphs(tab)}
+                for tab in document_tabs(self.client.get_document())]
+
+    @fresh_journal_write
+    def bookmark_staged_tab(self, application_id, idempotency_key):
+        if not idempotency_key:
+            raise ValueError('staging bookmark requires an idempotency key')
+        cached = self._idempotency.get(idempotency_key)
+        if cached:
+            return cached
+        document = self.client.get_document()
+        states = state_tabs(document)
+        if any(tab_id(child) == application_id for child in children_of(document, states['Bookmarked'])):
+            result = self.get_application(application_id)
+            self._idempotency[idempotency_key] = result
+            return result
+        tab = find_tab(document.get('tabs'), application_id)
+        parents = [parent for parent in document_tabs(document)
+                   if tab_id(parent) != application_id
+                   and any(tab_id(child) == application_id for child in children_of(document, parent))]
+        if len(parents) != 1 or tab_title(parents[0]) not in {'Replay', 'Relay'}:
+            raise ValueError('only a direct child of Replay or Relay may be bookmarked')
+        # Reject a tab that cannot become an application before any write.
+        self._application('Bookmarked', states['Bookmarked'], tab)
+        move = {'updateDocumentTabProperties': {
+            'tabProperties': {'tabId': application_id, 'parentTabId': tab_id(states['Bookmarked'])},
+            'fields': 'parentTabId'}}
+        # The parent move and its explanation commit in one revision-checked batch.
+        self._append_event_batch(document, tab, application_id, 'replay_bookmarked', {
+            'bullets': ['Position bookmarked from the operator Replay tab.'],
+            'source': 'explicit replay workflow'}, idempotency_key,
+            additional_requests=[move], cache_result=False)
+        result = self.get_application(application_id)
+        self._idempotency[idempotency_key] = result
+        return result
+
     @fresh_journal_write
     def repair_journal(self):
         document = self.client.get_document()
@@ -360,7 +400,8 @@ class GoogleDocsRepository(Repository):
         old = [t for t in roots if tab_title(t) == 'Ready To Apply']
         new = [t for t in roots if tab_title(t) == 'Ready for Auto-Apply']
         manual = [t for t in roots if tab_title(t) == 'Manual Apply Required']
-        if len(old) > 1 or len(new) > 1 or len(manual) > 1 or (old and new):
+        dead = [t for t in roots if tab_title(t) == 'Dead Letters Queue']
+        if len(old) > 1 or len(new) > 1 or len(manual) > 1 or len(dead) > 1 or (old and new):
             raise ValueError('ambiguous lifecycle tabs; refusing to merge or delete data')
         if not old and not new:
             raise ValueError('ready state tab is missing; migration requires existing ready tab')
@@ -372,6 +413,8 @@ class GoogleDocsRepository(Repository):
             }})
         if not manual:
             requests.append({'addDocumentTab': {'tabProperties': {'title': 'Manual Apply Required'}}})
+        if not dead:
+            requests.append({'addDocumentTab': {'tabProperties': {'title': 'Dead Letters Queue'}}})
         if requests:
             self.client.batch_update(requests, document.get('revisionId'))
         return self.journal_status()
@@ -712,9 +755,10 @@ class GoogleDocsRepository(Repository):
             # interrupted. On retry, preserve the journal invariant instead
             # of treating the already-moved tab as a complete operation.
             if idempotency_key:
+                detail = [str(item) for item in (data or {}).get("bullets") or [] if str(item).strip()]
                 self._append_event_batch(document, tab, application_id, "status_changed", {
                     "date": str(date.today()),
-                    "bullets": ["Moved to {}".format(target)] + (data or {}).get("bullets", []),
+                    "bullets": detail + ["Moved to {}".format(target)],
                     "source": (data or {}).get("source", "data layer"),
                 }, idempotency_key, cache_result=False)
                 result = self.get_application(application_id)
@@ -733,14 +777,21 @@ class GoogleDocsRepository(Repository):
         }}
         # The state move and its explanation commit in one revision-checked
         # batch, avoiding a second full-journal read and a second write.
+        detail = [str(item) for item in (data or {}).get("bullets") or [] if str(item).strip()]
         self._append_event_batch(document, tab, application_id, "status_changed", {
             "date": str(date.today()),
-            "bullets": ["Moved from {} to {}".format(current_state, target)] + (data or {}).get("bullets", []),
+            "bullets": detail + ["Moved from {} to {}".format(current_state, target)],
             "source": (data or {}).get("source", "data layer"),
         }, idempotency_key, additional_requests=[move], cache_result=False)
         result = self.get_application(application_id)
         if idempotency_key:
             self._idempotency[idempotency_key] = result
+        from services.activity_log import log_transition
+        if isinstance(result, dict):
+            company, role = result.get("company"), result.get("role")
+        else:
+            company, role = getattr(result, "company", ""), getattr(result, "role", "")
+        log_transition(company, role, current_state, target)
         return result
 
     def save_artifact(self, application_id, name, drive_file_id=None, mime_type=None, idempotency_key=None):

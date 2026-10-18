@@ -130,7 +130,7 @@ def test_repository_reads_state_tabs_and_application_journal():
 
 def test_repository_rejects_journal_without_offer_state_tab():
     states = [tab("state-" + name.replace(" ", "-"), name) for name in (
-        "Bookmarked", "Ready for Auto-Apply", "Manual Apply Required", "Applied", "Interviewing", "Rejected"
+        "Bookmarked", "Ready for Auto-Apply", "Manual Apply Required", "Dead Letters Queue", "Applied", "Interviewing", "Rejected"
     )]
     repository = GoogleDocsRepository("token", "document")
     repository.client = FakeClient({"tabs": states})
@@ -175,7 +175,7 @@ def test_repair_journal_adds_missing_top_level_state_tab():
 
 def test_journal_status_reports_duplicate_top_level_state_tab():
     states = [tab("state-" + name.replace(" ", "-"), name) for name in (
-        "Bookmarked", "Ready for Auto-Apply", "Manual Apply Required", "Applied", "Interviewing", "Rejected", "Offer"
+        "Bookmarked", "Ready for Auto-Apply", "Manual Apply Required", "Dead Letters Queue", "Applied", "Interviewing", "Rejected", "Offer"
     )]
     states.append(tab("state-bookmarked-duplicate", "Bookmarked"))
     repository = GoogleDocsRepository("token", "document")

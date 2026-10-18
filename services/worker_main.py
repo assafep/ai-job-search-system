@@ -26,6 +26,20 @@ def load_provider(spec=None):
     return provider
 
 
+def load_discovery_provider(spec=None, runtime_config=None):
+    """Load the scout provider. A module override wins; otherwise use ``CODING_AGENT``."""
+    spec = spec or os.environ.get("DISCOVERY_PROVIDER")
+    if spec:
+        return load_provider(spec)
+    from adapters.llm.coding_agent import CodingAgentProvider
+    from .runtime_config import load
+    runtime_config = load(require=False) if runtime_config is None else runtime_config
+    scout = runtime_config.get('scout') or {}
+    return CodingAgentProvider(
+        executable=os.environ.get('CODING_AGENT') or scout.get('coding_agent'),
+        model=os.environ.get('CODING_AGENT_MODEL') or scout.get('model'))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Drain queued workflow workloads")
     parser.add_argument("--provider", default=None, help="LLM provider as module:attribute")

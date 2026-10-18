@@ -8,6 +8,24 @@ API.
 
 ## First run
 
+Replay only the scout/bookmark stage for positions under the `Replay` tab with
+`python3 -m services.replay_scout`. Supply `--application-id <tab_id>` to select
+one position. The scout model opens each recorded URL, extracts the posting,
+decides whether it fits the applicant, saves accepted postings, and prints
+phase timings.
+It does not run preparation or submission.
+Use `python3 -m services.replay_scout --workers 7 --progress-seconds 10` for seven
+Replay workers with each worker's progress printed every ten seconds. This bounded
+pass snapshots Replay once, shares a synchronized persistence client and locked
+registries, holds the queue-runner process lock, and publishes a PDF activity report.
+
+The scout evaluates the source descriptions in `job_postings`. Bookmarking
+stores the exact selected description in a `Job Posting - Company - Role.json`
+artifact in the application folder and records its link in the position tab.
+It does not download the employer page again. Preparation reads that saved
+artifact through the persistence API; missing or mismatched source content
+stops preparation rather than triggering another online fetch.
+
 To process exactly one `Ready for Auto-Apply` position:
 
 ```bash
@@ -38,6 +56,56 @@ prevents two copies of this runner from sharing the operational JSON files.
 Do not run a separate daemon/worker process against the same registries during
 this run. The PDF report includes observed worker/storage concurrency counts.
 
+The continuous orchestrator is `python3 -m services.orchestrator run`. It holds
+the same process lock and routes each agent outcome from `config/pipelines.json`.
+Change live capacity with `python3 -m services.orchestrator scale scout 2`;
+`0` pauses that pipeline without stopping the others. While scout has workers,
+it searches `discovery_sources` (Freehire and Jobicy by default) every
+`discovery_seconds` and also once when the process starts. The job-discovery
+agent chooses the matches, and each new match is saved as Bookmarked with its
+posting text. A posting already in the journal is left where it is. Scout also
+consumes `Replay`. Preparation consumes `Bookmarked`, and auto-apply consumes
+`Ready for Auto-Apply`.
+Scout and preparation send a duplicate of an Applied, Interviewing, Rejected,
+or Offer posting to `Duplicate`. A match may be the same URL, the same company
+and role, or the same posting text on another domain. Moving a posting to
+Applied or Rejected also retires matching items still in Replay, Bookmarked,
+Ready for Auto-Apply, or Manual Apply Required. The journal needs an optional
+top-level `Duplicate` tab before those moves.
+
+Activity lines are off unless `activity_log` in `config/runtime.json` sets
+`enabled` and `path`, or the environment sets `ACTIVITY_LOG_ENABLED` and
+`ACTIVITY_LOG_FILE`. The file records `Posting Company / Role moved from A to B`
+for every persisted transition, plus `Worker-N (queue) started/finished working
+on posting Company / Role` for each orchestrator worker. Transition lines are
+written by the persistence API process, which reads this setting only at
+startup. Restart that process after turning the log on. Worker lines are
+written by the orchestrator process.
+
+The persistence API writes nothing to the terminal. Its request log is a
+separate file, off by default: `api_log` in `config/runtime.json`, or
+`API_LOG_ENABLED` and `API_LOG_FILE`. The default path is
+`logs/persistence-api.log`.
+
+Start the persistence API and the pipelines in one process. That process accepts
+the logging, monitor, and worker flags. Worker counts in `config/pipelines.json`
+remain the defaults (all `0`, so a run with no `--workers` flags consumes nothing):
+
+```bash
+python3 -m services.run --monitor --log --log-file activity.log --workers scout=2 --workers preparation=4 --workers auto-apply=1
+```
+
+`--monitor` redraws each queue count in place once a second. `--log` and
+`--no-log` turn the activity log on or off, and `--log-file` sets its path
+(`--log-file` implies `--log`). Flags override `config/runtime.json` and the
+environment. Stop an older `python3 -m persistence_api.main` before this
+script. That process keeps the logging settings it loaded at startup.
+
+`python3 -m services.queue_monitor` only redraws counts against an API that is
+already listening. `python3 -m services.orchestrator monitor` does the same.
+`python3 -m services.orchestrator run` starts pipelines only and accepts
+`--monitor` and `--workers`.
+
 Storage performance: journal reads share a five-second snapshot. Every journal
 mutation starts from fresh state and invalidates the snapshot after its write.
 State changes and their explanatory events use one atomic Google Docs batch.
@@ -58,7 +126,7 @@ Saved packages are validated and reused without regenerating or deleting them;
 new packages must be saved successfully before promotion. Each explicit batch
 gets fresh workload identities without erasing previous workload history.
 Preparation failures (posting retrieval, package validation, generation, or
-storage) move the posting to `Manual Apply Required` with an explanatory
+storage) move the posting to `Dead Letters Queue` with an explanatory
 transition event. They do not remain Bookmarked for automatic retry.
 
 For an existing journal, explicitly migrate the lifecycle before starting:
@@ -86,10 +154,12 @@ to override this adapter with another browser integration.
 It receives the verified application, profile, unmodified package bytes, and
 the `submit-ready` reasoning preset. It returns an observed submission outcome,
 confirmation text/reference, fields, attachment acceptance, and blockers.
-Unsupported destinations or missing browser dependencies report `Blocked`
-and move to `Manual Apply Required`, with an explanatory transition event.
+Unsupported destinations report `Blocked` and move to `Manual Apply Required`.
+Missing browser dependencies are system errors and move to `Dead Letters Queue`,
+with an explanatory transition event.
 Receipts are persisted through the data API before promotion to `Applied`.
-Every failed auto-apply attempt moves the posting to `Manual Apply Required`.
+Ordinary failed auto-apply attempts move the posting to `Manual Apply Required`;
+system errors before transmission move it to `Dead Letters Queue`.
 The transition records the failure explanation from the auto-apply agent.
 The automatic scheduler does not consume that queue. Every Ready for Auto-Apply
 item is submitted automatically. An ambiguous submission is never retried
@@ -501,11 +571,26 @@ entrypoint; it claims and settles one durable workload record. The equivalent
 shortcut is `make run-workload WORKLOAD_ID=work_... AGENT_RESULTS=/path/results.json`.
 
 For continuous processing, configure an LLM provider as
-`AGENT_PROVIDER=package.module:provider` (optional; Codex CLI is the default)
-and run
+`AGENT_PROVIDER=package.module:provider` (optional; Codex CLI is the default
+for preparation, auto-apply, correspondence, and interview). Job discovery,
+including Replay scout and choosing matches from job-board listings, runs the
+local coding agent named by `CODING_AGENT` or `scout.coding_agent` in
+`config/runtime.json` (environment settings take precedence). Scout does not choose the agent or
+the model. Set `CODING_AGENT_MODEL` only to override the agent's own default.
+The launcher does not send `XAI_API_KEY`. `DISCOVERY_PROVIDER` can replace it
+with another provider module. Then run
 `python3 -m services.worker_main --poll-seconds 30` (or add `--once` for a
 single drain; `--limit N` bounds a one-shot drain). The provider is injected at the process boundary; it does not
 receive Drive, mail, calendar, browser, or persistence clients.
+
+Unexpected exceptions, invalid agent outputs, configuration errors, and artifact
+storage failures route to `Dead Letters Queue`, retaining the failure explanation.
+Ordinary application blockers go to `Manual Apply Required`; an unconfirmed
+submission always needs manual reconciliation. Dead letters are never consumed
+automatically. Restore the appropriate source queue explicitly after fixing the
+cause. For an existing journal, restart the persistence API with the new code and
+run `python3 -m services.journal_cli migrate-application-states --apply` to add the
+dead-letter tab without changing existing positions or history.
 
 For a local scheduled worker, set a durable registry path before starting the
 worker so queued workloads survive process restarts:

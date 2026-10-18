@@ -1,0 +1,59 @@
+{
+  "pid": 716152,
+  "updated_at": "2026-10-14T10:27:44.789204+00:00",
+  "config_error": null,
+  "last_error": "CODING_AGENT is not set. Scout uses that local coding-agent command and does not choose a model.",
+  "stopping": false,
+  "pipelines": {
+    "scout": {
+      "workers": 2,
+      "agent": "job-discovery",
+      "states": [
+        "Replay"
+      ],
+      "active": 1
+    },
+    "preparation": {
+      "workers": 4,
+      "agent": "application",
+      "states": [
+        "Bookmarked"
+      ],
+      "active": 0
+    },
+    "auto-apply": {
+      "workers": 1,
+      "agent": "auto-apply",
+      "states": [
+        "Ready for Auto-Apply"
+      ],
+      "active": 0
+    },
+    "correspondence": {
+      "workers": 0,
+      "agent": "correspondence",
+      "states": [
+        "Applied",
+        "Interviewing"
+      ],
+      "active": 0
+    },
+    "interview": {
+      "workers": 0,
+      "agent": "interview-prep",
+      "states": [
+        "Applied",
+        "Interviewing"
+      ],
+      "active": 0
+    }
+  },
+  "inflight": [
+    {
+      "application_id": "t.xlm78ypxmdo",
+      "pipeline": "scout",
+      "workload_id": "pipeline-c3df755fc60e5b62943f2b03",
+      "worker": 1
+    }
+  ]
+}

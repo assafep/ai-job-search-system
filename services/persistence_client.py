@@ -99,6 +99,9 @@ class PersistenceApiClient:
     def journal_status(self):
         return self._request("GET", "/journal/status")
 
+    def queue_counts(self):
+        return self._request("GET", "/journal/queues")
+
     def repair_journal(self):
         return self._request("POST", "/journal/repair", {})
 

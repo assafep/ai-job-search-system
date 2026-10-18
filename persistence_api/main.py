@@ -6,9 +6,10 @@ from urllib.parse import parse_qs, urlparse
 import urllib.error
 
 import os
+import sys
 
 from .repository import MemoryRepository
-from .journal_format import STATE_TABS
+from .journal_format import STATE_TABS, ALL_STATES
 
 
 def should_use_google_backend(configured_backend=None, runtime_config_path=None):
@@ -66,6 +67,11 @@ def output(value):
 
 
 class Handler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        # Request lines belong in the optional API log, never on the terminal.
+        from services.api_log import log_access
+        log_access(self.address_string(), self.log_date_time_string(), format % args)
+
     def send_json(self, status, value):
         raw = json.dumps(output(value)).encode("utf-8")
         self.send_response(status)
@@ -123,10 +129,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(200, {"ok": True})
             if parts == ["journal", "status"]:
                 return self.send_json(200, repository.journal_status())
+            if parts == ["journal", "tabs"]:
+                return self.send_json(200, repository.journal_tabs())
+            if parts == ["journal", "queues"]:
+                return self.send_json(200, repository.queue_counts())
             if parts == ["applications"]:
                 status = parse_qs(path.query).get("status", [None])[0]
-                if status is not None and status not in STATE_TABS:
-                    raise ValueError("status must be one of: " + ", ".join(STATE_TABS))
+                if status is not None and status not in ALL_STATES:
+                    raise ValueError("status must be one of: " + ", ".join(ALL_STATES))
                 return self.send_json(200, repository.list_applications(status))
             if parts == ["profile"]:
                 return self.send_json(200, repository.get_profile())
@@ -193,6 +203,8 @@ class Handler(BaseHTTPRequestHandler):
             if len(parts) == 3 and parts[0] == "applications" and parts[2] == "transition":
                 app = repository.transition(parts[1], required(data, "target"), data.get("data"), data.get("idempotency_key"))
                 return self.send_json(200, app)
+            if len(parts) == 4 and parts[:2] == ['journal', 'tabs'] and parts[3] == 'bookmark':
+                return self.send_json(200, repository.bookmark_staged_tab(parts[2], required(data, 'idempotency_key')))
             if len(parts) == 3 and parts[0] == "applications" and parts[2] == "events":
                 event = repository.append_event(parts[1], required(data, "event_type"), data.get("data"), data.get("idempotency_key"))
                 return self.send_json(201, event)
@@ -231,8 +243,43 @@ class Handler(BaseHTTPRequestHandler):
         return self._write()
 
 
+def _runtime_for_logs():
+    from services.runtime_config import load
+    path = os.environ.get(
+        "RUNTIME_CONFIG_PATH",
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "config", "runtime.json")),
+    )
+    if not os.path.exists(path):
+        return {}
+    try:
+        return load(path, require=False)
+    except (OSError, ValueError):
+        return {}
+
+
+def configure_activity_log():
+    """Turn on the shared activity log for this API process."""
+    from services.activity_log import configure_from_runtime
+    try:
+        configure_from_runtime(_runtime_for_logs())
+    except ValueError as error:
+        sys.stderr.write(str(error) + "\n")
+
+
+def configure_api_log():
+    """Turn on the persistence API request log. Off unless configured."""
+    from services.api_log import configure_from_runtime
+    try:
+        configure_from_runtime(_runtime_for_logs())
+    except ValueError as error:
+        sys.stderr.write(str(error) + "\n")
+
+
 def serve(host="127.0.0.1", port=8080):
-    print("persistence API listening on http://{}:{}".format(host, port))
+    from services.api_log import log_server
+    configure_activity_log()
+    configure_api_log()
+    log_server("persistence API listening on http://{}:{}".format(host, port))
     HTTPServer((host, port), Handler).serve_forever()
 
 

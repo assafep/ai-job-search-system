@@ -48,9 +48,9 @@ class WorkflowRuntime:
         if application is None:
             return
         state = application.get('status') if isinstance(application, dict) else application.status
-        if state not in {'Bookmarked', 'Ready for Auto-Apply', 'Manual Apply Required'}:
+        if state not in {'Bookmarked', 'Ready for Auto-Apply', 'Dead Letters Queue'}:
             return  # Never regress a submitted or closed application.
-        self.persistence_client.transition(application_id, 'Manual Apply Required', {
+        self.persistence_client.transition(application_id, 'Dead Letters Queue', {
             'source': 'application package preparation agent',
             'bullets': ['Application package preparation failed: ' + str(error)],
         }, 'preparation-failed-' + record.workload_id)
@@ -60,7 +60,7 @@ class WorkflowRuntime:
         try:
             self._record_preparation_failure(record, error)
         except Exception as routing_error:
-            raise RuntimeError('Preparation failed: {}. Recording Manual Apply Required also failed: {}'.format(
+            raise RuntimeError('Preparation failed: {}. Recording Dead Letters Queue also failed: {}'.format(
                 error, routing_error)) from routing_error
 
     def _enrich_agent_context(self, workflow, context, agent_provider=None, application_snapshot=None):
@@ -90,7 +90,8 @@ class WorkflowRuntime:
             from pypdf import PdfReader
             application = context.get("application") or {}
             artifacts = self.persistence_client.list_artifacts(application_id)
-            posting_artifact = next((item for item in artifacts
+            artifacts = [item if isinstance(item, dict) else asdict(item) for item in artifacts]
+            posting_artifact = next((item for item in reversed(artifacts)
                                      if str(item.get('name', '')).startswith('Job Posting - ')), None)
             if not posting_artifact:
                 raise ValueError('saved posting content is missing; bookmark must be refreshed before preparation')
@@ -100,6 +101,9 @@ class WorkflowRuntime:
             if raw is None and isinstance(saved, dict) and saved.get('content_base64'):
                 raw = base64.b64decode(saved['content_base64'])
             context["job_posting"] = parse_saved_posting(raw)
+            from persistence_api.journal_format import normalize_posting_url
+            if normalize_posting_url(context['job_posting']['posting_url']) != normalize_posting_url(application['posting_url']):
+                raise ValueError('saved posting content belongs to a different posting')
             context["resume_text"] = '\n'.join(
                 page.extract_text() or '' for page in PdfReader(context["source_resume_path"]).pages)
         if hasattr(self.persistence_client, "list_events"):
@@ -176,7 +180,7 @@ class WorkflowRuntime:
                 if app is not None and not isinstance(app, dict):
                     app = asdict(app)
                 if app['status'] != 'Bookmarked':
-                    if app['status'] == 'Manual Apply Required' and previous_error:
+                    if app['status'] == 'Dead Letters Queue' and previous_error:
                         self._record_preparation_failure(record, previous_error)
                     self.registry.complete(workload_id)
                     return {'workflow': record.workflow, 'workload_id': workload_id, 'status': 'succeeded',

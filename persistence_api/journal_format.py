@@ -16,6 +16,9 @@ STATE_TABS = (
     "Offer",
 )
 
+OPTIONAL_STATE_TABS = ("Replay", "Duplicate", "Dead Letters Queue")
+ALL_STATES = STATE_TABS + OPTIONAL_STATE_TABS
+
 TRACKING_QUERY_KEYS = {"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "fbclid", "gclid"}
 
 

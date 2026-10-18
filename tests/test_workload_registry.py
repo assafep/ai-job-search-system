@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from http.server import HTTPServer
 from threading import Thread
@@ -25,6 +27,25 @@ def test_registry_deduplicates_and_recovers_workload():
     assert registry.claim(first.workload_id).attempts == 2
     registry.fail(first.workload_id, "temporary error")
     assert registry.records[first.workload_id].status == "dead_letter"
+
+
+def test_registry_loads_records_saved_before_result_checkpoints(tmp_path):
+    path = tmp_path / "workloads.json"
+    path.write_text(json.dumps({"work_1": {
+        "workload_id": "work_1",
+        "workflow": "discover-and-bookmark",
+        "event": {"event_id": "event-1", "event_type": "pipeline_item", "payload": {}},
+        "status": "succeeded",
+        "attempts": 1,
+        "error": None,
+        "created_at": "2026-10-13T00:00:00+00:00",
+        "updated_at": "2026-10-13T00:00:00+00:00",
+    }}))
+    registry = WorkloadRegistry(storage_path=str(path))
+    assert registry.get("work_1").result is None
+    registry.checkpoint_result("work_1", {"value": {"outcome": "accepted"}})
+    reloaded = WorkloadRegistry(storage_path=str(path))
+    assert reloaded.get("work_1").result["value"]["outcome"] == "accepted"
 
 
 def test_registry_completes_only_claimed_workloads():

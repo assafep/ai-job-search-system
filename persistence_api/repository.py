@@ -2,7 +2,8 @@ from typing import Dict, List, Optional
 import uuid
 
 from .models import Application, Artifact, Event, now
-from .journal_format import normalize_posting_url
+from .journal_format import ALL_STATES, normalize_posting_url
+from services.activity_log import log_transition
 from .profile import validate_profile
 from .state_machine import validate_transition
 from .file_paths import normalize_file_path
@@ -60,6 +61,19 @@ class Repository:
         raise NotImplementedError
 
     def journal_status(self):
+        raise NotImplementedError
+
+    def journal_tabs(self):
+        raise NotImplementedError
+
+    def queue_counts(self):
+        counts = {state: 0 for state in ALL_STATES}
+        for application in self.list_applications():
+            status = application.status if hasattr(application, "status") else application["status"]
+            counts[status] = counts.get(status, 0) + 1
+        return counts
+
+    def bookmark_staged_tab(self, application_id, idempotency_key):
         raise NotImplementedError
 
     def repair_journal(self):
@@ -135,11 +149,16 @@ class MemoryRepository(Repository):
         # before the state assignment, a retry must recover the event and still
         # return an Application rather than the cached Event object.
         event_key = (idempotency_key + ":status-event") if idempotency_key else None
+        source = app.status
+        # The caller explains the outcome. The status line is the last bullet
+        # of that one event, not a second copy of the same note.
+        detail = [str(item) for item in (data or {}).get("bullets") or [] if str(item).strip()]
         event = self.append_event(application_id, "status_changed", {
-            "from": app.status, "to": target, "data": data or {},
-            "bullets": ["Moved from {} to {}".format(app.status, target)] + (data or {}).get('bullets', []),
+            "from": source, "to": target, "data": data or {},
+            "bullets": detail + ["Moved from {} to {}".format(source, target)],
         }, event_key)
         app.status = target
+        log_transition(app.company, app.role, source, target)
         app.updated_at = now()
         app.last_event_id = event.event_id
         if idempotency_key:
@@ -266,11 +285,62 @@ class MemoryRepository(Repository):
                 "Bookmarked", "Ready for Auto-Apply", "Manual Apply Required", "Applied", "Interviewing", "Rejected", "Offer"
             ],
             "present_states": [
-                "Bookmarked", "Ready for Auto-Apply", "Manual Apply Required", "Applied", "Interviewing", "Rejected", "Offer"
+                "Bookmarked", "Ready for Auto-Apply", "Manual Apply Required", "Dead Letters Queue", "Applied", "Interviewing", "Rejected", "Offer"
             ],
             "missing_states": [],
             "duplicate_states": [],
         }
+
+    def journal_tabs(self):
+        """Expose the same tab shape the Google journal uses for operator staging."""
+        states = list(ALL_STATES)
+        if any(app.status == "Relay" for app in self.applications.values()):
+            states.append("Relay")
+        tabs = [{
+            "tab_id": "state:" + state,
+            "title": state,
+            "parent_tab_id": None,
+            "paragraphs": [],
+        } for state in states]
+        for app in self.applications.values():
+            paragraphs = []
+            for event in self.list_events(app.application_id):
+                for bullet in (event.data or {}).get("bullets") or []:
+                    paragraphs.append({"text": str(bullet)})
+            if app.posting_url and not any(item["text"].startswith("Posting URL:") for item in paragraphs):
+                paragraphs.insert(0, {"text": "Posting URL: " + app.posting_url})
+            tabs.append({
+                "tab_id": app.application_id,
+                "title": "{} / {}".format(app.company, app.role),
+                "parent_tab_id": "state:" + app.status,
+                "paragraphs": paragraphs,
+            })
+        return tabs
+
+    def bookmark_staged_tab(self, application_id, idempotency_key):
+        if not idempotency_key:
+            raise ValueError("staging bookmark requires an idempotency key")
+        cached = self._cached(idempotency_key)
+        if cached:
+            return cached
+        app = self.applications.get(application_id)
+        if not app:
+            raise KeyError(application_id)
+        if app.status == "Bookmarked":
+            self.idempotency[idempotency_key] = app
+            return app
+        if app.status not in {"Replay", "Relay"}:
+            raise ValueError("only a direct child of Replay or Relay may be bookmarked")
+        if app.status == "Replay":
+            validate_transition(app.status, "Bookmarked")
+        self.append_event(application_id, "replay_bookmarked", {
+            "bullets": ["Position bookmarked from the operator Replay tab."],
+            "source": "explicit replay workflow",
+        }, idempotency_key + ":bookmark-event")
+        app.status = "Bookmarked"
+        app.updated_at = now()
+        self.idempotency[idempotency_key] = app
+        return app
 
     def repair_journal(self):
         return self.journal_status()

@@ -11,7 +11,7 @@ import re
 from .test_runner import AGENTS, resolve, read_json, validate_output
 from .document_generator import ensure_scheduling_link, generate_application_pdf
 from persistence_api.journal_format import normalize_posting_url
-from adapters.job_boards.posting_details import fetch_posting_details, posting_content_bytes, posting_artifact_name
+from adapters.job_boards.posting_details import posting_content_bytes, posting_artifact_name, parse_saved_posting
 
 
 SCHEDULING_INTENTS = {
@@ -146,6 +146,20 @@ def plan_persistence_writes(workflow_name, context, agent_results):
                 for field in ("company", "role", "posting_url"):
                     if not candidate.get(field):
                         raise ValueError("job-discovery candidate is missing " + field)
+                posting_content = None
+                if workflow_name == 'discover-and-bookmark':
+                    matches = [posting for posting in context.get('job_postings', [])
+                               if normalize_posting_url(posting.get('posting_url') or '') ==
+                               normalize_posting_url(candidate['posting_url'])]
+                    if len(matches) != 1:
+                        raise ValueError('bookmark requires one matching scout source posting: ' + candidate['posting_url'])
+                    source = matches[0]
+                    posting_content = {
+                        'posting_url': candidate['posting_url'],
+                        'source_url': source.get('source_url') or source.get('listing_url') or source['posting_url'],
+                        'description': source.get('description'),
+                    }
+                    parse_saved_posting(posting_content_bytes(posting_content))
                 operations.append({
                     "operation": "create_application",
                     "company": candidate["company"],
@@ -153,6 +167,7 @@ def plan_persistence_writes(workflow_name, context, agent_results):
                     "posting_url": candidate["posting_url"],
                     "data": {"relevance_evidence": candidate.get("relevance_evidence", [])},
                     "capture_posting_content": workflow_name == "discover-and-bookmark",
+                    "posting_content": posting_content,
                     "idempotency_key": _idempotency_key(
                         {"workload_id": candidate["posting_url"]}, "discovered-application"),
                 })
@@ -294,6 +309,13 @@ def execute_persistence_writes(operations, persistence_client, dry_run=True):
             if not operation["application_id"]:
                 raise ValueError("no created application for posting URL: " + reference["posting_url"])
         if operation["operation"] == "create_application":
+            details = None
+            if operation.get('capture_posting_content'):
+                if not operation.get('posting_content'):
+                    raise ValueError('bookmark requires the posting content already evaluated by the scout')
+                details = parse_saved_posting(posting_content_bytes(operation['posting_content']))
+                if normalize_posting_url(details['posting_url']) != normalize_posting_url(operation['posting_url']):
+                    raise ValueError('saved posting content must match the bookmarked URL')
             result = persistence_client.create_application(
                 operation["company"],
                 operation["role"],
@@ -311,13 +333,15 @@ def execute_persistence_writes(operations, persistence_client, dry_run=True):
             if application_id and posting_url:
                 application_ids_by_url[normalize_posting_url(posting_url)] = application_id
             if operation.get('capture_posting_content'):
-                details = fetch_posting_details(posting_url)
+                content = posting_content_bytes(details)
+                content_key = ((operation.get('idempotency_key') or '') + '-posting-content-' +
+                               hashlib.sha256(content).hexdigest()[:16])
                 artifact = persistence_client.store_artifact(
                     application_id,
                     posting_artifact_name(operation['company'], operation['role']),
-                    posting_content_bytes(details),
+                    content,
                     'application/json',
-                    (operation.get('idempotency_key') or '') + '-posting-content',
+                    content_key,
                 )
                 drive_file_id = artifact.get('drive_file_id') if isinstance(artifact, dict) else getattr(artifact, 'drive_file_id', None)
                 artifact_id = artifact.get('artifact_id') if isinstance(artifact, dict) else getattr(artifact, 'artifact_id', None)
@@ -327,7 +351,7 @@ def execute_persistence_writes(operations, persistence_client, dry_run=True):
                 event = persistence_client.append_event(
                     application_id, 'posting_content_saved',
                     {'bullets': ['Posting content: {}'.format(reference)], 'source': 'job discovery agent'},
-                    (operation.get('idempotency_key') or '') + '-posting-content-event')
+                    content_key + '-event')
                 results.extend([artifact, event])
             continue
         if operation["operation"] == "generate_and_store_artifact":
