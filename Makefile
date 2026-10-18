@@ -45,9 +45,9 @@ dry-run-interview:
 		--agent-results tests/fixtures/workloads/prepare-interview-agent-results.json
 
 dry-run-discovery:
-	@python3 -m services.workload_runner discover-and-apply \
-		--fixture tests/fixtures/workloads/discover-and-apply.json \
-		--agent-results tests/fixtures/workloads/discover-and-apply-agent-results.json
+	@python3 -m services.workload_runner discover-and-bookmark \
+		--fixture tests/fixtures/workloads/discover-and-bookmark.json \
+		--agent-results tests/fixtures/workloads/discover-and-bookmark-agent-results.json
 
 dry-run-correspondence:
 	@python3 -m services.workload_runner handle-incoming-email \

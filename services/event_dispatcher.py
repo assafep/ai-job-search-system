@@ -12,7 +12,6 @@ import uuid
 
 
 ROUTES = {
-    "job_discovery_schedule": "discover-and-apply",
     "job_discovery_bookmark_schedule": "discover-and-bookmark",
     "application_package_schedule": "prepare-bookmarked",
     "application_submission_schedule": "submit-ready",

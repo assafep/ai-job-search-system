@@ -138,7 +138,7 @@ def plan_persistence_writes(workflow_name, context, agent_results):
                     "data": {"source": "recruitment correspondence", "intent": result["intent"]},
                     "idempotency_key": _idempotency_key(context, "correspondence-state"),
                 })
-    elif workflow_name in ("discover-and-apply", "discover-and-bookmark", "prepare-bookmarked"):
+    elif workflow_name in ("discover-and-bookmark", "prepare-bookmarked"):
         discovery = agent_results.get("job-discovery")
         if discovery is not None:
             _validate_agent_result("job-discovery", discovery)

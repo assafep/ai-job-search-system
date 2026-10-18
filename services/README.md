@@ -63,12 +63,6 @@ application, event, and interview-research context through the persistence API
 when those resources are available; only serialized values are passed to the
 agent.
 
-For `discover-and-apply`, the runtime invokes `job-discovery` first and passes
-its normalized `candidates` to the application agent as
-`discovered_candidates`. The application agent may return one package for a
-single application or a `packages` array keyed by `posting_url`; the executor
-resolves each package to the application created or deduplicated by the
-persistence API before storing artifacts or appending events.
 
 Reconciliation workloads first recover interrupted registry records, then may
 record an application-scoped reconciliation result through the persistence API

@@ -2,10 +2,18 @@ name: prepare-interview
 trigger:
   type: calendar_event
   event: new_or_changed_interview
+input_states:
+  - Applied
+  - Interviewing
 steps:
-  - associate_meeting_with_application
-  - research_company_product_role_interviewer
+  - detect_meeting
+  - associate_with_application
+  - research_company_product_role_interviewer_and_engineering_culture
   - create_interview_briefing
-  - persist_preparation_status
+  - track_preparation_status
+outcomes:
+  prepared: Interviewing
+  failed: null
+  system_error: Dead Letters Queue
 side_effects: through_data_layer
 

@@ -4,7 +4,7 @@ from persistence_api.repository import MemoryRepository
 
 def test_application_package_does_not_mark_submitted_by_default():
     operations = plan_persistence_writes(
-        "discover-and-apply",
+        "prepare-bookmarked",
         {"workload_id": "work-1", "application_id": "app-1"},
         {"application": {"cover_letter": "Hello", "proposed_action": "request_review"}},
     )
@@ -13,7 +13,7 @@ def test_application_package_does_not_mark_submitted_by_default():
 
 def test_confirmed_external_submission_plans_applied_transition():
     operations = plan_persistence_writes(
-        "discover-and-apply",
+        "prepare-bookmarked",
         {
             "workload_id": "work-2",
             "application_id": "app-1",

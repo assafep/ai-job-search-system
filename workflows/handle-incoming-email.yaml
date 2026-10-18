@@ -1,10 +1,20 @@
 name: handle-incoming-email
 trigger:
   type: incoming_email
+input_states:
+  - Applied
+  - Interviewing
 steps:
-  - match_thread_to_application
-  - classify_recruitment_intent
-  - update_state_or_prepare_response
-  - request_or_apply_approval
+  - match_email_thread
+  - classify_intent
+  - update_application_state_or_prepare_response
+  - send_according_to_approval_policy
+outcomes:
+  processed: null
+  interview: Interviewing
+  rejected: Rejected
+  offered: Offer
+  failed: null
+  system_error: Dead Letters Queue
 side_effects: through_data_layer_and_approval_policy
 

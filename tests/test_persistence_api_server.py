@@ -126,30 +126,29 @@ def test_persistence_api_server_round_trip(monkeypatch, candidate_profile):
 
         discovery_registry = WorkloadRegistry()
         discovery_record = discovery_registry.enqueue(dispatch(
-            "job_discovery_schedule", {"source_names": ["integration-source"]},
+            "job_discovery_bookmark_schedule", {
+                "source_names": ["integration-source"],
+                "job_postings": [{
+                    "posting_url": "https://example.test/discovered",
+                    "source_url": "https://example.test/discovered",
+                    "description": "Senior backend engineer role. " * 30,
+                }],
+            },
             "integration-discovery-workload",
         ))
-        calls = []
 
         def discovery_provider(prompt, context):
-            calls.append(context)
-            if len(calls) == 1:
-                return {"candidates": [{
-                    "company": "Discovery Co",
-                    "role": "Senior Backend Engineer",
-                    "posting_url": "https://example.test/discovered",
-                }]}
-            return {"packages": [{
+            return {"candidates": [{
+                "company": "Discovery Co",
+                "role": "Senior Backend Engineer",
                 "posting_url": "https://example.test/discovered",
-                "cover_letter": "Hello Discovery Co",
-                "proposed_action": "request_review",
             }]}
 
         discovery_result = WorkflowRuntime(discovery_registry, client).run(
             discovery_record.workload_id, agent_provider=discovery_provider
         )
         assert discovery_result["status"] == "succeeded"
-        discovered = client.list_applications(status="Ready for Auto-Apply")
+        discovered = client.list_applications(status="Bookmarked")
         assert any(item["posting_url"] == "https://example.test/discovered" for item in discovered)
 
         unauthenticated = urllib.request.Request(base_url + "/applications")

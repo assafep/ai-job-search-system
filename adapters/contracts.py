@@ -43,7 +43,7 @@ def incoming_email(raw):
 def job_discovery_tick(raw):
     event_id = _require(raw, "event_id")
     return {
-        "event_type": "job_discovery_schedule",
+        "event_type": "job_discovery_bookmark_schedule",
         "event_id": event_id,
         "payload": {
             "source_names": raw.get("source_names", []),

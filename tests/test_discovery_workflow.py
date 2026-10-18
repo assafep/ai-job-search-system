@@ -3,8 +3,15 @@ from services.workload_executor import execute_persistence_writes, plan_persiste
 
 def test_discovery_candidate_becomes_bookmarked_application_operation():
     operations = plan_persistence_writes(
-        "discover-and-apply",
-        {"workload_id": "discovery-1"},
+        "discover-and-bookmark",
+        {
+            "workload_id": "discovery-1",
+            "job_postings": [{
+                "posting_url": "https://example.test/job",
+                "source_url": "https://example.test/job",
+                "description": "Backend engineer role. " * 30,
+            }],
+        },
         {"job-discovery": {"candidates": [{
             "company": "Example",
             "role": "Backend Engineer",

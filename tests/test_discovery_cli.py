@@ -8,7 +8,7 @@ def test_discovery_fixture_is_accepted(tmp_path, capsys):
     results.write_text('{"job-discovery": {"candidates": []}}')
 
     assert main([
-        "discover-and-apply",
+        "discover-and-bookmark",
         "--fixture", str(fixture),
         "--agent-results", str(results),
     ]) == 0

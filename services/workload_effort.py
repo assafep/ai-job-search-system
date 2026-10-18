@@ -6,7 +6,7 @@ import os
 DEFAULT_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)),
                             'config', 'workload-effort.json')
 LEVELS = {'low', 'medium', 'high', 'xhigh'}
-WORKFLOWS = {'discover-and-bookmark', 'discover-and-apply', 'prepare-bookmarked',
+WORKFLOWS = {'discover-and-bookmark', 'prepare-bookmarked',
              'prepare-interview', 'handle-incoming-email', 'reconcile', 'submit-ready'}
 
 

@@ -16,11 +16,12 @@ from .workload_executor import plan_persistence_writes
 from .workload_executor import execute_persistence_writes
 from .runtime_config import OnboardingRequired
 from persistence_api.profile import calendly_url as profile_calendly_url
+from persistence_api.journal_format import ALL_STATES
+from persistence_api.state_machine import ALLOWED_TRANSITIONS
 
 
 WORKFLOW_AGENTS = {
     "submit-ready": [],
-    "discover-and-apply": ["job-discovery", "application"],
     "discover-and-bookmark": ["job-discovery"],
     "prepare-bookmarked": ["application"],
     "prepare-interview": ["interview-prep"],
@@ -30,7 +31,6 @@ WORKFLOW_AGENTS = {
 
 PERSISTENCE_ACTIONS = {
     "submit-ready": ["read_application", "read_application_package", "record_submission_receipt", "record_application_state"],
-    "discover-and-apply": ["read_preferences", "upsert_postings", "record_application_state"],
     "discover-and-bookmark": ["read_preferences", "upsert_postings", "record_application_state"],
     "prepare-bookmarked": ["read_application", "write_application_package", "record_application_state"],
     "prepare-interview": ["read_application", "write_interview_briefing", "record_preparation_status"],
@@ -40,7 +40,6 @@ PERSISTENCE_ACTIONS = {
 
 EXTERNAL_ACTIONS = {
     "submit-ready": ["submit_job_application"],
-    "discover-and-apply": ["submit_job_application"],
     "discover-and-bookmark": [],
     "prepare-bookmarked": [],
     "prepare-interview": [],
@@ -49,16 +48,48 @@ EXTERNAL_ACTIONS = {
 }
 
 
+def validate_workflow_outcomes(workflow_name, definition):
+    """Validate that workflow outcomes are exhaustive and map to allowed state transitions.
+
+    Checks:
+    - Every input state can transition to each non-null outcome target.
+    - system_error outcome routes to Dead Letters Queue (or is absent for agentless workflows).
+    - All outcome targets are valid states.
+    """
+    input_states = definition.get("input_states", [])
+    outcomes = definition.get("outcomes", {})
+    if not outcomes:
+        raise ValueError("workflow {} must declare outcomes".format(workflow_name))
+    for outcome, target in outcomes.items():
+        if target is not None and target not in ALL_STATES:
+            raise ValueError(
+                "workflow {} outcome '{}' targets invalid state '{}'".format(workflow_name, outcome, target))
+    if "system_error" in outcomes and outcomes["system_error"] != "Dead Letters Queue":
+        raise ValueError(
+            "workflow {} system_error must route to Dead Letters Queue".format(workflow_name))
+    for state in input_states:
+        for outcome, target in outcomes.items():
+            if target is None:
+                continue
+            if target not in ALLOWED_TRANSITIONS.get(state, set()):
+                raise ValueError(
+                    "workflow {} outcome '{}' routes to '{}' which is not allowed from input state '{}'"
+                    .format(workflow_name, outcome, target, state))
+
+
 def build_plan(workflow_name, context):
     if workflow_name not in WORKFLOWS:
         raise ValueError("unknown workflow: " + workflow_name)
     definition = parse_workflow(WORKFLOWS[workflow_name])
+    validate_workflow_outcomes(workflow_name, definition)
     agents = WORKFLOW_AGENTS[workflow_name]
     return {
         "mode": "workload-dry-run",
         "workflow": workflow_name,
         "trigger_context": context,
         "workflow_steps": definition["steps"],
+        "input_states": definition.get("input_states", []),
+        "outcomes": definition.get("outcomes", {}),
         "agent_invocations": [
             {
                 "agent": name,

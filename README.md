@@ -6,321 +6,108 @@ stateless and side-effect free. A workload instance gathers context, asks an
 agent for a structured decision, and applies the decision through the data-layer
 API.
 
+## Overview
+
+The system runs four independent, event-driven workflows:
+
+1. **Job discovery** — scheduled scans of job boards. Matches are saved as `Bookmarked`.
+2. **Preparation** — each bookmarked posting receives a personalized cover letter and resume PDF. Successful packages move to `Ready for Auto-Apply`.
+3. **Auto-apply** — items in the ready queue are submitted automatically. Confirmed submissions become `Applied`; failures go to `Manual Apply Required` or `Dead Letters Queue`.
+4. **Recruitment correspondence** — incoming emails are matched to applications and classified. Rejections, offers, and interview invitations update the application state.
+
+Each application follows this lifecycle:
+
+```text
+Bookmarked → Ready for Auto-Apply → Applied → Interviewing → Offer / Rejected
+```
+
+State changes are recorded in a Google Docs journal. All mutations go through the persistence API — agents never touch external systems directly.
+
 ## First run
 
-Replay only the scout/bookmark stage for positions under the `Replay` tab with
-`python3 -m services.replay_scout`. Supply `--application-id <tab_id>` to select
-one position. The scout model opens each recorded URL, extracts the posting,
-decides whether it fits the applicant, saves accepted postings, and prints
-phase timings.
-It does not run preparation or submission.
-Use `python3 -m services.replay_scout --workers 7 --progress-seconds 10` for seven
-Replay workers with each worker's progress printed every ten seconds. This bounded
-pass snapshots Replay once, shares a synchronized persistence client and locked
-registries, holds the queue-runner process lock, and publishes a PDF activity report.
+1. **Install dependencies** — `python3 -m pip install -r requirements.txt`
+2. **Configure the system** — run `python3 -m services.onboarding` if `config/runtime.json` is missing
+3. **Authenticate** — run `codex --login` for the default LLM provider; set Google OAuth credentials in your environment
 
-The scout evaluates the source descriptions in `job_postings`. Bookmarking
-stores the exact selected description in a `Job Posting - Company - Role.json`
-artifact in the application folder and records its link in the position tab.
-It does not download the employer page again. Preparation reads that saved
-artifact through the persistence API; missing or mismatched source content
-stops preparation rather than triggering another online fetch.
+Once configured, you can:
 
-To process exactly one `Ready for Auto-Apply` position:
+- **Replay scout** for positions under the `Replay` tab: `python3 -m services.replay_scout`
+- **Process Bookmarked and Ready queues** (8 threads): `python3 -m services.concurrent_queues`
+- **Run continuously**: `python3 -m services.orchestrator run`
+- **Monitor queues**: `python3 -m services.run --monitor`
 
+For detailed operational reference, see [Running the system](#running-the-system) below.
+
+## Running the system
+
+### Queue runners
+
+**Replay scout** — `python3 -m services.replay_scout` replays only the scout/bookmark stage for positions under the `Replay` tab. Supply `--application-id <tab_id>` for one position. Add `--workers 7 --progress-seconds 10` for seven workers with progress every ten seconds. The scout opens each recorded URL, extracts the posting, decides whether it fits, saves accepted postings, and prints phase timings. It does not run preparation or submission.
+
+The scout evaluates source descriptions in `job_postings`. Bookmarking stores the exact description in a `Job Posting - Company - Role.json` artifact and records its link. Preparation reads that saved artifact through the persistence API; missing or mismatched content stops preparation rather than re-fetching.
+
+**Single ready submission** — Process one `Ready for Auto-Apply` position:
 ```bash
 python3 -m services.ready_submission --application-id <application_id>
 ```
 
-Ready queue membership authorizes automatic submission; there is no approval
-flag or approval pause. For a bounded system run with per-workload activity and
-a persisted report, run `python3 -m services.system_run`. Newly prepared
-applications are submitted after they enter the ready queue. Email and interview
-workflows poll read-only Gmail recruitment messages for active applications
-(last 14 days) and primary-calendar interview events (next 30 days), then consume
-matched events. Ambiguous matches are skipped and event IDs prevent duplicate
-processing. Neither polling adapter sends email or changes calendar events.
-Reports are stored under
-`.ai-job-search-system/workloads-internal-state/system-run/` through the data API.
-User-facing activity reports are human-readable PDFs under `system-run/reports/`.
-JSON files are private machine checkpoints, not the delivered activity report.
+**Bounded system run** — `python3 -m services.system_run` processes Ready queue with per-workload activity and a persisted PDF report. Email and interview workflows poll Gmail (last 14 days) and Calendar (next 30 days) read-only. Ambiguous matches are skipped; event IDs prevent duplicates.
 
-Consume Bookmarked and Ready for Auto-Apply queues with exactly eight posting
-threads: `python3 -m services.concurrent_queues`. Preparation successes continue
-into submission in the same pool. Ready queue membership authorizes submission
-automatically.
-One shared persistence client serializes every storage read/write; registry and
-approval operations use reentrant locks, and the persistence API itself handles
-requests serially. Per-posting locks prevent duplicate work. A process lock
-prevents two copies of this runner from sharing the operational JSON files.
-Do not run a separate daemon/worker process against the same registries during
-this run. The PDF report includes observed worker/storage concurrency counts.
+**Concurrent queues** — `python3 -m services.concurrent_queues` consumes Bookmarked and Ready for Auto-Apply with eight posting threads. Preparation successes continue into submission in the same pool. One shared persistence client serializes all I/O; per-posting locks prevent duplicate work. A process lock prevents two runner copies. Do not run a separate daemon against the same registries.
 
-The continuous orchestrator is `python3 -m services.orchestrator run`. It holds
-the same process lock and routes each agent outcome from `config/pipelines.json`.
-Change live capacity with `python3 -m services.orchestrator scale scout 2`;
-`0` pauses that pipeline without stopping the others. While scout has workers,
-it searches `discovery_sources` (Freehire and Jobicy by default) every
-`discovery_seconds` and also once when the process starts. The job-discovery
-agent chooses the matches, and each new match is saved as Bookmarked with its
-posting text. A posting already in the journal is left where it is. Scout also
-consumes `Replay`. Preparation consumes `Bookmarked`, and auto-apply consumes
-`Ready for Auto-Apply`.
-Scout and preparation send a duplicate of an Applied, Interviewing, Rejected,
-or Offer posting to `Duplicate`. A match may be the same URL, the same company
-and role, or the same posting text on another domain. Moving a posting to
-Applied or Rejected also retires matching items still in Replay, Bookmarked,
-Ready for Auto-Apply, or Manual Apply Required. The journal needs an optional
-top-level `Duplicate` tab before those moves.
+### Continuous operation
 
-Activity lines are off unless `activity_log` in `config/runtime.json` sets
-`enabled` and `path`, or the environment sets `ACTIVITY_LOG_ENABLED` and
-`ACTIVITY_LOG_FILE`. The file records `Posting Company / Role moved from A to B`
-for every persisted transition, plus `Worker-N (queue) started/finished working
-on posting Company / Role` for each orchestrator worker. Transition lines are
-written by the persistence API process, which reads this setting only at
-startup. Restart that process after turning the log on. Worker lines are
-written by the orchestrator process.
+**Orchestrator** — `python3 -m services.orchestrator run` holds the process lock and routes agent outcomes from `config/pipelines.json`. Scale live: `python3 -m services.orchestrator scale scout 2` (use `0` to pause). Scout searches `discovery_sources` every `discovery_seconds` and once at start. Preparation consumes `Bookmarked`; auto-apply consumes `Ready for Auto-Apply`.
 
-The persistence API writes nothing to the terminal. Its request log is a
-separate file, off by default: `api_log` in `config/runtime.json`, or
-`API_LOG_ENABLED` and `API_LOG_FILE`. The default path is
-`logs/persistence-api.log`.
+**Duplicates** — Scout and preparation send duplicates of Applied, Interviewing, Rejected, or Offer postings to `Duplicate`. Moving to Applied or Rejected also retires matching items in Replay, Bookmarked, Ready, or Manual Apply. The journal needs a top-level `Duplicate` tab for these moves.
 
-Start the persistence API and the pipelines in one process. That process accepts
-the logging, monitor, and worker flags. Worker counts in `config/pipelines.json`
-remain the defaults (all `0`, so a run with no `--workers` flags consumes nothing):
-
+**Single-process runner** — Start the persistence API and pipelines in one process:
 ```bash
 python3 -m services.run --monitor --log --log-file activity.log --workers scout=2 --workers preparation=4 --workers auto-apply=1
 ```
+`--monitor` redraws queue counts once a second. `--log` toggles the activity log. Flags override `config/runtime.json`. Stop any older `persistence_api.main` first.
 
-`--monitor` redraws each queue count in place once a second. `--log` and
-`--no-log` turn the activity log on or off, and `--log-file` sets its path
-(`--log-file` implies `--log`). Flags override `config/runtime.json` and the
-environment. Stop an older `python3 -m persistence_api.main` before this
-script. That process keeps the logging settings it loaded at startup.
+**Queue monitor** — `python3 -m services.queue_monitor` and `python3 -m services.orchestrator monitor` redraw counts against an already-listening API.
 
-`python3 -m services.queue_monitor` only redraws counts against an API that is
-already listening. `python3 -m services.orchestrator monitor` does the same.
-`python3 -m services.orchestrator run` starts pipelines only and accepts
-`--monitor` and `--workers`.
+### Logging
 
-Storage performance: journal reads share a five-second snapshot. Every journal
-mutation starts from fresh state and invalidates the snapshot after its write.
-State changes and their explanatory events use one atomic Google Docs batch.
-Drive folder/file identities are cached for up to 60 seconds; file contents and
-missing receipts are never cached. Report checkpoints upload after ten completed
-postings or 60 seconds at a completion boundary, plus the initial and final
-snapshots. Application state and submission receipts are still persisted before
-dependent actions. The report includes request times, combined worker wait times,
-and checkpoint counts. Tune the cache, checkpoint, and HTTP timeout values in
-`.env.example` through the process environment; restart the API after code or
-backend environment changes. A queue's reported finish precedes final PDF upload.
+**Activity log** — Off by default. Enable via `activity_log` in `config/runtime.json` (set `enabled` and `path`), or environment variables `ACTIVITY_LOG_ENABLED` and `ACTIVITY_LOG_FILE`. Records every state transition and worker start/finish. The persistence API reads this at startup — restart it after enabling.
 
-Successful saved packages move automatically to `Ready for Auto-Apply`, without
-a human-review gate. To migrate prior review holds and reconsume every item in
-the current Bookmarked queue, run
-`python3 -m services.prepare_bookmarked_batch --migrate-review-holds`.
-Saved packages are validated and reused without regenerating or deleting them;
-new packages must be saved successfully before promotion. Each explicit batch
-gets fresh workload identities without erasing previous workload history.
-Preparation failures (posting retrieval, package validation, generation, or
-storage) move the posting to `Dead Letters Queue` with an explanatory
-transition event. They do not remain Bookmarked for automatic retry.
+**API log** — Separate file, off by default. Configure via `api_log` in `config/runtime.json` or `API_LOG_ENABLED` and `API_LOG_FILE`. Default path is `logs/persistence-api.log`.
 
-For an existing journal, explicitly migrate the lifecycle before starting:
-`python3 -m services.journal_cli migrate-application-states --apply`.
+### Submission
 
-Check these event sources without rerunning discovery/submission with
-`python3 -m services.external_event_polling`. OAuth must grant
-`https://www.googleapis.com/auth/gmail.readonly` and
-`https://www.googleapis.com/auth/calendar.events.readonly` in addition to the
-existing Drive/Docs scopes. Enable Gmail and Calendar APIs in the Google project.
-Adding scopes to the consent configuration alone does not update an existing
-refresh token: reauthorize the OAuth client and replace the refresh token in
-the local secret environment. Do not put tokens in applicant_profile or Drive.
-Polling reports blocked sources separately; unavailable sources never count as
-successfully executed integrations. Bounded polls report `truncated` when more
-source pages remain.
-The default adapter uses local Chrome and Playwright for verified Comeet forms.
-Run `npm install` and ensure `google-chrome` or `chromium` is on PATH (or set
-`BROWSER_EXECUTABLE`). Employer destinations are in
-`config/submission-destinations.json`; the adapter verifies the role link on
-the employer's careers board before entering applicant data. Required unknown
-answers stop submission. It uploads the unchanged combined PDF to both Resume
-and Cover Letter controls. Configure `JOB_SUBMISSION_ADAPTER=module:callable`
-to override this adapter with another browser integration.
-It receives the verified application, profile, unmodified package bytes, and
-the `submit-ready` reasoning preset. It returns an observed submission outcome,
-confirmation text/reference, fields, attachment acceptance, and blockers.
-Unsupported destinations report `Blocked` and move to `Manual Apply Required`.
-Missing browser dependencies are system errors and move to `Dead Letters Queue`,
-with an explanatory transition event.
-Receipts are persisted through the data API before promotion to `Applied`.
-Ordinary failed auto-apply attempts move the posting to `Manual Apply Required`;
-system errors before transmission move it to `Dead Letters Queue`.
-The transition records the failure explanation from the auto-apply agent.
-The automatic scheduler does not consume that queue. Every Ready for Auto-Apply
-item is submitted automatically. An ambiguous submission is never retried
-automatically and requires manual outcome reconciliation.
-An interrupted or unconfirmed attempt requires outcome reconciliation before
-retrying, to avoid duplicate applications.
+**Auto-apply policy** — Ready queue membership authorizes automatic submission; no approval pause. Failed auto-apply moves to `Manual Apply Required` with the agent's failure explanation. System errors (config, unexpected exceptions, preparation failures) move to `Dead Letters Queue`. Unconfirmed submissions require manual reconciliation before retry. Dead letters are never consumed automatically.
 
-### Learned job-board routes
+**Browser adapter** — Default adapter uses local Chrome and Playwright for Comeet forms. Run `npm install` and ensure `google-chrome` or `chromium` is on PATH. Configure `JOB_SUBMISSION_ADAPTER=module:callable` to override. Unsupported destinations report `Blocked` and move to `Manual Apply Required`.
 
-Verified Jobify, RVC Global and EchoJobs trial findings live in
-`adapters/browser/playbooks/`; reusable UI actions are in `site_recipes.json`.
-These are resumable operator-assisted browser adapters, not yet verified
-end-to-end submission adapters. They are not automatically selected by the
-submission daemon. Account/profile creation and external handoffs never count
-as employer submission.
+**Learned job-board routes** — Verified trial findings for Jobify, RVC Global, and EchoJobs live in `adapters/browser/playbooks/`. Start a trial: `BROWSER_HEADLESS=false node adapters/browser/trial_session.cjs jobify`. Progress is stored under `submit-ready/site-trials/<site>/<application_id>.json`. Inspect with `python3 -m services.site_trial_state --site jobify --application-id <id>`.
 
-Start a trial with `BROWSER_HEADLESS=false node adapters/browser/trial_session.cjs jobify`
-(or `rvc`, `echojobs`). The JSON-lines interface accepts `navigate`, `inspect`,
-`click`, `fill`, `upload`, `check`, and `close`. A learned action can be invoked
-as `{"op":"recipe","name":"open_application_handoff"}`. Registration recipes
-also require `"allow_account_creation":true`; uploads require an absolute
-`"path"` to the unchanged package. Read the site's playbook first. Persistent
-browser sessions are protected, Git-ignored local state; never put their
-cookies or tokens in Drive. Human/security checks must not be bypassed.
+### Storage
 
-Observed progress is stored through the persistence API under
-`submit-ready/site-trials/<site>/<application_id>.json`, separate from submission
-receipts. Inspect it with `python3 -m services.site_trial_state --site jobify
---application-id <application_id>` (one command). Operator trial checkpoints
-are recorded with `--stage` and `--evidence`; they cannot mark an application
-as submitted or transition it to Applied. Resume from the checkpoint rather
-than registering again or replaying a blocked route.
+**Performance** — Journal reads share a five-second snapshot. Drive folder/file identities cached for 60 seconds. Report checkpoints upload after 10 postings or 60 seconds. Tune cache, checkpoint, and HTTP timeout values in `.env.example`; restart the API after changes.
 
-Reasoning effort for each workflow is configured in `config/workload-effort.json`.
-All presets initially use `medium`. Change an entry to `low`, `medium`, `high`,
-or `xhigh` (when supported by the selected model); omitted entries use `default`.
-The Codex workload runtime reloads this file for each workload, so edits apply
-to the next run without restarting. These presets override `CODEX_REASONING_EFFORT`
-for workload runs; standalone provider calls still use that environment setting.
-`reconcile` currently invokes no AI agent, so its effort setting has no effect.
-Use `WORKLOAD_EFFORT_CONFIG_PATH` to load a different presets file.
+**Profile storage** — Profile is at `.ai-job-search-system/applicant_profile.json` in Drive. Internal workload files use `.ai-job-search-system/workloads-internal-state/<workflow>/`. Migration endpoint: `POST /storage/migrate-internal`.
 
-Install the PDF rendering and assembly dependencies with
-`python3 -m pip install -r requirements.txt`.
-Application packages use a fixed styled cover-letter page followed by the
-original onboarding resume PDF pages. Keep that source PDF accessible at the
-profile's `source_resume.path`; the workload fails if it is unavailable and
-never regenerates the resume from the structured profile. The output filename
-is `<applicant_name> Cover Letter & Resume - <company_name> - <role_name>.pdf`.
+**Artifacts** — Upload via `POST /applications/{application_id}/artifacts` with filename, MIME type, and base64 content. Use `idempotency_key` for retryable uploads. List with `GET`, read as base64 by artifact ID. Generic root-relative endpoints (`POST /files`, `GET /files?path=...`) for non-application artifacts.
 
-The system expects a local runtime configuration at `config/runtime.json`.
-Runtime configuration and the generated profile files are local state and are
-ignored by Git; credentials are never stored in them.
+**Interview research** — `POST /applications/{application_id}/research` creates a nested research tab. Inspect prior briefings via the corresponding `GET` endpoint.
 
-For the default single-user setup, authenticate Codex CLI with your ChatGPT
-account before running live agents:
+### Configuration
 
-```bash
-codex --login
-```
+**Onboarding** — `python3 -m services.onboarding` walks through Drive setup, journal URL, root folder, optional parent directory, Calendly URL, target countries, and resume path. It confirms your phone number and creates `config/applicant_profile.json`. Rerun to fill missing steps.
 
-The default agent provider is `adapters.llm.codex_provider:provider`, which
-uses that local Codex login and does not require `OPENAI_API_KEY`. Google Drive
-still requires OAuth credentials in the environment: either
-`GOOGLE_ACCESS_TOKEN`, or `GOOGLE_REFRESH_TOKEN` together with
-`GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
+**Authentication** — Default provider is Codex CLI (`codex --login`). Google Drive requires OAuth: `GOOGLE_ACCESS_TOKEN` or `GOOGLE_REFRESH_TOKEN` with `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
 
-If the file is absent, start onboarding:
+**Reasoning effort** — Configure per-workflow presets in `config/workload-effort.json` (`low`, `medium`, `high`, `xhigh`). Reloaded each workload — no restart needed. Override file path with `WORKLOAD_EFFORT_CONFIG_PATH`.
 
-```bash
-python3 -m services.onboarding
-```
+**PDF dependencies** — `python3 -m pip install -r requirements.txt`. Application packages combine styled cover letter with original resume PDF from `source_resume.path`.
 
-Onboarding asks for:
+**Journal migration** — For existing journals, run `python3 -m services.journal_cli migrate-application-states --apply` before starting.
 
-1. the Google Drive connection/configuration;
-2. the URL of the `Interviews Journal` Google Doc;
-3. the URL of the Google Drive root folder for workflow artifacts;
-4. an optional root-relative parent directory for application folders, such as
-   `applications` (blank preserves the direct-root layout);
-5. the Calendly URL used in application and recruitment correspondence;
-6. the target countries as ISO codes, such as `IL,US`;
-7. the path to the resume used to create `applicant_profile.json`.
+**External event polling** — `python3 -m services.external_event_polling` checks Gmail and Calendar without rerunning discovery/submission. Requires `gmail.readonly` and `calendar.events.readonly` OAuth scopes. Reauthorize the OAuth client after adding scopes — adding scopes alone doesn't update the refresh token.
 
-Immediately after the resume is accepted, onboarding extracts contact details
-and asks you to confirm your phone number. If one valid number is found, it is
-shown as the default; press Enter to accept it or type a correction. If no
-number is found (or several are found), you must enter one. The confirmed
-number is validated and saved in international format as `personal.phone`,
-including when onboarding syncs an existing Drive profile. Submission reads
-this confirmed profile value.
-For an existing setup missing a phone number, rerun
-`python3 -m services.onboarding`; it runs only this missing confirmation step
-and preserves the rest of the profile and runtime configuration.
-
-The wizard creates a local `config/applicant_profile.json` alongside the runtime
-configuration. It records the supplied resume and target countries as the
-profile source for discovery. Search concepts are derived from the resume by
-the discovery planner before adapters are queried; they are not manually
-configured per adapter. Authentication
-credentials remain outside the configuration file and are supplied by the
-Google Drive adapter/runtime environment. When `GOOGLE_ACCESS_TOKEN` is already
-configured, onboarding also creates the same profile in Drive if the root does
-not already contain one; an existing Drive profile is retained. The configured
-Calendly URL is stored in the profile's `application_defaults` as well as in
-runtime configuration so cloud workloads can read it through `/profile`.
-When the profile is inside the project, its runtime path is stored relatively
-(`config/applicant_profile.json`) so the same configuration works in a mounted
-container; a profile supplied from outside the project retains an absolute path.
-
-The persistence API exposes the profile as `/profile` (`GET` and `PUT`). In the
-Google Drive backend, it is stored at
-`.ai-job-search-system/applicant_profile.json` below the configured Drive root.
-Internal workload files use `.ai-job-search-system/workloads-internal-state/<workflow>/`.
-Currently the submission workflow stores its receipts under
-`submit-ready/submission-receipts/`; older duplicate receipts are retained in
-`submit-ready/receipt-history/`. Workload folders are created only when needed.
-The dot prefix is an organization convention; it does not hide files or change
-Drive permissions. `POST /storage/migrate-internal` moves existing profile and
-receipt files into this layout while preserving their file IDs and contents.
-Local scheduler/approval registry files remain local operational bookkeeping.
-Workflows also accept the legacy
-`personal.calendly_url` location while preferring
-`application_defaults.calendly_url`. Workflows should use this API rather than
-reading or writing the Drive file directly.
-Profile writes validate the required versioned envelope defined in
-`schemas/applicant-profile.schema.json` before reaching a backend.
-
-Binary artifacts use `POST /applications/{application_id}/artifacts` with a
-filename, MIME type, and base64 content. The Google backend stores the file in
-the application’s single `Company / Role` folder and records its Drive file ID
-in the application journal. Callers should provide an `idempotency_key` for
-retryable uploads.
-
-Artifacts can be listed with `GET /applications/{application_id}/artifacts` and
-read as base64 with the corresponding artifact-id endpoint. This keeps file
-reads inside the same persistence boundary as file writes.
-
-Workflows may also use the generic root-relative file endpoints (`POST
-/files` and `GET /files?path=...`) for artifacts that are not owned by one
-application. Paths are relative to the configured Drive root and are validated
-against traversal or absolute-path escapes.
-
-Interview preparation uses `POST /applications/{application_id}/research` to
-create a nested research tab under the application. The workload also appends
-the dated briefing event to the application journal, so the tab and event stay
-linked.
-Existing nested research is available through the corresponding `GET` endpoint,
-so recovery and preparation workloads can inspect prior briefings without
-accessing Google Docs directly.
-
-Workload state changes are explicit: a detected interview moves the application
-to `Interviewing`; correspondence classified as rejection or offer moves it to
-`Rejected` or `Offer`; scheduling correspondence moves it to `Interviewing`.
-For scheduling or rescheduling intents, a configured `calendly_url` is
-deterministically included in the proposed response draft.
-Discovery candidates become idempotent application-creation operations in the
-`Bookmarked` state; package preparation advances each prepared application to
-`Ready for Auto-Apply`, which authorizes automatic submission. The application
-moves to `Applied` only when the workload receives explicit confirmation from
-the external submission step.
+**Preparation batch** — `python3 -m services.prepare_bookmarked_batch --migrate-review-holds` migrates prior review holds and reconsumes Bookmarked. Saved packages are validated and reused. Preparation failures go to `Dead Letters Queue`.
 
 ## Workflows
 

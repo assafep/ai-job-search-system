@@ -22,7 +22,6 @@ AGENTS = {
 }
 WORKFLOWS = {
     "submit-ready": "workflows/submit-ready.yaml",
-    "discover-and-apply": "workflows/discover-and-apply.yaml",
     "discover-and-bookmark": "workflows/discover-and-bookmark.yaml",
     "prepare-bookmarked": "workflows/prepare-bookmarked.yaml",
     "prepare-interview": "workflows/prepare-interview.yaml",
@@ -41,16 +40,75 @@ def resolve(path):
 
 
 def parse_workflow(path):
+    """Parse a workflow YAML file returning name, trigger, input_states, steps, outcomes, and side_effects.
+
+    Uses a minimal line-based parser to avoid a hard PyYAML dependency.
+    The YAML format is simple enough that this approach is robust.
+    """
     name = None
+    trigger = {}
+    input_states = []
     steps = []
+    outcomes = {}
+    side_effects = None
+    current_section = None  # tracks which top-level key we're inside
+
     with open(resolve(path)) as handle:
         for line in handle:
-            if line.startswith("name:"):
-                name = line.split(":", 1)[1].strip()
-            match = re.match(r"\s+-\s+([A-Za-z0-9_]+)\s*$", line)
-            if match:
-                steps.append(match.group(1))
-    return {"name": name, "steps": steps, "path": path}
+            stripped = line.rstrip()
+            if not stripped or stripped.startswith('#'):
+                continue
+            # Top-level keys (no leading whitespace)
+            if not line.startswith(' ') and not line.startswith('\t'):
+                if stripped.startswith('name:'):
+                    name = stripped.split(':', 1)[1].strip()
+                    current_section = 'name'
+                elif stripped.startswith('trigger:'):
+                    current_section = 'trigger'
+                elif stripped.startswith('input_states:'):
+                    # Check for inline empty list
+                    inline = stripped.split(':', 1)[1].strip()
+                    if inline == '[]':
+                        current_section = None
+                    else:
+                        current_section = 'input_states'
+                elif stripped.startswith('steps:'):
+                    current_section = 'steps'
+                elif stripped.startswith('outcomes:'):
+                    current_section = 'outcomes'
+                elif stripped.startswith('side_effects:'):
+                    side_effects = stripped.split(':', 1)[1].strip()
+                    current_section = 'side_effects'
+                else:
+                    current_section = None
+                continue
+            # Indented content
+            if current_section == 'trigger':
+                match = re.match(r'\s+(\w[\w_]*):\s*(.*)', stripped)
+                if match:
+                    trigger[match.group(1)] = match.group(2).strip()
+            elif current_section == 'input_states':
+                match = re.match(r'\s+-\s+(.+)', stripped)
+                if match:
+                    input_states.append(match.group(1).strip())
+            elif current_section == 'steps':
+                match = re.match(r'\s+-\s+([A-Za-z0-9_]+)\s*$', stripped)
+                if match:
+                    steps.append(match.group(1))
+            elif current_section == 'outcomes':
+                match = re.match(r'\s+([A-Za-z0-9_]+):\s*(.*)', stripped)
+                if match:
+                    value = match.group(2).strip()
+                    outcomes[match.group(1)] = None if value == 'null' else value
+    return {
+        'name': name,
+        'trigger': trigger,
+        'input_states': input_states,
+        'steps': steps,
+        'outcomes': outcomes,
+        'side_effects': side_effects,
+        'path': path,
+    }
 
 
 def validate_output(value, schema, path="output"):

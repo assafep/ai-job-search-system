@@ -104,72 +104,9 @@ def test_another_meeting_alias_transitions_and_adds_link():
     assert operations[1]["target"] == "Interviewing"
 
 
-def test_discovery_passes_candidates_to_batch_application_packages():
-    operations = plan_persistence_writes(
-        "discover-and-apply", {"workload_id": "work-batch", "cv_html": "<p>CV</p>"}, {
-            "job-discovery": {"candidates": [{
-                "company": "Example", "role": "Backend",
-                "posting_url": "https://example.test/job",
-            }]},
-            "application": {"packages": [{
-                "posting_url": "https://example.test/job", "cover_letter": "Hello",
-                "proposed_action": "request_review",
-            }]},
-        },
-    )
-    assert operations[-1]["operation"] == "ensure_ready_to_apply"
-    assert operations[1]["application_ref"]["posting_url"] == "https://example.test/job"
-    assert operations[2]["application_ref"]["posting_url"] == "https://example.test/job"
-
-
-def test_batch_application_package_resolves_created_application():
-    class FakeClient:
-        def __init__(self):
-            self.calls = []
-
-        def create_application(self, *args):
-            self.calls.append(("create", args))
-            return {"application_id": "app-1", "posting_url": "https://example.test/job"}
-
-        def get_application(self, application_id):
-            return {"application_id": application_id, "status": "Bookmarked"}
-
-        def transition(self, *args):
-            self.calls.append(("transition", args))
-            return {"application_id": args[0], "status": args[1]}
-
-        def store_artifact(self, *args):
-            self.calls.append(("artifact", args))
-            return {"artifact_id": "artifact-1"}
-
-        def append_event(self, *args):
-            self.calls.append(("event", args))
-            return {"event_id": "event-1"}
-
-    operations = plan_persistence_writes(
-        "discover-and-apply", {"workload_id": "work-batch-execute", "cv_html": "<p>CV</p>"}, {
-            "job-discovery": {"candidates": [{
-                "company": "Example", "role": "Backend",
-                "posting_url": "https://example.test/job",
-            }]},
-            "application": {"packages": [{
-                "posting_url": "https://EXAMPLE.TEST/job/", "cover_letter": "Hello",
-                "proposed_action": "request_review",
-            }]},
-        },
-    )
-    client = FakeClient()
-    result = execute_persistence_writes(operations, client, dry_run=False)
-    assert len(result["results"]) == 4
-    assert client.calls[1][0] == "artifact"
-    assert client.calls[1][1][0] == "app-1"
-    assert client.calls[-1][0] == "transition"
-    assert client.calls[-1][1][0:2] == ("app-1", "Ready for Auto-Apply")
-
-
 def test_package_always_checks_readiness_when_application_snapshot_is_absent():
     operations = plan_persistence_writes(
-        "discover-and-apply", {
+        "prepare-bookmarked", {
             "workload_id": "work-resumed-package", "application_id": "tab-1",
             "cv_html": "<p>CV</p>",
         }, {"application": {
@@ -234,25 +171,6 @@ def test_review_recommendation_cannot_block_saved_package_readiness():
     assert 'human review' not in str(operations[0]['data']['bullets']).lower()
 
 
-def test_batch_submission_uses_posting_reference_until_application_is_resolved():
-    operations = plan_persistence_writes(
-        "discover-and-apply", {
-            "workload_id": "work-submit-batch", "submission_confirmed": True,
-            "existing_application_package": True,
-            "existing_application_package_reference": "https://drive.google.com/file/d/package/view",
-        }, {
-            "job-discovery": {"candidates": [{
-                "company": "Example", "role": "Backend",
-                "posting_url": "https://example.test/job",
-            }]},
-            "application": {"packages": [{
-                "posting_url": "https://example.test/job", "cover_letter": "Hello",
-                "proposed_action": "submit",
-            }]},
-        },
-    )
-    assert operations[-1]["target"] == "Applied"
-    assert operations[-1]["application_ref"]["posting_url"] == "https://example.test/job"
 
 
 def test_ensure_ready_to_apply_rejects_missing_application():

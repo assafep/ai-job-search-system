@@ -4,7 +4,7 @@ from services.workload_runner import execute
 
 def test_application_result_plans_combined_pdf_when_cv_is_available():
     operations = plan_persistence_writes(
-        "discover-and-apply",
+        "prepare-bookmarked",
         {
             "workload_id": "work-application",
             "application_id": "tab-1",
@@ -23,7 +23,7 @@ def test_application_result_plans_combined_pdf_when_cv_is_available():
 
 def test_existing_bookmarked_application_is_promoted_before_package():
     operations = plan_persistence_writes(
-        "discover-and-apply",
+        "prepare-bookmarked",
         {
             "workload_id": "work-bookmarked-application",
             "application_id": "tab-1",
@@ -80,7 +80,7 @@ def test_direct_execution_uses_profile_scheduling_default():
             return {"event_id": "event-2"}
 
     result = execute(
-        "discover-and-apply",
+        "prepare-bookmarked",
         {"workload_id": "work-profile-link", "application_id": "tab-1", "cv_html": "<p>CV</p>"},
         {"application": {"cover_letter": "Dear team", "proposed_action": "request_review"}},
         FakeClient(),

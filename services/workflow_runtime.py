@@ -71,9 +71,9 @@ class WorkflowRuntime:
             context["applicant_profile"] = profile
             if not context.get("calendly_url"):
                 context["calendly_url"] = profile_calendly_url(profile)
-        if workflow in ("discover-and-apply", "discover-and-bookmark"):
+        if workflow == "discover-and-bookmark":
             self._enrich_discovery_context(context, profile, agent_provider)
-        if workflow in ("prepare-bookmarked", "discover-and-apply"):
+        if workflow == "prepare-bookmarked":
             context["source_resume_path"] = (profile or {}).get("source_resume", {}).get("path")
             if not context["source_resume_path"]:
                 raise ValueError("original onboarding resume PDF is required to prepare an application package")
