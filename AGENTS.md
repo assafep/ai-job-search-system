@@ -18,17 +18,15 @@ run the onboarding command described in `README.md`.
 - Adapters expose external systems to workflow runtimes.
 - The data-layer API is the only owner of application-state mutations.
 - Every write must be explicit, validated, and idempotent where retries are possible.
-- Ready for Auto-Apply queue membership authorizes automatic submission; do not
+- Prepared queue membership authorizes automatic submission; do not
   pause that queue for human approval. Other actions follow
   `config/automation-policy.yaml`.
 
 ## Application and reporting policy
 
-- For scout replay, run `python3 -m services.replay_scout` (with the configured
-  runtime environment). Do not reconstruct inline scripts. It processes all
-  positions under Replay, has the scout model open each exact URL, and runs
-  scouting/bookmarking only. It prints phase timings and reuses identical saved
-  content. Use `--application-id` only when the user selects one position.
+- For bookmarking discovered positions, run `python3 -m services.run_single Discovered`
+  (with the configured runtime environment). To read a single posting URL without
+  any workflow, use `python3 -m services.agent_cli read-posting --url https://...`.
 - When the user requests a particular workload or queue without specifying a
   count, process all eligible positions in that requested scope. "Only
   auto-apply" limits the workflow, not the number of positions. Do not interpret
@@ -36,10 +34,10 @@ run the onboarding command described in `README.md`.
   specific position, keep execution scoped to that position; honor any explicit
   count or instruction to stop or not run.
 - Do not require human review before moving a successfully prepared, saved
-  application package from `Bookmarked` to `Ready for Auto-Apply`.
+  application package from `Bookmarked` to `Prepared`.
 - Every failed auto-apply attempt must move to `Manual Apply Required`; its
   transition event must include the auto-apply agent's failure explanation.
-  Ready for Auto-Apply items must be submitted automatically. Unconfirmed
+  Prepared items must be submitted automatically. Unconfirmed
   submissions must be reconciled manually before anyone retries them.
 - System errors (including configuration, unexpected exceptions, invalid agent
   output, and preparation retrieval/validation/generation/storage failures) move
@@ -51,7 +49,7 @@ run the onboarding command described in `README.md`.
   checkpoints may remain JSON under workload-owned internal state.
 - Concurrent queue runs must share a synchronized persistence client and locked
   workload/approval registries. Use `services.concurrent_queues` for an eight-thread
-  Bookmarked/Ready for Auto-Apply pass; never assign the same posting to two
+  Bookmarked/Prepared pass; never assign the same posting to two
   workers or run a separate registry-writing process alongside it.
 
 ## Testing

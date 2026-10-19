@@ -4,7 +4,7 @@ from persistence_api.repository import MemoryRepository
 
 def test_application_package_does_not_mark_submitted_by_default():
     operations = plan_persistence_writes(
-        "prepare-bookmarked",
+        "prepare-validated",
         {"workload_id": "work-1", "application_id": "app-1"},
         {"application": {"cover_letter": "Hello", "proposed_action": "request_review"}},
     )
@@ -13,7 +13,7 @@ def test_application_package_does_not_mark_submitted_by_default():
 
 def test_confirmed_external_submission_plans_applied_transition():
     operations = plan_persistence_writes(
-        "prepare-bookmarked",
+        "prepare-validated",
         {
             "workload_id": "work-2",
             "application_id": "app-1",
@@ -53,17 +53,17 @@ def test_transition_recovers_if_failure_happens_after_event_persistence():
     application = repository.create_application("Example", "Backend", "https://example.test/retry")
 
     try:
-        repository.transition(application.application_id, "Ready for Auto-Apply", idempotency_key="transition-1")
+        repository.transition(application.application_id, "Prepared", idempotency_key="transition-1")
     except RuntimeError:
         pass
     else:
         raise AssertionError("the simulated failure should be raised")
 
     recovered = repository.transition(
-        application.application_id, "Ready for Auto-Apply", idempotency_key="transition-1"
+        application.application_id, "Prepared", idempotency_key="transition-1"
     )
 
-    assert recovered.status == "Ready for Auto-Apply"
+    assert recovered.status == "Prepared"
     status_events = [
         event for event in repository.list_events(application.application_id)
         if event.event_type == "status_changed"

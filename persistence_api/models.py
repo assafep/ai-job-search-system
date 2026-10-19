@@ -24,8 +24,8 @@ class Application:
     last_event_id: Optional[str] = None
 
     @classmethod
-    def create(cls, company: str, role: str, posting_url: str) -> "Application":
-        return cls("app_" + uuid.uuid4().hex, company, role, posting_url)
+    def create(cls, company: str, role: str, posting_url: str, status: str = "Bookmarked") -> "Application":
+        return cls("app_" + uuid.uuid4().hex, company, role, posting_url, status=status)
 
 
 @dataclass

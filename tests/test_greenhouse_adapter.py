@@ -31,6 +31,7 @@ def test_greenhouse_adapter_normalizes_public_postings():
             "departments": [{"name": "Engineering"}],
             "offices": [{"name": "Tel Aviv"}],
             "updated_at": "2026-10-13T10:00:00Z",
+            "first_published": "2026-10-01T10:00:00Z",
         }]})
 
     jobs = GreenhouseJobBoard({"acme": "Acme Corp"}, opener=opener).list_jobs()
@@ -40,6 +41,7 @@ def test_greenhouse_adapter_normalizes_public_postings():
     assert jobs[0]["role"] == "Senior Backend Engineer"
     assert jobs[0]["description"] == "Build reliable services."
     assert jobs[0]["source_id"] == "123"
+    assert jobs[0]['posted_at'] == '2026-10-01T10:00:00Z'
     assert "content=true" in requests[0].full_url
 
 

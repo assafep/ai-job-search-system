@@ -1,6 +1,8 @@
 """Read source posting details before a stateless application agent runs."""
 
+import base64
 import html
+import hashlib
 import json
 import os
 import re
@@ -28,10 +30,66 @@ def parse_saved_posting(content):
     return data
 
 
-def posting_artifact_name(company, role):
+def posting_artifact_name(company, role, posting_url=None):
     label = '{} - {}'.format(company, role)
     label = re.sub(r'[\\/:*?"<>|]+', '-', label).strip()
-    return 'Job Posting - {}.json'.format(label[:180])
+    suffix = ''
+    if posting_url:
+        from persistence_api.journal_format import normalize_posting_url
+        suffix = ' - ' + hashlib.sha256(normalize_posting_url(posting_url).encode()).hexdigest()[:16]
+    return 'Job Posting - {}{}.json'.format(label[:180], suffix)
+
+
+def find_posting_artifact(artifacts, events):
+    """Find the authoritative posting artifact from a list of artifacts and events.
+
+    Returns the artifact dict, or raises ValueError if not found.
+    A folder listing is not chronological. Prefer the latest explicit
+    posting-content event instead of choosing the last file returned by Drive.
+    """
+    from dataclasses import asdict, is_dataclass
+    def plain(value):
+        return asdict(value) if is_dataclass(value) else value
+
+    postings = [a for a in artifacts if str(a.get('name', '')).startswith('Job Posting - ')]
+    if not postings:
+        raise ValueError('saved posting content is missing')
+    selected = None
+    for event in reversed(events):
+        for bullet in (plain(event).get('data') or {}).get('bullets', []):
+            if bullet.startswith('Posting content:'):
+                selected = next((a for a in postings
+                                 if (a.get('drive_file_id') or a['artifact_id']) in bullet), None)
+                if selected:
+                    break
+        if selected:
+            break
+    if selected is None and len(postings) != 1:
+        raise ValueError('multiple saved postings without an authoritative content link')
+    return selected or postings[0]
+
+
+def read_posting_artifact(persistence, application_id, expected_posting_url):
+    """Read and validate a saved posting artifact from the persistence API.
+
+    This is the single way to read a previously saved posting. It finds the
+    artifact, reads it, parses it, and validates the URL matches.
+    """
+    from dataclasses import asdict, is_dataclass
+    from persistence_api.journal_format import normalize_posting_url
+
+    artifacts = [asdict(item) if is_dataclass(item) else item
+                 for item in persistence.list_artifacts(application_id)]
+    events = persistence.list_events(application_id)
+    selected = find_posting_artifact(artifacts, events)
+    raw = persistence.read_artifact(application_id, selected['artifact_id'])
+    content = raw.get('content')
+    if content is None:
+        content = base64.b64decode(raw['content_base64'], validate=True)
+    posting = parse_saved_posting(content)
+    if expected_posting_url and normalize_posting_url(posting['posting_url']) != normalize_posting_url(expected_posting_url):
+        raise ValueError('saved posting content belongs to another position')
+    return posting
 
 
 def _text(value):
@@ -41,12 +99,124 @@ def _text(value):
     return re.sub(r'\n\s*\n+', '\n', html.unescape(value)).strip()
 
 
+def _hibob_endpoint(posting_url):
+    """Return the public HiBob job-ad endpoint and exact job id, if present."""
+    parsed = urllib.parse.urlsplit(posting_url)
+    host = (parsed.hostname or '').lower()
+    match = re.fullmatch(r'/jobs/([0-9a-f-]+)/?', parsed.path, re.I)
+    if match and host.endswith('.careers.hibob.com'):
+        tenant = host.split('.', 1)[0]
+        endpoint = '{}://{}/api/job-ad'.format(parsed.scheme or 'https', host)
+        return endpoint, match.group(1), tenant
+    return None
+
+
+def _extract_hibob(source, endpoint, job_id):
+    payload = json.loads(source)
+    for job in payload.get('jobAdDetails') or []:
+        if str(job.get('id') or '').lower() != job_id.lower():
+            continue
+        parts = []
+        for label in ('title', 'description', 'responsibilities', 'requirements', 'benefits'):
+            value = job.get(label)
+            if value:
+                parts.append(label.replace('_', ' ').title() + '\n' + _text(str(value)))
+        if job.get('site') or job.get('country') or job.get('workspaceType'):
+            parts.append('Location and work arrangement\n' + ', '.join(
+                str(value) for value in (job.get('site'), job.get('country'), job.get('workspaceType')) if value))
+        return '\n\n'.join(part for part in parts if part.strip())
+    return ''
+
+
+def _extract_comeet(source):
+    """Extract Comeet's serialized POSITION_DATA object without a browser."""
+    marker = 'POSITION_DATA = '
+    start = source.find(marker)
+    if start < 0:
+        return ''
+    try:
+        payload, _ = json.JSONDecoder().raw_decode(source[start + len(marker):])
+    except (TypeError, ValueError):
+        return ''
+    if not isinstance(payload, dict):
+        return ''
+    details = ((payload.get('custom_fields') or {}).get('details') or [])
+    parts = []
+    for item in details:
+        if not isinstance(item, dict):
+            continue
+        name, value = item.get('name'), item.get('value')
+        if name and value:
+            parts.append('{}\n{}'.format(name, _text(str(value))))
+    location = payload.get('location') or {}
+    location_text = ', '.join(str(location.get(key)) for key in ('name', 'city', 'country') if location.get(key))
+    if location_text:
+        parts.append('Location\n' + location_text)
+    return '\n\n'.join(part for part in parts if part.strip())
+
+
+def _oracle_endpoint(posting_url):
+    parsed = urllib.parse.urlsplit(posting_url)
+    if not (parsed.hostname or '').endswith('.oraclecloud.com'):
+        return None
+    match = re.search(r'/job/(\d+)(?:/|$)', parsed.path)
+    if not match:
+        return None
+    endpoint = '{}://{}/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails'
+    endpoint = endpoint.format(parsed.scheme or 'https', parsed.hostname)
+    return endpoint + '?onlyData=true&finder=ById;Id={}&expand=all'.format(match.group(1))
+
+
+def _akamai_oracle_endpoint(posting_url):
+    """Map Akamai's branded Oracle job alias to its exact public ATS record."""
+    parsed = urllib.parse.urlsplit(posting_url)
+    if (parsed.hostname or '').lower() != 'jobs.akamai.com':
+        return None
+    match = re.fullmatch(r'/en/sites/CX_1/job/(\d+)/?', parsed.path)
+    if not match:
+        return None
+    return ('https://fa-extu-saasfaprod1.fa.ocs.oraclecloud.com/'
+            'hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails'
+            '?onlyData=true&finder=ById;Id={}&expand=all').format(match.group(1))
+
+
+def _extract_oracle(source):
+    payload = json.loads(source)
+    items = payload.get('items') or []
+    if not items:
+        return ''
+    job = items[0]
+    parts = [job.get('Title') or '']
+    for label, key in (
+            ('Description', 'ExternalDescriptionStr'),
+            ('Responsibilities', 'ExternalResponsibilitiesStr'),
+            ('Requirements', 'ExternalQualificationsStr')):
+        if job.get(key):
+            parts.append(label + '\n' + _text(job[key]))
+    for label, key in (('Location', 'PrimaryLocation'), ('Work arrangement', 'WorkplaceType')):
+        if job.get(key):
+            parts.append(label + '\n' + _text(str(job[key])))
+    return '\n\n'.join(part for part in parts if part.strip())
+
+
 def fetch_posting_details(posting_url):
     # Public posting APIs identify the exact job without rendering the careers
     # site: https://docs.greenhouse.io/job-board.html and
     # https://developers.smartrecruiters.com/docs/endpoints .
     parsed = urllib.parse.urlsplit(posting_url)
     api_url = None
+    api_headers = {}
+    hibob = _hibob_endpoint(posting_url)
+    hibob_job_id = None
+    if hibob:
+        api_url, hibob_job_id, tenant = hibob
+        api_headers['companyIdentifier'] = tenant
+    oracle_url = _oracle_endpoint(posting_url)
+    if oracle_url:
+        api_url = oracle_url
+    akamai_oracle_url = _akamai_oracle_endpoint(posting_url)
+    if akamai_oracle_url:
+        api_url = akamai_oracle_url
     if parsed.hostname in {'boards.greenhouse.io', 'job-boards.greenhouse.io'}:
         match = re.fullmatch(r'/([^/]+)/jobs/(\d+)/?', parsed.path)
         if match:
@@ -72,18 +242,44 @@ def fetch_posting_details(posting_url):
             failures.append('retrieval time budget exhausted')
             break
         try:
-            request = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            headers = {'User-Agent': 'Mozilla/5.0'}
+            if url == api_url:
+                headers.update(api_headers)
+            request = urllib.request.Request(url, headers=headers)
             with urllib.request.urlopen(request, timeout=min(timeout, remaining)) as response:
                 source = response.read(3000000).decode('utf-8', 'replace')
             descriptions = []
             if url == api_url:
-                payload = json.loads(source)
-                if urllib.parse.urlsplit(url).hostname == 'boards-api.greenhouse.io':
+                if oracle_url or akamai_oracle_url:
+                    descriptions.append(_extract_oracle(source))
+                elif hibob_job_id:
+                    descriptions.append(_extract_hibob(source, api_url, hibob_job_id))
+                elif urllib.parse.urlsplit(url).hostname == 'boards-api.greenhouse.io':
+                    payload = json.loads(source)
                     descriptions.append(_text(payload.get('content') or ''))
                 else:
+                    payload = json.loads(source)
                     sections = (payload.get('jobAd') or {}).get('sections') or {}
                     descriptions.append(_text('\n'.join((sections.get(key) or {}).get('text') or ''
                         for key in ('jobDescription', 'qualifications', 'additionalInformation'))))
+            if urllib.parse.urlsplit(url).hostname == 'www.comeet.com':
+                descriptions.append(_extract_comeet(source))
+            # Nimble's Webflow page is a shell. It publishes the exact
+            # Comeet API URL and loads the posting sections client-side.
+            if urllib.parse.urlsplit(url).hostname == 'www.nimbleway.com':
+                match = re.search(r'const position_path = `([^`]+)`', source)
+                if match:
+                    nimble_url = match.group(1).replace(
+                        '${positionId}', urllib.parse.parse_qs(parsed.query).get('uid', [''])[0])
+                    if nimble_url not in urls:
+                        urls.append(nimble_url)
+            if 'comeet.co/careers-api/2.0/company/' in url:
+                payload = json.loads(source)
+                details = payload.get('details') or []
+                descriptions.append('\n\n'.join(
+                    '{}\n{}'.format(item.get('name'), _text(str(item.get('value'))))
+                    for item in details
+                    if isinstance(item, dict) and item.get('name') and item.get('value')))
             for block in re.findall(r'<script[^>]*type\s*=\s*[\"\']application/ld\+json[\"\'][^>]*>(.*?)</script>', source, re.S | re.I):
                 try:
                     data = json.loads(block)

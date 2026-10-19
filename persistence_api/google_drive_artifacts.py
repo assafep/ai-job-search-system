@@ -119,7 +119,7 @@ class GoogleDriveArtifactStore:
         moved = False
         archived = 0
         if legacy:
-            workload = self._ensure_folder(states['id'], 'submit-ready')
+            workload = self._ensure_folder(states['id'], 'submit')
             destination = self._find_child(workload['id'], 'submission-receipts', FOLDER_MIME)
             if destination and destination['id'] != legacy['id']:
                 raise ValueError('both legacy and new receipt folders exist; refusing an ambiguous merge')
@@ -127,7 +127,7 @@ class GoogleDriveArtifactStore:
             moved = True
             destination = legacy
         else:
-            workload = self._find_child(states['id'], 'submit-ready', FOLDER_MIME)
+            workload = self._find_child(states['id'], 'submit', FOLDER_MIME)
             destination = self._find_child(workload['id'], 'submission-receipts', FOLDER_MIME) if workload else None
         if destination:
             groups = {}
@@ -258,6 +258,17 @@ class GoogleDriveArtifactStore:
                 content = content.encode("utf-8") if isinstance(content, str) else content
                 if existing.get('name') and existing['name'] != filename:
                     self._rename(existing["id"], filename)
+                return self._replace_content(
+                    existing["id"],
+                    content,
+                    mime_type or mimetypes.guess_type(filename)[0] or "application/octet-stream",
+                )
+        # Fallback: for posting artifacts, find by filename to avoid duplicates
+        # when the idempotency key is missing or changed across runs.
+        if filename.startswith("Job Posting - "):
+            existing = self._find_child(folder["id"], filename)
+            if existing:
+                content = content.encode("utf-8") if isinstance(content, str) else content
                 return self._replace_content(
                     existing["id"],
                     content,

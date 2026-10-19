@@ -20,7 +20,9 @@ from datetime import date
 from .journal_format import (
     STATE_TABS,
     ALL_STATES,
-    event_text,
+    OPTIONAL_STATE_TABS,
+    COMPLETED_STATES,
+    build_event_text,
     is_date_paragraph,
     normalize_posting_url,
     parse_application_title,
@@ -59,6 +61,23 @@ def application_tab_title(company, role):
     if available_role > 3:
         return company + separator + role[:available_role - 3].rstrip() + "..."
     return (company[:MAX_TAB_TITLE_LENGTH - 3].rstrip() + "...")[:MAX_TAB_TITLE_LENGTH]
+
+
+def _unique_tab_title(document, title):
+    """Ensure a tab title is unique across the entire Google Docs document."""
+    existing_titles = {tab_title(tab) for tab in flatten_tabs(document.get("tabs", []))}
+    if title not in existing_titles:
+        return title
+    # Append a short suffix to make it unique
+    suffix = 2
+    base = title
+    while True:
+        candidate = title + " ({})".format(suffix)
+        if len(candidate) > MAX_TAB_TITLE_LENGTH:
+            candidate = base[:MAX_TAB_TITLE_LENGTH - len(" ({})".format(suffix)) - 3].rstrip() + "...({})".format(suffix)
+        if candidate not in existing_titles:
+            return candidate
+        suffix += 1
 
 
 class GoogleDocsClient:
@@ -270,20 +289,29 @@ def tab_paragraphs(tab):
         if not paragraph:
             continue
         chunks = []
+        links = []
         for element in paragraph.get("elements") or []:
-            chunks.append((element.get("textRun") or {}).get("content", ""))
+            text_run = element.get("textRun") or {}
+            chunks.append(text_run.get("content", ""))
+            style = text_run.get("textStyle") or {}
+            link_url = (style.get("link") or {}).get("url")
+            if link_url:
+                links.append(link_url)
         is_list_item = bool(paragraph.get("bullet"))
         text = "".join(chunks).rstrip("\n")
         if is_list_item:
             # Some Drive connector responses include the rendered '-' glyph
             # in textRun content, while the native Docs API does not.
             text = re.sub(r"^\s*[-•●○■▪◦]\s+", "", text)
-        paragraphs.append({
+        para = {
             "text": text,
             "isListItem": is_list_item,
             "startIndex": structural.get("startIndex", 0),
             "endIndex": structural.get("endIndex", 0),
-        })
+        }
+        if links:
+            para["links"] = links
+        paragraphs.append(para)
     return paragraphs
 
 
@@ -292,11 +320,22 @@ def first_posting_url(events, paragraphs=None):
         for bullet in event.get("bullets", []):
             match = URL_RE.search(bullet)
             if match:
-                return match.group(0).rstrip(".,)")
+                url = match.group(0).rstrip(".,)")
+                # Skip Drive artifact links; the posting URL is the job-board URL
+                if "drive.google.com/file/d/" in url:
+                    continue
+                return url
     for paragraph in paragraphs or []:
+        # Prefer hyperlink URL if the paragraph text is wrapped in a link
+        links = paragraph.get("links", [])
+        for link in links:
+            if "drive.google.com/file/d/" not in link:
+                return link
         match = URL_RE.search(paragraph.get("text", ""))
         if match:
-            return match.group(0).rstrip(".,)")
+            url = match.group(0).rstrip(".,)")
+            if "drive.google.com/file/d/" not in url:
+                return url
     return ""
 
 
@@ -317,10 +356,20 @@ def artifact_reference(bullet):
 
 
 class GoogleDocsRepository(Repository):
-    """Repository that preserves the user's state-tab and journal conventions."""
+    """Repository that preserves the user's state-tab and journal conventions.
 
-    def __init__(self, access_token, document_id, artifact_root_url=None, application_root_path=None):
+    Completed states (Rejected, Invalidated) live in a separate document.
+    When ``completed_document_id`` is provided, transitions to completed states
+    move the application tab to that document instead of staying in the main journal.
+    """
+
+    def __init__(self, access_token, document_id, artifact_root_url=None,
+                 application_root_path=None, completed_document_id=None):
         self.client = GoogleDocsClient(access_token, document_id)
+        self.completed_client = (
+            GoogleDocsClient(access_token, completed_document_id)
+            if completed_document_id else None
+        )
         self.artifact_root_url = artifact_root_url
         self.application_root_path = application_root_path or ""
         self.artifacts = (
@@ -337,6 +386,36 @@ class GoogleDocsRepository(Repository):
                 applications.append((state, state_tab, tab))
         return applications
 
+    def _completed_application_tabs(self):
+        """Return application tabs from the completed document, if configured."""
+        if self.completed_client is None:
+            return []
+        try:
+            document = self.completed_client.get_document()
+        except Exception:
+            return []
+        applications = []
+        # Only look for COMPLETED_STATES tabs in the completed document
+        states = {}
+        for tab in document.get("tabs") or []:
+            title = tab_title(tab)
+            if title in COMPLETED_STATES and not tab_properties(tab).get("parentTabId"):
+                states[title] = tab
+        for state, state_tab in states.items():
+            for tab in children_of(document, state_tab):
+                applications.append((state, state_tab, tab))
+        return applications
+
+    def _find_application_in_completed(self, application_id):
+        """Look for an application in the completed document."""
+        if self.completed_client is None:
+            raise KeyError(application_id)
+        document = self.completed_client.get_document()
+        for state, state_tab, tab in self._completed_application_tabs():
+            if tab_id(tab) == application_id:
+                return state, state_tab, tab
+        raise KeyError(application_id)
+
     def journal_status(self):
         return journal_status(self.client.get_document())
 
@@ -346,38 +425,6 @@ class GoogleDocsRepository(Repository):
                  'paragraphs': tab_paragraphs(tab)}
                 for tab in document_tabs(self.client.get_document())]
 
-    @fresh_journal_write
-    def bookmark_staged_tab(self, application_id, idempotency_key):
-        if not idempotency_key:
-            raise ValueError('staging bookmark requires an idempotency key')
-        cached = self._idempotency.get(idempotency_key)
-        if cached:
-            return cached
-        document = self.client.get_document()
-        states = state_tabs(document)
-        if any(tab_id(child) == application_id for child in children_of(document, states['Bookmarked'])):
-            result = self.get_application(application_id)
-            self._idempotency[idempotency_key] = result
-            return result
-        tab = find_tab(document.get('tabs'), application_id)
-        parents = [parent for parent in document_tabs(document)
-                   if tab_id(parent) != application_id
-                   and any(tab_id(child) == application_id for child in children_of(document, parent))]
-        if len(parents) != 1 or tab_title(parents[0]) not in {'Replay', 'Relay'}:
-            raise ValueError('only a direct child of Replay or Relay may be bookmarked')
-        # Reject a tab that cannot become an application before any write.
-        self._application('Bookmarked', states['Bookmarked'], tab)
-        move = {'updateDocumentTabProperties': {
-            'tabProperties': {'tabId': application_id, 'parentTabId': tab_id(states['Bookmarked'])},
-            'fields': 'parentTabId'}}
-        # The parent move and its explanation commit in one revision-checked batch.
-        self._append_event_batch(document, tab, application_id, 'replay_bookmarked', {
-            'bullets': ['Position bookmarked from the operator Replay tab.'],
-            'source': 'explicit replay workflow'}, idempotency_key,
-            additional_requests=[move], cache_result=False)
-        result = self.get_application(application_id)
-        self._idempotency[idempotency_key] = result
-        return result
 
     @fresh_journal_write
     def repair_journal(self):
@@ -398,7 +445,7 @@ class GoogleDocsRepository(Repository):
         document = self.client.get_document()
         roots = [t for t in document.get('tabs', []) if not tab_properties(t).get('parentTabId')]
         old = [t for t in roots if tab_title(t) == 'Ready To Apply']
-        new = [t for t in roots if tab_title(t) == 'Ready for Auto-Apply']
+        new = [t for t in roots if tab_title(t) == 'Prepared']
         manual = [t for t in roots if tab_title(t) == 'Manual Apply Required']
         dead = [t for t in roots if tab_title(t) == 'Dead Letters Queue']
         if len(old) > 1 or len(new) > 1 or len(manual) > 1 or len(dead) > 1 or (old and new):
@@ -408,7 +455,7 @@ class GoogleDocsRepository(Repository):
         requests = []
         if old:
             requests.append({'updateDocumentTabProperties': {
-                'tabProperties': {'tabId': tab_id(old[0]), 'title': 'Ready for Auto-Apply'},
+                'tabProperties': {'tabId': tab_id(old[0]), 'title': 'Prepared'},
                 'fields': 'title',
             }})
         if not manual:
@@ -431,6 +478,13 @@ class GoogleDocsRepository(Repository):
                 company = bullet[len('Company: '):].strip() or company
             elif bullet.startswith('Role: '):
                 role = bullet[len('Role: '):].strip() or role
+        # Later correction events can override the company/role
+        for event in events:
+            for bullet in event.get('bullets', []):
+                if bullet.startswith('Corrected company to: '):
+                    company = bullet[len('Corrected company to: '):].strip()
+                elif bullet.startswith('Corrected role to: '):
+                    role = bullet[len('Corrected role to: '):].strip()
         last_event = events[-1] if events else None
         return Application(
             application_id=application_tab_id,
@@ -448,6 +502,33 @@ class GoogleDocsRepository(Repository):
             if tab_id(tab) == application_id:
                 return state, state_tab, tab
         raise KeyError(application_id)
+
+    def _ensure_optional_state_tab(self, document, state_name):
+        """Create a missing optional state tab and return it.
+        Must be called within a @fresh_journal_write context so the tab
+        is created in the same batch as the subsequent operation.
+        """
+        title = _unique_tab_title(document, state_name)
+        self.client.batch_update([
+            {"addDocumentTab": {"tabProperties": {"title": title}}}
+        ], document.get("revisionId"))
+        # Refresh the document to get the newly created tab
+        document = self.client.get_document()
+        for tab in document.get("tabs", []):
+            if tab_title(tab) == state_name and not tab_properties(tab).get("parentTabId"):
+                return tab
+        raise KeyError(f"failed to create optional state tab: {state_name}")
+
+    def _state_tabs(self, document):
+        """Return state tabs, auto-creating any missing optional ones.
+        Must be called within a @fresh_journal_write context so tabs
+        can be created in the same batch as the subsequent operation.
+        """
+        tabs_map = state_tabs(document)
+        for state_name in OPTIONAL_STATE_TABS:
+            if state_name not in tabs_map:
+                tabs_map[state_name] = self._ensure_optional_state_tab(document, state_name)
+        return tabs_map
 
     def _find_by_posting_url(self, document, posting_url):
         posting_url = normalize_posting_url(posting_url)
@@ -470,7 +551,7 @@ class GoogleDocsRepository(Repository):
         return None
 
     @fresh_journal_write
-    def create_application(self, company, role, posting_url, data=None, idempotency_key=None):
+    def create_application(self, company, role, posting_url, target_state="Bookmarked", data=None, idempotency_key=None):
         cached = self._idempotency.get(idempotency_key) if idempotency_key else None
         if cached:
             return cached
@@ -482,33 +563,37 @@ class GoogleDocsRepository(Repository):
             if idempotency_key:
                 self._idempotency[idempotency_key] = result
             return result
-        state_tab = state_tabs(document)["Bookmarked"]
+        state_tabs_map = self._state_tabs(document)
+        state_tab = state_tabs_map.get(target_state) or state_tabs_map["Bookmarked"]
         title = application_tab_title(company, role)
         created = None
-        bookmarked_tabs = children_of(document, state_tab)
+        state_tabs_children = children_of(document, state_tab)
         # A keyed retry may be recovering a tab created before the process
         # failed while appending its first event. Only reuse an uninitialized
         # matching tab, and only when the caller supplied an idempotency key;
         # unkeyed creates retain their normal new-tab behavior.
         if idempotency_key:
             unfinished = [
-                tab for tab in bookmarked_tabs
+                tab for tab in state_tabs_children
                 if tab_title(tab) == title and not parse_events(tab_paragraphs(tab), tab_id(tab))
             ]
             if len(unfinished) == 1:
                 created = unfinished[0]
         if not created:
-            existing_tab_ids = {tab_id(tab) for tab in bookmarked_tabs}
+            # Ensure tab title is unique across the entire document to avoid
+            # Google Docs "Tab title must be unique" errors.
+            title = _unique_tab_title(document, title)
+            existing_tab_ids = {tab_id(tab) for tab in state_tabs_children}
             self.client.batch_update([{"addDocumentTab": {
                 "tabProperties": {"title": title, "parentTabId": tab_id(state_tab)}
             }}], document.get("revisionId"))
             document = self.client.get_document()
-            bookmarked_tabs = children_of(document, state_tabs(document)["Bookmarked"])
-            new_tabs = [tab for tab in bookmarked_tabs if tab_id(tab) not in existing_tab_ids]
+            refreshed_children = children_of(document, state_tab)
+            new_tabs = [tab for tab in refreshed_children if tab_id(tab) not in existing_tab_ids]
             if len(new_tabs) == 1:
                 created = new_tabs[0]
             else:
-                for tab in bookmarked_tabs:
+                for tab in refreshed_children:
                     if tab_title(tab) == title:
                         created = tab
                         break
@@ -531,17 +616,95 @@ class GoogleDocsRepository(Repository):
 
     def get_application(self, application_id):
         document = self.client.get_document()
+        try:
+            state, state_tab, tab = self._find_application(document, application_id)
+            return self._application(state, state_tab, tab)
+        except KeyError:
+            pass
+        # Search the completed document
+        try:
+            state, state_tab, tab = self._find_application_in_completed(application_id)
+            return self._application(state, state_tab, tab)
+        except KeyError:
+            pass
+        raise KeyError(application_id)
+
+    @fresh_journal_write
+    def update_application(self, application_id, company=None, role=None):
+        """Update company and/or role for an existing application, including the tab title and event."""
+        document = self.client.get_document()
         state, state_tab, tab = self._find_application(document, application_id)
-        return self._application(state, state_tab, tab)
+        current_app = self._application(state, state_tab, tab)
+        new_company = company if company is not None else current_app.company
+        new_role = role if role is not None else current_app.role
+        requests = []
+        # Update the tab title
+        new_title = application_tab_title(new_company, new_role)
+        new_title = _unique_tab_title(document, new_title)
+        if tab_title(tab) != new_title:
+            requests.append({
+                "updateDocumentTabProperties": {
+                    "tabProperties": {"tabId": application_id, "title": new_title},
+                    "fields": "title",
+                }
+            })
+        # Append a correction event in the same batch as the tab title update
+        events = parse_events(tab_paragraphs(tab), application_id)
+        if events:
+            first_event = events[0]
+            bullets = first_event.get("bullets", [])
+            updated_bullets = []
+            for bullet in bullets:
+                if bullet.startswith("Company: "):
+                    updated_bullets.append("Company: " + new_company)
+                elif bullet.startswith("Role: "):
+                    updated_bullets.append("Role: " + new_role)
+                else:
+                    updated_bullets.append(bullet)
+            if updated_bullets != bullets:
+                # Build the correction event using the canonical event format
+                # so it shares the same batch_update revision as the tab title change.
+                correction_bullets = [
+                    "Corrected company to: " + new_company,
+                    "Corrected role to: " + new_role,
+                ]
+                event_date = str(date.today())
+                separator = "\n\n"
+                event_text_str = build_event_text(event_date, correction_bullets, separator)
+                start = max(1, tab_end_index(tab) - 1)
+                inserted_end = start + utf16_length(event_text_str)
+                bullet_start = start + utf16_length(separator + event_date + "\n\n")
+                bullet_end = bullet_start + utf16_length("\n".join(correction_bullets) + "\n")
+                requests.extend([
+                    {"insertText": {"location": {"index": start, "tabId": application_id}, "text": event_text_str}},
+                    {"deleteParagraphBullets": {"range": {"startIndex": start, "endIndex": inserted_end + 1, "tabId": application_id}}},
+                    {"createParagraphBullets": {
+                        "range": {"startIndex": bullet_start, "endIndex": bullet_end, "tabId": application_id},
+                        "bulletPreset": "BULLET_DISC_CIRCLE_SQUARE",
+                    }},
+                ])
+        if requests:
+            self.client.batch_update(requests, document.get("revisionId"))
+        result = self.get_application(application_id)
+        return result
 
     def list_applications(self, status=None):
         document = self.client.get_document()
         applications = [self._application(*entry) for entry in self._application_tabs(document)]
+        # Also include applications from the completed document
+        for entry in self._completed_application_tabs():
+            applications.append(self._application(*entry))
         return [app for app in applications if status is None or app.status == status]
 
     def list_events(self, application_id):
         document = self.client.get_document()
-        state, state_tab, tab = self._find_application(document, application_id)
+        try:
+            state, state_tab, tab = self._find_application(document, application_id)
+        except KeyError:
+            try:
+                state, state_tab, tab = self._find_application_in_completed(application_id)
+            except KeyError:
+                raise KeyError(application_id)
         events = parse_events(tab_paragraphs(tab), application_id)
         return [Event(event["event_id"], application_id, "journal_event", journal_timestamp(event["date"]), {
             "display_date": event["display_date"],
@@ -553,12 +716,64 @@ class GoogleDocsRepository(Repository):
         if idempotency_key and idempotency_key in self._idempotency:
             return self._idempotency[idempotency_key]
         document = self.client.get_document()
-        state, state_tab, tab = self._find_application(document, application_id)
+        try:
+            state, state_tab, tab = self._find_application(document, application_id)
+        except KeyError:
+            try:
+                state, state_tab, tab = self._find_application_in_completed(application_id)
+            except KeyError:
+                raise KeyError(application_id)
         durable = self._idempotent_event(tab, application_id, idempotency_key)
         if durable:
             self._idempotency[idempotency_key] = durable
             return durable
+        # Use the appropriate client based on which document the tab lives in
+        client = self.completed_client if state in COMPLETED_STATES else self.client
+        if client is self.completed_client:
+            completed_doc = self.completed_client.get_document()
+            return self._append_event_batch_completed(completed_doc, tab, application_id, event_type, data, idempotency_key)
         return self._append_event_batch(document, tab, application_id, event_type, data, idempotency_key)
+
+    def _append_event_batch_completed(self, document, tab, application_id, event_type, data=None,
+                                       idempotency_key=None, additional_requests=(), cache_result=True):
+        """Append an event in the completed document."""
+        payload = data or {}
+        event_date = str(payload.get("date", date.today()))
+        if not is_date_paragraph(event_date):
+            raise ValueError("journal event date must be YYYY-MM-DD or a supported display date")
+        bullets = payload.get("bullets") or [event_type]
+        bullets = [re.sub(r"^[-•]\s*", "", str(bullet)).strip() for bullet in bullets if str(bullet).strip()]
+        if not bullets:
+            raise ValueError("journal events require at least one non-empty bullet")
+        start = max(1, tab_end_index(tab) - 1)
+        persisted_bullets = list(bullets)
+        if idempotency_key and event_type != "application_package_prepared":
+            persisted_bullets.append(IDEMPOTENCY_PREFIX + idempotency_key)
+        separator = "\n\n"
+        text = build_event_text(event_date, persisted_bullets, separator)
+        date_start = start + utf16_length(separator)
+        date_end = date_start + utf16_length(event_date + "\n\n")
+        bullet_start = date_end
+        bullet_end = bullet_start + utf16_length("\n".join(persisted_bullets) + "\n")
+        inserted_end = start + utf16_length(text)
+        requests = list(additional_requests) + [
+            {"insertText": {"location": {"index": start, "tabId": application_id}, "text": text}},
+            {"deleteParagraphBullets": {"range": {"startIndex": start, "endIndex": inserted_end + 1, "tabId": application_id}}},
+            {"createParagraphBullets": {
+                "range": {"startIndex": bullet_start, "endIndex": bullet_end, "tabId": application_id},
+                "bulletPreset": "BULLET_DISC_CIRCLE_SQUARE",
+            }},
+        ]
+        requests.extend(hyperlink_requests(text, start, application_id))
+        self.completed_client.batch_update(requests, document.get("revisionId"))
+        event = Event("evt_" + uuid.uuid4().hex, application_id, event_type, journal_timestamp(event_date), {
+            "display_date": event_date,
+            "bullets": bullets,
+            "source": payload.get("source", "data layer"),
+        })
+        if idempotency_key and cache_result:
+            self._idempotency[idempotency_key] = event
+        return event
 
     def _append_event_batch(self, document, tab, application_id, event_type, data=None,
                             idempotency_key=None, additional_requests=(), cache_result=True):
@@ -582,7 +797,7 @@ class GoogleDocsRepository(Repository):
         if idempotency_key and event_type != "application_package_prepared":
             persisted_bullets.append(IDEMPOTENCY_PREFIX + idempotency_key)
         separator = "\n\n"
-        text = separator + event_text(event_date, persisted_bullets)
+        text = build_event_text(event_date, persisted_bullets, separator)
         date_start = start + utf16_length(separator)
         date_end = date_start + utf16_length(event_date + "\n\n")
         bullet_start = date_end
@@ -666,6 +881,36 @@ class GoogleDocsRepository(Repository):
         return {"application_id": application_id, "events_repaired": len(events)}
 
     @fresh_journal_write
+    def delete_last_event(self, application_id):
+        """Delete the last event block from an application tab.
+
+        Finds the last event by parsing paragraphs, then deletes the content
+        range from the event's start to the end of the tab.
+        """
+        document = self.client.get_document()
+        _state, _state_tab, tab = self._find_application(document, application_id)
+        paragraphs = tab_paragraphs(tab)
+        events = parse_events(paragraphs, application_id)
+        if not events:
+            return {"application_id": application_id, "deleted": False, "reason": "no events"}
+        # Find the last event that is not the first (scout) event
+        if len(events) < 2:
+            return {"application_id": application_id, "deleted": False, "reason": "only one event"}
+        last_event = events[-1]
+        last_start = last_event.get("start_index", 0)
+        end = max(2, tab_end_index(tab) - 1)
+        if last_start < 1:
+            return {"application_id": application_id, "deleted": False, "reason": "invalid start index"}
+        # Also delete any trailing blank paragraph after the last event
+        requests = [
+            {"deleteContentRange": {
+                "range": {"startIndex": last_start, "endIndex": end, "tabId": application_id}
+            }},
+        ]
+        self.client.batch_update(requests, document.get("revisionId"))
+        return {"application_id": application_id, "deleted": True, "event_date": last_event.get("display_date")}
+
+    @fresh_journal_write
     def rollback_ready_application(self, application_id):
         """Move a ready posting back to Bookmarked and retain only its scout event.
 
@@ -674,8 +919,8 @@ class GoogleDocsRepository(Repository):
         """
         document = self.client.get_document()
         current_state, _state_tab, tab = self._find_application(document, application_id)
-        if current_state != "Ready for Auto-Apply":
-            raise ValueError("rollback requires Ready for Auto-Apply: {}".format(current_state))
+        if current_state != "Prepared":
+            raise ValueError("rollback requires Prepared: {}".format(current_state))
         events = parse_events(tab_paragraphs(tab), application_id)
         posting_url = first_posting_url(events, tab_paragraphs(tab))
         bullets = []
@@ -708,7 +953,7 @@ class GoogleDocsRepository(Repository):
             {"updateDocumentTabProperties": {
                 "tabProperties": {
                     "tabId": application_id,
-                    "parentTabId": tab_id(state_tabs(document)["Bookmarked"]),
+                    "parentTabId": tab_id(self._state_tabs(document)["Bookmarked"]),
                 },
                 "fields": "parentTabId,index",
             }},
@@ -738,12 +983,261 @@ class GoogleDocsRepository(Repository):
         }
 
     @fresh_journal_write
+    def migrate_completed(self):
+        """Move all Rejected and Invalidated applications to the completed document.
+
+        Returns a summary of migrated applications.
+        """
+        if self.completed_client is None:
+            raise RuntimeError("completed document not configured")
+        document = self.client.get_document()
+        migrated = []
+        for state, _state_tab, tab in self._application_tabs(document):
+            if state not in COMPLETED_STATES:
+                continue
+            application_id = tab_id(tab)
+            # Check if already in completed document (idempotent)
+            try:
+                self._find_application_in_completed(application_id)
+                continue  # Already migrated
+            except KeyError:
+                pass
+            # Move to completed document
+            self._move_to_completed_document(
+                application_id, state, tab, state,
+                data={"bullets": ["Migrated to completed document"]},
+                idempotency_key=None
+            )
+            app = self._application(state, None, tab)
+            migrated.append({
+                "application_id": application_id,
+                "company": app.company,
+                "role": app.role,
+                "status": state,
+            })
+        return {"migrated": migrated, "count": len(migrated)}
+
+    def _ensure_completed_state_tab(self, state_name):
+        """Create a missing state tab in the completed document."""
+        if self.completed_client is None:
+            raise RuntimeError("completed document not configured")
+        document = self.completed_client.get_document()
+        for tab in document.get("tabs", []):
+            if tab_title(tab) == state_name and not tab_properties(tab).get("parentTabId"):
+                return tab
+        title = _unique_tab_title(document, state_name)
+        self.completed_client.batch_update([
+            {"addDocumentTab": {"tabProperties": {"title": title}}}
+        ], document.get("revisionId"))
+        document = self.completed_client.get_document()
+        for tab in document.get("tabs", []):
+            if tab_title(tab) == state_name and not tab_properties(tab).get("parentTabId"):
+                return tab
+        raise KeyError(f"failed to create state tab in completed document: {state_name}")
+
+    def _move_to_main_document(self, application_id, target, tab, current_state,
+                                data=None, idempotency_key=None):
+        """Move an application tab from the completed document back to the main document.
+
+        Reverse of _move_to_completed_document: copy content to a new tab in the
+        main document, then delete the source tab from the completed document.
+        """
+        # 1. Ensure the target state tab exists in the main document
+        main_document = self.client.get_document()
+        tabs_map = self._state_tabs(main_document)
+        target_parent = tabs_map.get(target)
+        if target_parent is None:
+            raise KeyError(target)
+
+        # 2. Create a new tab in the main document under the target state
+        source_title = tab_title(tab)
+        new_title = _unique_tab_title(main_document, source_title)
+        existing_tab_ids = {tab_id(t) for t in children_of(main_document, target_parent)}
+        self.client.batch_update([
+            {"addDocumentTab": {
+                "tabProperties": {"title": new_title, "parentTabId": tab_id(target_parent)}
+            }}
+        ], main_document.get("revisionId"))
+        main_document = self.client.get_document()
+        new_tabs = [t for t in children_of(main_document, target_parent)
+                    if tab_id(t) not in existing_tab_ids]
+        if new_tabs:
+            new_tab = new_tabs[0]
+        else:
+            for t in children_of(main_document, target_parent):
+                if tab_title(t) == new_title:
+                    new_tab = t
+                    break
+        if new_tab is None:
+            raise RuntimeError("could not locate new tab in main document")
+
+        new_application_id = tab_id(new_tab)
+
+        # 3. Copy the content from completed document to main document
+        source_content = body_content(tab)
+        if source_content:
+            text_parts = []
+            for structural in source_content:
+                paragraph = structural.get("paragraph")
+                if paragraph:
+                    for element in paragraph.get("elements") or []:
+                        text_run = element.get("textRun") or {}
+                        text_parts.append(text_run.get("content", ""))
+            full_text = "".join(text_parts)
+            if full_text.strip():
+                insert_text = full_text.rstrip("\n") + "\n"
+                self.client.batch_update([
+                    {"insertText": {
+                        "location": {"index": 1, "tabId": new_application_id},
+                        "text": insert_text,
+                    }}
+                ], main_document.get("revisionId"))
+
+        # 4. Append the transition event in the main document
+        detail = [str(item) for item in (data or {}).get("bullets") or [] if str(item).strip()]
+        event_date = str(date.today())
+        bullets = detail + ["Moved from {} to {}".format(current_state, target)]
+        persisted_bullets = list(bullets)
+        if idempotency_key:
+            persisted_bullets.append(IDEMPOTENCY_PREFIX + idempotency_key)
+        separator = "\n\n"
+        event_text_str = build_event_text(event_date, persisted_bullets, separator)
+        new_doc = self.client.get_document()
+        start = max(1, tab_end_index(new_tab) - 1)
+        bullet_start = start + utf16_length(separator + event_date + "\n\n")
+        bullet_end = bullet_start + utf16_length("\n".join(persisted_bullets) + "\n")
+        inserted_end = start + utf16_length(event_text_str)
+        self.client.batch_update([
+            {"insertText": {"location": {"index": start, "tabId": new_application_id}, "text": event_text_str}},
+            {"deleteParagraphBullets": {"range": {"startIndex": start, "endIndex": inserted_end + 1, "tabId": new_application_id}}},
+            {"createParagraphBullets": {
+                "range": {"startIndex": bullet_start, "endIndex": bullet_end, "tabId": new_application_id},
+                "bulletPreset": "BULLET_DISC_CIRCLE_SQUARE",
+            }},
+        ], new_doc.get("revisionId"))
+
+        # 5. Delete the source tab from the completed document
+        completed_document = self.completed_client.get_document()
+        self.completed_client.batch_update([
+            {"deleteTab": {"tabId": application_id}},
+        ], completed_document.get("revisionId"))
+
+        # 6. Return the application from the main document using the new ID
+        result = self.get_application(new_application_id)
+        return result
+
+    def _move_to_completed_document(self, application_id, target, tab, current_state,
+                                     data=None, idempotency_key=None):
+        """Move an application tab from the main document to the completed document.
+
+        Google Docs does not support cross-document tab moves, so we copy the
+        content to a new tab in the completed document, then delete the source tab.
+        The new tab gets a new ID from Google Docs.
+        """
+        if self.completed_client is None:
+            raise RuntimeError("completed document not configured for transition to " + target)
+
+        # 1. Create the target state tab if missing
+        target_parent = self._ensure_completed_state_tab(target)
+        completed_document = self.completed_client.get_document()
+
+        # 2. Create a new tab in the completed document
+        source_title = tab_title(tab)
+        new_title = _unique_tab_title(completed_document, source_title)
+        existing_tab_ids = {tab_id(t) for t in children_of(completed_document, target_parent)}
+        self.completed_client.batch_update([
+            {"addDocumentTab": {
+                "tabProperties": {"title": new_title, "parentTabId": tab_id(target_parent)}
+            }}
+        ], completed_document.get("revisionId"))
+        completed_document = self.completed_client.get_document()
+        new_tabs = [t for t in children_of(completed_document, target_parent)
+                    if tab_id(t) not in existing_tab_ids]
+        if new_tabs:
+            new_tab = new_tabs[0]
+        else:
+            for t in children_of(completed_document, target_parent):
+                if tab_title(t) == new_title:
+                    new_tab = t
+                    break
+        if new_tab is None:
+            raise RuntimeError("could not locate new tab in completed document")
+
+        new_application_id = tab_id(new_tab)
+
+        # 3. Copy the content from source to destination
+        source_content = body_content(tab)
+        if source_content:
+            text_parts = []
+            for structural in source_content:
+                paragraph = structural.get("paragraph")
+                if paragraph:
+                    for element in paragraph.get("elements") or []:
+                        text_run = element.get("textRun") or {}
+                        text_parts.append(text_run.get("content", ""))
+            full_text = "".join(text_parts)
+            if full_text.strip():
+                insert_text = full_text.rstrip("\n") + "\n"
+                self.completed_client.batch_update([
+                    {"insertText": {
+                        "location": {"index": 1, "tabId": new_application_id},
+                        "text": insert_text,
+                    }}
+                ], completed_document.get("revisionId"))
+
+        # 4. Append the transition event in the completed document
+        detail = [str(item) for item in (data or {}).get("bullets") or [] if str(item).strip()]
+        event_date = str(date.today())
+        bullets = detail + ["Moved from {} to {}".format(current_state, target)]
+        persisted_bullets = list(bullets)
+        if idempotency_key:
+            persisted_bullets.append(IDEMPOTENCY_PREFIX + idempotency_key)
+        separator = "\n\n"
+        event_text_str = build_event_text(event_date, persisted_bullets, separator)
+        new_doc = self.completed_client.get_document()
+        start = max(1, tab_end_index(new_tab) - 1)
+        bullet_start = start + utf16_length(separator + event_date + "\n\n")
+        bullet_end = bullet_start + utf16_length("\n".join(persisted_bullets) + "\n")
+        inserted_end = start + utf16_length(event_text_str)
+        self.completed_client.batch_update([
+            {"insertText": {"location": {"index": start, "tabId": new_application_id}, "text": event_text_str}},
+            {"deleteParagraphBullets": {"range": {"startIndex": start, "endIndex": inserted_end + 1, "tabId": new_application_id}}},
+            {"createParagraphBullets": {
+                "range": {"startIndex": bullet_start, "endIndex": bullet_end, "tabId": new_application_id},
+                "bulletPreset": "BULLET_DISC_CIRCLE_SQUARE",
+            }},
+        ], new_doc.get("revisionId"))
+
+        # 5. Delete the source tab from the main document
+        source_document = self.client.get_document()
+        self.client.batch_update([
+            {"deleteTab": {"tabId": application_id}},
+        ], source_document.get("revisionId"))
+
+        # 6. Return the application from the completed document using the new ID
+        result = self.get_application(new_application_id)
+        return result
+
+    @fresh_journal_write
     def transition(self, application_id, target, data=None, idempotency_key=None):
         cached = self._idempotency.get(idempotency_key) if idempotency_key else None
         if cached:
             return cached
-        document = self.client.get_document()
-        current_state, current_parent, tab = self._find_application(document, application_id)
+        # Search the main document first, then the completed document
+        in_completed = False
+        try:
+            document = self.client.get_document()
+            current_state, current_parent, tab = self._find_application(document, application_id)
+        except KeyError:
+            if self.completed_client is not None:
+                try:
+                    current_state, current_parent, tab = self._find_application_in_completed(application_id)
+                    in_completed = True
+                    document = self.completed_client.get_document()
+                except KeyError:
+                    pass
+            if not in_completed:
+                raise KeyError(application_id)
         durable = self._idempotent_event(tab, application_id, idempotency_key)
         if durable:
             result = self.get_application(application_id)
@@ -756,18 +1250,60 @@ class GoogleDocsRepository(Repository):
             # of treating the already-moved tab as a complete operation.
             if idempotency_key:
                 detail = [str(item) for item in (data or {}).get("bullets") or [] if str(item).strip()]
-                self._append_event_batch(document, tab, application_id, "status_changed", {
-                    "date": str(date.today()),
-                    "bullets": detail + ["Moved to {}".format(target)],
-                    "source": (data or {}).get("source", "data layer"),
-                }, idempotency_key, cache_result=False)
+                if in_completed:
+                    self._append_event_batch_completed(document, tab, application_id, "status_changed", {
+                        "date": str(date.today()),
+                        "bullets": detail + ["Moved to {}".format(target)],
+                        "source": (data or {}).get("source", "data layer"),
+                    }, idempotency_key, cache_result=False)
+                else:
+                    self._append_event_batch(document, tab, application_id, "status_changed", {
+                        "date": str(date.today()),
+                        "bullets": detail + ["Moved to {}".format(target)],
+                        "source": (data or {}).get("source", "data layer"),
+                    }, idempotency_key, cache_result=False)
                 result = self.get_application(application_id)
                 self._idempotency[idempotency_key] = result
                 return result
             result = self._application(current_state, current_parent, tab)
             return result
         validate_transition(current_state, target)
-        target_parent = state_tabs(document)[target]
+
+        # If source is in the completed document and target is not a completed state, move back
+        if in_completed and target not in COMPLETED_STATES:
+            result = self._move_to_main_document(
+                application_id, target, tab, current_state, data, idempotency_key
+            )
+            if idempotency_key:
+                self._idempotency[idempotency_key] = result
+            from services.activity_log import log_transition
+            if isinstance(result, dict):
+                company, role = result.get("company"), result.get("role")
+            else:
+                company, role = getattr(result, "company", ""), getattr(result, "role", "")
+            log_transition(company, role, current_state, target)
+            return result
+
+        # If target is a completed state and we have a completed document, move there
+        if target in COMPLETED_STATES and self.completed_client is not None:
+            result = self._move_to_completed_document(
+                application_id, target, tab, current_state, data, idempotency_key
+            )
+            if idempotency_key:
+                self._idempotency[idempotency_key] = result
+            from services.activity_log import log_transition
+            if isinstance(result, dict):
+                company, role = result.get("company"), result.get("role")
+            else:
+                company, role = getattr(result, "company", ""), getattr(result, "role", "")
+            log_transition(company, role, current_state, target)
+            return result
+
+        # Same-document transition
+        tabs_map = self._state_tabs(document)
+        target_parent = tabs_map.get(target)
+        if target_parent is None:
+            raise KeyError(target)
         move = {"updateDocumentTabProperties": {
             "tabProperties": {
                 "tabId": application_id,
@@ -894,7 +1430,12 @@ class GoogleDocsRepository(Repository):
 
     def list_artifacts(self, application_id):
         document = self.client.get_document()
-        state, parent, tab = self._find_application(document, application_id)
+        try:
+            state, parent, tab = self._find_application(document, application_id)
+        except KeyError:
+            # Duplicate checks also inspect handled postings in the completed
+            # journal. Their artifacts remain readable after the tab moves.
+            state, parent, tab = self._find_application_in_completed(application_id)
         application = self._application(state, parent, tab)
         artifacts = []
         seen_file_ids = set()
@@ -1000,6 +1541,7 @@ def document_id_from_url(value):
 def repository_from_environment():
     access_token = token_from_environment()
     document = os.environ.get("GOOGLE_INTERVIEW_JOURNAL_URL") or os.environ.get("GOOGLE_DOCUMENT_ID")
+    completed_document = os.environ.get("GOOGLE_COMPLETED_JOURNAL_URL")
     artifact_root = os.environ.get("GOOGLE_ARTIFACT_ROOT_URL")
     application_root_path = os.environ.get("GOOGLE_APPLICATION_ROOT_PATH")
     if not document or not artifact_root:
@@ -1014,6 +1556,7 @@ def repository_from_environment():
             validate(runtime)
             drive = runtime.get("google_drive", {})
             document = document or drive.get("interview_journal_url")
+            completed_document = completed_document or drive.get("completed_journal_url")
             artifact_root = artifact_root or drive.get("artifact_root_url")
             application_root_path = application_root_path or drive.get("application_root_path")
         except IOError:
@@ -1023,9 +1566,11 @@ def repository_from_environment():
             "Missing Google credentials or GOOGLE_INTERVIEW_JOURNAL_URL; set "
             "GOOGLE_ACCESS_TOKEN or refresh-token credentials"
         )
+    completed_doc_id = document_id_from_url(completed_document) if completed_document else None
     return GoogleDocsRepository(
         access_token,
         document_id_from_url(document),
         artifact_root,
         application_root_path,
+        completed_doc_id,
     )

@@ -24,15 +24,15 @@ the in-memory test backend.
 
 ## Journal model
 
-The canonical application states are `Bookmarked`, `Ready for Auto-Apply`,
+The canonical application states are `Bookmarked`, `Prepared`,
 `Manual Apply Required`, `Dead Letters Queue`, `Applied`, `Interviewing`, `Rejected`, and `Offer`.
-Every posting in `Ready for Auto-Apply` is authorized for automatic submission;
+Every posting in `Prepared` is authorized for automatic submission;
 do not create or wait for a human approval request for that queue. Ordinary failed
 auto-apply attempts move the posting to the manual queue, with an explanatory
 transition event attributed to the auto-apply agent. Unconfirmed submission
 requires manual reconciliation before any retry. Successful package storage advances
 Bookmarked postings automatically; no human-review gate is allowed before
-Ready for Auto-Apply. Automatic submission must not consume the manual queue.
+Prepared. Automatic submission must not consume the manual queue.
 System errors and failed Bookmarked-package preparation transition to Dead Letters Queue,
 with an explanatory event and a deterministic idempotency key. Never recreate
 deleted postings or regress Applied/Interviewing/terminal states on failure.

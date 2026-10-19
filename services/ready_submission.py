@@ -1,4 +1,4 @@
-"""Consume Ready for Auto-Apply, one item at a time, without regenerating packages."""
+"""Consume Prepared, one item at a time, without regenerating packages."""
 
 import argparse
 import base64
@@ -31,7 +31,7 @@ class ReadySubmission:
     @staticmethod
     def receipt_path(application_id):
         from persistence_api.storage_layout import workload_state_path
-        return workload_state_path('submit-ready', 'submission-receipts/{}.json'.format(application_id))
+        return workload_state_path('submit-prepared', 'submission-receipts/{}.json'.format(application_id))
 
     def _receipt(self, application_id):
         try:
@@ -45,7 +45,26 @@ class ReadySubmission:
         data = result.get('content')
         if data is None:
             data = base64.b64decode(result['content_base64'])
-        return json.loads(data)
+        if isinstance(data, str):
+            data = data.encode('utf-8')
+        if not data or not data.strip():
+            return self._unreadable_receipt(application_id)
+        try:
+            receipt = json.loads(data)
+        except (json.JSONDecodeError, UnicodeDecodeError, TypeError):
+            return self._unreadable_receipt(application_id)
+        if not isinstance(receipt, dict):
+            return self._unreadable_receipt(application_id)
+        return receipt
+
+    @staticmethod
+    def _unreadable_receipt(application_id):
+        """An empty receipt file means a submission may already have started."""
+        return {
+            'status': 'Submission unconfirmed',
+            'application_id': application_id,
+            'blockers': ['Submission receipt was empty or unreadable. Verify whether the application was received before applying again.'],
+        }
 
     def _record_confirmed(self, application_id, receipt):
         confirmation = receipt.get('confirmation_text') or receipt.get('application_reference')
@@ -58,7 +77,7 @@ class ReadySubmission:
             'source': 'submission workflow',
         }, 'submission-confirmed-' + application_id)
         application = self.persistence.get_application(application_id)
-        if application['status'] in {'Ready for Auto-Apply', 'Manual Apply Required'}:
+        if application['status'] in {'Prepared', 'Manual Apply Required'}:
             self.persistence.transition(application_id, 'Applied', {
                 'source': 'verified external submission',
             }, 'submission-applied-' + application_id)
@@ -71,7 +90,7 @@ class ReadySubmission:
         application = self.persistence.get_application(application_id)
         target = ('Dead Letters Queue' if receipt.get('failure_kind') == 'system_error'
                   and receipt.get('status') != 'Submission unconfirmed' else 'Manual Apply Required')
-        if application['status'] in {'Ready for Auto-Apply', target}:
+        if application['status'] in {'Prepared', target}:
             self.persistence.transition(application_id, target, {
                 'source': 'auto-apply agent',
                 'bullets': ['Auto-apply failed: ' + '; '.join(receipt.get('blockers') or [receipt.get('status', 'Unknown failure')]),
@@ -86,8 +105,8 @@ class ReadySubmission:
             return result
         except Exception as exc:
             app = self.persistence.get_application(application_id)
-            if app is not None and app['status'] == 'Ready for Auto-Apply':
-                receipt = self._receipt(application_id) or {'status': 'Blocked'}
+            if app is not None and app['status'] == 'Prepared':
+                receipt = self._receipt(application_id) or {'status': 'Blocked', 'pre_submission_failure': True}
                 receipt = dict(receipt, application_id=application_id,
                                blockers=['Auto-apply error: ' + str(exc)])
                 if receipt['status'] == 'Blocked':
@@ -107,16 +126,22 @@ class ReadySubmission:
                 self._record_confirmed(application_id, receipt)
                 return dict(receipt, replayed=True)
             if receipt['status'] == 'Submission unconfirmed':
-                return dict(receipt, blockers=['Previous submission is unconfirmed; verify its outcome before attempting another submission.'], replayed=True)
+                blockers = receipt.get('blockers') or [
+                    'Previous submission is unconfirmed; verify its outcome before attempting another submission.']
+                return dict(receipt, blockers=blockers, replayed=True)
             # Old runs may have left a pending approval receipt. Ready for
             # Auto-Apply now authorizes submission, so discard that stale
             # checkpoint and continue through package validation.
-            if receipt.get('approval_pending'):
+            if receipt.get('approval_pending') or (
+                    receipt.get('pre_submission_failure') is True
+                    and receipt.get('status') == 'Blocked'
+                    and receipt.get('failure_kind') == 'system_error'
+                    and not receipt.get('package_sha256')):
                 receipt = None
             else:
                 return dict(receipt, replayed=True)
-        if app['status'] != 'Ready for Auto-Apply':
-            raise ValueError('submission requires Ready for Auto-Apply; found ' + app['status'])
+        if app['status'] != 'Prepared':
+            raise ValueError('submission requires Prepared; found ' + app['status'])
         artifacts = self.persistence.list_artifacts(application_id) or []
         packages = [a for a in artifacts if ' Cover Letter & Resume - ' in a.get('name', '')
                     and a.get('name', '').lower().endswith('.pdf')]
@@ -137,7 +162,7 @@ class ReadySubmission:
         context = {
             'application': app, 'applicant_profile': self.persistence.get_profile(),
             'package': artifact, 'package_bytes': content, 'package_sha256': digest,
-            'reasoning_effort': effort_for_workflow('submit-ready'),
+            'reasoning_effort': effort_for_workflow('submit-prepared'),
             'submission_authorized_by_queue': True,
         }
         # Durably mark the attempt before transmission. An interrupted adapter
@@ -181,7 +206,7 @@ class ReadySubmission:
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description='Consume Ready for Auto-Apply with confirmed-result tracking')
+    parser = argparse.ArgumentParser(description='Consume Prepared with confirmed-result tracking')
     parser.add_argument('--application-id', help='Run exactly this application')
     parser.add_argument('--limit', type=int, default=1)
     args = parser.parse_args(argv)
@@ -191,7 +216,7 @@ def main(argv=None):
     persistence = PersistenceApiClient()
     runner = ReadySubmission(persistence, registry_from_environment())
     ids = [args.application_id] if args.application_id else [a['application_id'] for a in
-           persistence.list_applications(status='Ready for Auto-Apply')[:args.limit]]
+           persistence.list_applications(status='Prepared')[:args.limit]]
     results = [runner.run_one(application_id) for application_id in ids]
     print(json.dumps(results, indent=2, ensure_ascii=False))
     return 0 if all(r['status'] in {'Submitted successfully', 'Already submitted'} for r in results) else 2

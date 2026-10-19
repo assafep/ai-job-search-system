@@ -4,11 +4,19 @@ from services.workflow_runtime import WorkflowRuntime
 def test_adzuna_source_is_not_fetched_without_explicit_source(monkeypatch):
     called = []
 
-    def unexpected():
+    class Board:
+        def __init__(self, boards, opener=None, timeout=30):
+            pass
+
+        def list_jobs(self):
+            return []
+
+    def unexpected(*args, **kwargs):
         called.append(True)
         raise AssertionError("source should not be fetched")
 
-    monkeypatch.setattr("adapters.job_boards.adzuna.client_from_environment", unexpected)
+    monkeypatch.setattr("adapters.job_boards.greenhouse.GreenhouseJobBoard", Board)
+    monkeypatch.setattr("adapters.job_boards.adzuna.AdzunaJobBoard", unexpected)
     context = {"source_names": ["greenhouse"]}
     WorkflowRuntime._enrich_discovery_context(context)
     assert called == []
@@ -16,13 +24,15 @@ def test_adzuna_source_is_not_fetched_without_explicit_source(monkeypatch):
 
 def test_adzuna_source_fetches_postings(monkeypatch):
     class Client:
+        def __init__(self, *args, **kwargs):
+            pass
         def search(self, **kwargs):
             assert kwargs["what"] == "python OR backend"
             assert kwargs["where"] == "Tel Aviv"
             return [{"company": "Example", "role": "Engineer", "posting_url": "https://example"}]
 
     monkeypatch.setattr(
-        "adapters.job_boards.adzuna.client_from_environment", lambda: Client()
+        "adapters.job_boards.adzuna.AdzunaJobBoard", Client
     )
     context = {
         "source_names": ["adzuna"],

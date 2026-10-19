@@ -36,7 +36,7 @@ class AutomationDaemon:
         queued = {
             (record.event.get("payload") or {}).get("application_id")
             for record in self.registry.records.values()
-            if record.workflow == "prepare-bookmarked" and record.status in {"queued", "running"}
+            if record.workflow == "prepare-validated" and record.status in {"queued", "running"}
         }
         created = []
         for application in applications:
@@ -94,7 +94,7 @@ class AutomationDaemon:
         return [dispatch('application_submission_schedule',
                          {'application_id': application['application_id']},
                          event_id='submit-' + application['application_id'], registry=self.registry)
-                for application in self.persistence_client.list_applications(status='Ready for Auto-Apply') or []]
+                for application in self.persistence_client.list_applications(status='Prepared') or []]
 
     def run_forever(self, interval_seconds=86400):
         while True:

@@ -1,14 +1,13 @@
 name: handle-incoming-email
 trigger:
   type: incoming_email
+  event_type: incoming_email
+agent: correspondence
 input_states:
   - Applied
   - Interviewing
-steps:
-  - match_email_thread
-  - classify_intent
-  - update_application_state_or_prepare_response
-  - send_according_to_approval_policy
+external_actions:
+  - send_recruitment_email
 outcomes:
   processed: null
   interview: Interviewing

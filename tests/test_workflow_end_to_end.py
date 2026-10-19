@@ -8,7 +8,7 @@ def applied_application(repository):
     application = repository.create_application(
         "Example", "Backend", "https://example.test/job"
     )
-    repository.transition(application.application_id, "Ready for Auto-Apply")
+    repository.transition(application.application_id, "Prepared")
     repository.transition(application.application_id, "Applied")
     return application
 

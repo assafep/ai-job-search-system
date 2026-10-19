@@ -1,9 +1,10 @@
 {
   "default": "medium",
   "workflows": {
-    "discover-and-bookmark": "medium",
-    "prepare-bookmarked": "medium",
-    "submit-ready": "medium",
+    "bookmark-discovered": "medium",
+    "validate-bookmarked": "medium",
+    "prepare-validated": "medium",
+    "submit-prepared": "medium",
     "prepare-interview": "medium",
     "handle-incoming-email": "medium",
     "reconcile": "medium"

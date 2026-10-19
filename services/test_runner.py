@@ -15,18 +15,11 @@ import sys
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 AGENTS = {
-    "job-discovery": "agents/job-discovery",
+    "read-posting": "agents/read-posting",
+    "score": "agents/score",
     "application": "agents/application",
     "interview-prep": "agents/interview-prep",
     "correspondence": "agents/correspondence",
-}
-WORKFLOWS = {
-    "submit-ready": "workflows/submit-ready.yaml",
-    "discover-and-bookmark": "workflows/discover-and-bookmark.yaml",
-    "prepare-bookmarked": "workflows/prepare-bookmarked.yaml",
-    "prepare-interview": "workflows/prepare-interview.yaml",
-    "handle-incoming-email": "workflows/handle-incoming-email.yaml",
-    "reconcile": "workflows/reconcile.yaml",
 }
 
 
@@ -40,40 +33,47 @@ def resolve(path):
 
 
 def parse_workflow(path):
-    """Parse a workflow YAML file returning name, trigger, input_states, steps, outcomes, and side_effects.
+    """Parse a workflow YAML file returning name, trigger, agent, input_states, external_actions, outcomes, and side_effects.
 
     Uses a minimal line-based parser to avoid a hard PyYAML dependency.
     The YAML format is simple enough that this approach is robust.
     """
     name = None
     trigger = {}
+    agent = None
     input_states = []
-    steps = []
+    external_actions = []
     outcomes = {}
     side_effects = None
-    current_section = None  # tracks which top-level key we're inside
+    current_section = None
 
     with open(resolve(path)) as handle:
         for line in handle:
             stripped = line.rstrip()
             if not stripped or stripped.startswith('#'):
                 continue
-            # Top-level keys (no leading whitespace)
             if not line.startswith(' ') and not line.startswith('\t'):
                 if stripped.startswith('name:'):
                     name = stripped.split(':', 1)[1].strip()
                     current_section = 'name'
                 elif stripped.startswith('trigger:'):
                     current_section = 'trigger'
+                elif stripped.startswith('agent:'):
+                    value = stripped.split(':', 1)[1].strip()
+                    agent = None if value == 'null' else value
+                    current_section = 'agent'
                 elif stripped.startswith('input_states:'):
-                    # Check for inline empty list
                     inline = stripped.split(':', 1)[1].strip()
                     if inline == '[]':
                         current_section = None
                     else:
                         current_section = 'input_states'
-                elif stripped.startswith('steps:'):
-                    current_section = 'steps'
+                elif stripped.startswith('external_actions:'):
+                    inline = stripped.split(':', 1)[1].strip()
+                    if inline == '[]':
+                        current_section = None
+                    else:
+                        current_section = 'external_actions'
                 elif stripped.startswith('outcomes:'):
                     current_section = 'outcomes'
                 elif stripped.startswith('side_effects:'):
@@ -82,19 +82,18 @@ def parse_workflow(path):
                 else:
                     current_section = None
                 continue
-            # Indented content
             if current_section == 'trigger':
                 match = re.match(r'\s+(\w[\w_]*):\s*(.*)', stripped)
                 if match:
-                    trigger[match.group(1)] = match.group(2).strip()
-            elif current_section == 'input_states':
+                    value = match.group(2).strip()
+                    trigger[match.group(1)] = None if value == 'null' else value
+            elif current_section in ('input_states', 'external_actions'):
                 match = re.match(r'\s+-\s+(.+)', stripped)
                 if match:
-                    input_states.append(match.group(1).strip())
-            elif current_section == 'steps':
-                match = re.match(r'\s+-\s+([A-Za-z0-9_]+)\s*$', stripped)
-                if match:
-                    steps.append(match.group(1))
+                    if current_section == 'input_states':
+                        input_states.append(match.group(1).strip())
+                    elif current_section == 'external_actions':
+                        external_actions.append(match.group(1).strip())
             elif current_section == 'outcomes':
                 match = re.match(r'\s+([A-Za-z0-9_]+):\s*(.*)', stripped)
                 if match:
@@ -103,12 +102,33 @@ def parse_workflow(path):
     return {
         'name': name,
         'trigger': trigger,
+        'agent': agent,
         'input_states': input_states,
-        'steps': steps,
+        'external_actions': external_actions,
         'outcomes': outcomes,
         'side_effects': side_effects,
         'path': path,
     }
+
+
+def discover_workflows():
+    """Auto-discover workflow blueprints from the workflows/ directory.
+
+    Returns a dict mapping workflow name to relative YAML path, sorted by filename.
+    """
+    workflows_dir = os.path.join(ROOT, "workflows")
+    result = {}
+    if os.path.isdir(workflows_dir):
+        for filename in sorted(os.listdir(workflows_dir)):
+            if filename.endswith(".yaml"):
+                path = "workflows/" + filename
+                definition = parse_workflow(path)
+                if definition.get("name"):
+                    result[definition["name"]] = path
+    return result
+
+
+WORKFLOWS = discover_workflows()
 
 
 def validate_output(value, schema, path="output"):
@@ -128,19 +148,20 @@ def validate_output(value, schema, path="output"):
         "number": isinstance(value, (int, float)) and not isinstance(value, bool),
         "boolean": isinstance(value, bool),
     }
-    if wanted and not matches.get(wanted, True):
-        errors.append("{} must be a {}".format(path, wanted))
+    wanted_types = wanted if isinstance(wanted, list) else [wanted]
+    if wanted_types and not any(matches.get(item, True) for item in wanted_types):
+        errors.append("{} must be one of {}".format(path, wanted_types))
         return errors
     if "enum" in schema and value not in schema["enum"]:
         errors.append("{} must be one of {}".format(path, schema["enum"]))
-    if wanted == "object":
+    if "object" in wanted_types:
         for field in schema.get("required", []):
             if field not in value:
                 errors.append("missing required field: {}".format(field))
         for field, definition in schema.get("properties", {}).items():
             if field in value:
                 errors.extend(validate_output(value[field], definition, path + "." + field))
-    elif wanted == "array" and "items" in schema:
+    elif "array" in wanted_types and "items" in schema:
         for index, item in enumerate(value):
             errors.extend(validate_output(item, schema["items"], "{}[{}]".format(path, index)))
     return errors
@@ -179,7 +200,7 @@ def workload_test(workflow_name, fixture_path):
     from .workload_runner import build_plan
     result = build_plan(workflow_name, fixture)
     result["fixture"] = fixture
-    result["valid"] = bool(result["workflow_steps"])
+    result["valid"] = bool(result.get("outcomes"))
     return 0 if result["valid"] else 1, result
 
 
@@ -188,8 +209,8 @@ def list_items():
         "agents": sorted(AGENTS),
         "workflows": sorted(WORKFLOWS),
         "examples": {
-            "agent": "python3 -m services.test_runner agent job-discovery --fixture tests/fixtures/agents/job-discovery/input.json",
-            "agent_with_output": "python3 -m services.test_runner agent job-discovery --fixture tests/fixtures/agents/job-discovery/input.json --output tests/fixtures/agents/job-discovery/output.json",
+            "agent": "python3 -m services.test_runner agent read-posting --fixture tests/fixtures/agents/read-posting/input.json",
+            "agent_with_output": "python3 -m services.test_runner agent read-posting --fixture tests/fixtures/agents/read-posting/input.json --output tests/fixtures/agents/read-posting/output.json",
             "workload": "python3 -m services.test_runner workload prepare-interview --fixture tests/fixtures/workloads/prepare-interview.json",
         },
     }

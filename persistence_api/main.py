@@ -182,15 +182,18 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["applications"]:
                 app = repository.create_application(
                     required(data, "company"), required(data, "role"), required(data, "posting_url"),
-                    data.get("data"), data.get("idempotency_key"))
+                    target_state=data.get("target_state", "Bookmarked"),
+                    data=data.get("data"), idempotency_key=data.get("idempotency_key"))
                 return self.send_json(201, app)
             if parts == ["journal", "repair"]:
                 return self.send_json(200, repository.repair_journal())
             if parts == ["journal", "migrate-application-states"]:
                 return self.send_json(200, repository.migrate_application_states())
-            if parts == ["journal", "rollback-ready"]:
+            if parts == ["journal", "migrate-completed"]:
+                return self.send_json(200, repository.migrate_completed())
+            if parts == ["journal", "rollback-prepared"]:
                 results = []
-                for application in repository.list_applications(status="Ready for Auto-Apply"):
+                for application in repository.list_applications(status="Prepared"):
                     results.append(repository.rollback_ready_application(application.application_id))
                 return self.send_json(200, {"rolled_back": results})
             if parts == ["profile"]:
@@ -210,8 +213,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(201, event)
             if len(parts) == 3 and parts[0] == "applications" and parts[2] == "repair-format":
                 return self.send_json(200, repository.repair_application_journal(parts[1]))
+            if len(parts) == 3 and parts[0] == "applications" and parts[2] == "update":
+                app = repository.update_application(
+                    parts[1],
+                    company=data.get("company"),
+                    role=data.get("role"),
+                )
+                return self.send_json(200, app)
             if len(parts) == 3 and parts[0] == "applications" and parts[2] == "delete":
                 return self.send_json(200, repository.delete_application(parts[1]))
+            if len(parts) == 3 and parts[0] == "applications" and parts[2] == "delete-last-event":
+                return self.send_json(200, repository.delete_last_event(parts[1]))
             if len(parts) == 3 and parts[0] == "applications" and parts[2] == "artifacts":
                 content = base64.b64decode(required(data, "content_base64"), validate=True)
                 artifact = repository.store_artifact(

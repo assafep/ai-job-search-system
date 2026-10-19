@@ -59,7 +59,7 @@ def test_discovery_metadata_is_preserved_in_creation_event():
         "Example",
         "Backend",
         "https://example.test/job",
-        {"relevance_evidence": ["senior", "backend"]},
+        data={"relevance_evidence": ["senior", "backend"]},
     )
     event = repository.list_events(application.application_id)[0]
     assert "Posting URL: https://example.test/job" in event.data["bullets"]

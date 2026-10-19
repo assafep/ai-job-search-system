@@ -1,0 +1,14 @@
+name: prepare-validated
+trigger:
+  type: queued_application
+  event_type: application_package_schedule
+agent: application
+input_states:
+  - Validated
+external_actions: []
+outcomes:
+  prepared: Prepared
+  failed: Manual Apply Required
+  duplicate: Duplicate
+  system_error: Dead Letters Queue
+side_effects: through_data_layer_and_runtime

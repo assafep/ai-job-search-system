@@ -2,15 +2,12 @@ name: prepare-interview
 trigger:
   type: calendar_event
   event: new_or_changed_interview
+  event_type: calendar_event
+agent: interview-prep
 input_states:
   - Applied
   - Interviewing
-steps:
-  - detect_meeting
-  - associate_with_application
-  - research_company_product_role_interviewer_and_engineering_culture
-  - create_interview_briefing
-  - track_preparation_status
+external_actions: []
 outcomes:
   prepared: Interviewing
   failed: null

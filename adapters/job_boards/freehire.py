@@ -71,6 +71,7 @@ class FreehireJobBoard:
             "source": "freehire",
             "source_id": job.get("public_slug", ""),
             "updated_at": job.get("updated_at") or job.get("posted_at"),
+            "posted_at": job.get("posted_at"),
             "salary_min": enrichment.get("salary_min"),
             "salary_max": enrichment.get("salary_max"),
         }

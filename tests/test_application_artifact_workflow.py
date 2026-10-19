@@ -4,7 +4,7 @@ from services.workload_runner import execute
 
 def test_application_result_plans_combined_pdf_when_cv_is_available():
     operations = plan_persistence_writes(
-        "prepare-bookmarked",
+        "prepare-validated",
         {
             "workload_id": "work-application",
             "application_id": "tab-1",
@@ -23,7 +23,7 @@ def test_application_result_plans_combined_pdf_when_cv_is_available():
 
 def test_existing_bookmarked_application_is_promoted_before_package():
     operations = plan_persistence_writes(
-        "prepare-bookmarked",
+        "prepare-validated",
         {
             "workload_id": "work-bookmarked-application",
             "application_id": "tab-1",
@@ -70,7 +70,7 @@ def test_direct_execution_uses_profile_scheduling_default():
             return {"application_defaults": {"calendly_url": "https://calendly.com/profile/intro"}}
 
         def get_application(self, application_id):
-            return {"application_id": application_id, "status": "Ready for Auto-Apply"}
+            return {"application_id": application_id, "status": "Prepared"}
 
         def store_artifact(self, application_id, name, content, mime_type, idempotency_key):
             captured.append(content)
@@ -80,7 +80,7 @@ def test_direct_execution_uses_profile_scheduling_default():
             return {"event_id": "event-2"}
 
     result = execute(
-        "prepare-bookmarked",
+        "prepare-validated",
         {"workload_id": "work-profile-link", "application_id": "tab-1", "cv_html": "<p>CV</p>"},
         {"application": {"cover_letter": "Dear team", "proposed_action": "request_review"}},
         FakeClient(),

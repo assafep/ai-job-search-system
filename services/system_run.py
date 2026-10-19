@@ -29,7 +29,7 @@ def emit(value):
 def run(persistence, registry, runtime, agent_provider):
     started = datetime.now(timezone.utc).isoformat()
     run_id = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
-    initial = persistence.list_applications(status='Ready for Auto-Apply') or []
+    initial = persistence.list_applications(status='Prepared') or []
     outcomes = []
     report = {'run_id': run_id, 'started_at': started,
               'initial_ready_applications': initial, 'workload_results': outcomes}
@@ -42,12 +42,12 @@ def run(persistence, registry, runtime, agent_provider):
     # Process the original queue first, even when unrelated generation fails.
     for application in initial:
         app_id = application['application_id']
-        emit({'workflow': 'submit-ready', 'application_id': app_id, 'activity': 'starting'})
+        emit({'workflow': 'submit-prepared', 'application_id': app_id, 'activity': 'starting'})
         try:
             result = submissions.run_one(app_id)
-            outcomes.append({'workflow': 'submit-ready', 'application_id': app_id, 'result': result})
+            outcomes.append({'workflow': 'submit-prepared', 'application_id': app_id, 'result': result})
         except Exception as exc:
-            outcomes.append({'workflow': 'submit-ready', 'application_id': app_id, 'error': str(exc)})
+            outcomes.append({'workflow': 'submit-prepared', 'application_id': app_id, 'error': str(exc)})
         emit(outcomes[-1])
         checkpoint.save()
 
@@ -57,7 +57,7 @@ def run(persistence, registry, runtime, agent_provider):
     from .external_event_polling import poll
     report['external_event_polling'] = poll(persistence, registry)
     emit({'activity': 'external_event_polling', 'sources': report['external_event_polling']})
-    discovery = dispatch('job_discovery_bookmark_schedule', {'source_names': ['freehire'], 'results_per_page': 20},
+    discovery = dispatch('job_discovery_schedule', {'source_names': ['freehire'], 'results_per_page': 20},
                          'system-run-discovery-' + run_id, registry)
 
     def drain():
@@ -79,7 +79,7 @@ def run(persistence, registry, runtime, agent_provider):
     drain()
     report['finished_at'] = datetime.now(timezone.utc).isoformat()
     report['initial_ready_final_states'] = [persistence.get_application(a['application_id']) for a in initial]
-    report['initial_ready_processed'] = len([r for r in outcomes if r.get('workflow') == 'submit-ready'
+    report['initial_ready_processed'] = len([r for r in outcomes if r.get('workflow') == 'submit-prepared'
                                             and r.get('application_id') in {a['application_id'] for a in initial}])
     report['final_application_counts'] = dict(Counter(a['status'] for a in persistence.list_applications()))
     report['workload_counts'] = dict(Counter(r.get('workflow', 'unknown') for r in outcomes))

@@ -10,15 +10,21 @@ import json
 import sys
 import uuid
 
+from .test_runner import discover_workflows, parse_workflow
 
-ROUTES = {
-    "job_discovery_bookmark_schedule": "discover-and-bookmark",
-    "application_package_schedule": "prepare-bookmarked",
-    "application_submission_schedule": "submit-ready",
-    "calendar_event": "prepare-interview",
-    "incoming_email": "handle-incoming-email",
-    "reconciliation_schedule": "reconcile",
-}
+
+def _build_routes():
+    """Build event-to-workflow routes from workflow blueprints."""
+    routes = {}
+    for name, path in discover_workflows().items():
+        definition = parse_workflow(path)
+        event_type = definition.get("trigger", {}).get("event_type")
+        if event_type is not None:
+            routes[event_type] = name
+    return routes
+
+
+ROUTES = _build_routes()
 
 
 def dispatch(event_type, payload, event_id=None, registry=None):

@@ -10,7 +10,7 @@ from services import system_run
 def test_system_run_submits_ready_snapshot_and_persists_complete_report(monkeypatch):
     repository = MemoryRepository()
     initial = repository.create_application('Initial', 'Role', 'https://example.test/1')
-    repository.transition(initial.application_id, 'Ready for Auto-Apply')
+    repository.transition(initial.application_id, 'Prepared')
     fresh = repository.create_application('Fresh', 'Role', 'https://example.test/2')
     registry = WorkloadRegistry()
     observed_submissions = []
@@ -34,8 +34,8 @@ def test_system_run_submits_ready_snapshot_and_persists_complete_report(monkeypa
         approval_registry = object()
         def run(self, workload_id, agent_provider=None):
             record = registry.claim(workload_id)
-            if record.workflow == 'prepare-bookmarked':
-                repository.transition(fresh.application_id, 'Ready for Auto-Apply')
+            if record.workflow == 'prepare':
+                repository.transition(fresh.application_id, 'Prepared')
             registry.complete(workload_id)
             return {'workflow': record.workflow, 'status': 'succeeded'}
 
@@ -55,7 +55,7 @@ def test_system_run_submits_ready_snapshot_and_persists_complete_report(monkeypa
     assert observed_submissions == [initial.application_id]
     assert result['initial_ready_processed'] == 1
     assert result['initial_ready_final_states'][0]['status'] == 'Manual Apply Required'
-    assert set(result['workload_counts']) == {'submit-ready', 'reconcile', 'discover-and-bookmark', 'prepare-bookmarked'}
+    assert set(result['workload_counts']) == {'submit-prepared', 'reconcile', 'discover', 'prepare-validated'}
     saved = json.loads(next(iter(repository.files.values()))['content'])
     assert saved['finished_at']
     assert saved['initial_ready_applications'][0]['application_id'] == initial.application_id

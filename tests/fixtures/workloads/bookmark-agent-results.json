@@ -1,0 +1,9 @@
+{
+  "read-posting": {
+    "company": "Example Systems",
+    "role": "Senior Backend Engineer",
+    "posting_url": "https://example.test/jobs/backend",
+    "description": "Senior backend engineer position focusing on distributed systems, API design, and cloud infrastructure. The role involves building reliable, scalable services and collaborating with cross-functional teams to deliver high-quality software products. Responsibilities include code reviews, mentoring junior engineers, and contributing to architectural decisions across the platform. You will work with modern technologies including Python, Go, Kubernetes, and AWS to build and maintain our core services. We are looking for someone with strong problem-solving skills and experience in high-throughput systems design.",
+    "read_failure": ""
+  }
+}

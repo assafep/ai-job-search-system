@@ -56,6 +56,6 @@ def promote_saved_package(persistence, application, artifact):
             'source': 'application agent', 'bullets': ['Application package created successfully.',
                                                     'Application package: ' + artifact['reference']],
         }, key + '-event')
-    return persistence.transition(app_id, 'Ready for Auto-Apply', {
+    return persistence.transition(app_id, 'Prepared', {
         'source': 'application agent', 'bullets': ['Saved application package validated; no human review is required.'],
     }, key + '-ready')

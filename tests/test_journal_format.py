@@ -1,5 +1,6 @@
 from persistence_api.journal_format import (
     STATE_TABS,
+    build_event_text,
     event_text,
     journal_timestamp,
     normalize_date,
@@ -11,7 +12,7 @@ from persistence_api.journal_format import normalize_posting_url
 
 def test_state_tabs_are_canonical():
     assert STATE_TABS == (
-        "Bookmarked", "Ready for Auto-Apply", "Manual Apply Required", "Applied", "Interviewing", "Rejected", "Offer"
+        "Bookmarked", "Prepared", "Manual Apply Required", "Applied", "Interviewing", "Rejected", "Offer"
     )
 
 
@@ -44,6 +45,15 @@ def test_application_title_and_event_shape_match_journal():
     assert event_text("2026-10-12", ["Added by workflow"])
 
 
+def test_application_title_accepts_asymmetric_separator_spacing():
+    for title in ['Sentra /Senior Backend Engineer (Data Team)',
+                  'Sentra/ Senior Backend Engineer (Data Team)',
+                  'Sentra / Senior Backend Engineer (Data Team)']:
+        assert parse_application_title(title) == ('Sentra', 'Senior Backend Engineer (Data Team)')
+    assert parse_application_title('AC/DC / Backend Engineer') == ('AC/DC', 'Backend Engineer')
+    assert parse_application_title('AC/DC') == ('AC/DC', '')
+
+
 def test_parse_events_supports_legacy_inline_date_and_event_text():
     events = parse_events([
         {"text": "26.07.2026 Applied via LinkedIn & Greenhouse", "isListItem": False, "startIndex": 1},
@@ -58,15 +68,33 @@ def test_parse_events_recovers_date_attached_to_previous_bullet():
     events = parse_events([
         {"text": "2026-10-12", "isListItem": False, "startIndex": 1},
         {"text": "Added by Job Scout2026-10-13", "isListItem": True, "startIndex": 12},
-        {"text": "Moved from Bookmarked to Ready for Auto-Apply", "isListItem": True, "startIndex": 50},
+        {"text": "Moved from Bookmarked to Prepared", "isListItem": True, "startIndex": 50},
     ], "app-1")
 
     assert events[0]["bullets"] == ["Added by Job Scout"]
     assert events[1]["date"] == "2026-10-13"
-    assert events[1]["bullets"] == ["Moved from Bookmarked to Ready for Auto-Apply"]
+    assert events[1]["bullets"] == ["Moved from Bookmarked to Prepared"]
 
 
 def test_event_text_separates_events_without_an_empty_bullet():
     assert event_text("2026-10-12", ["Added by workflow"]) == (
         "2026-10-12\n\nAdded by workflow\n\n"
     )
+
+
+def test_build_event_text_includes_separator():
+    assert build_event_text("2026-10-12", ["First bullet", "Second bullet"]) == (
+        "\n\n2026-10-12\n\nFirst bullet\nSecond bullet\n\n"
+    )
+
+
+def test_build_event_text_custom_separator():
+    assert build_event_text("2026-10-12", ["Bullet"], separator="") == (
+        "2026-10-12\n\nBullet\n\n"
+    )
+
+
+def test_build_event_text_requires_bullets():
+    import pytest
+    with pytest.raises(ValueError, match="at least one bullet"):
+        build_event_text("2026-10-12", [])

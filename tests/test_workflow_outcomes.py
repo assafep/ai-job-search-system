@@ -4,35 +4,59 @@ import pytest
 from services.workload_runner import validate_workflow_outcomes
 
 
-def test_valid_discover_and_bookmark():
+def test_valid_discover():
     definition = {
-        "input_states": ["Replay"],
+        "input_states": ["Discovered"],
         "outcomes": {
-            "accepted": "Bookmarked",
-            "declined": None,
+            "discovered": "Discovered",
             "duplicate": "Duplicate",
             "system_error": "Dead Letters Queue",
         },
     }
-    validate_workflow_outcomes("discover-and-bookmark", definition)
+    validate_workflow_outcomes("discover", definition)
 
 
-def test_valid_prepare_bookmarked():
+def test_valid_read_posting():
+    definition = {
+        "input_states": ["Discovered"],
+        "outcomes": {
+            "read": None,
+            "read_failure": "Manual Apply Required",
+            "system_error": "Dead Letters Queue",
+        },
+    }
+    validate_workflow_outcomes("bookmark-discovered", definition)
+
+
+def test_valid_validate():
     definition = {
         "input_states": ["Bookmarked"],
         "outcomes": {
-            "prepared": "Ready for Auto-Apply",
+            "validated": "Validated",
+            "invalidated": "Invalidated",
+            "duplicate": "Duplicate",
+            "system_error": "Dead Letters Queue",
+        },
+    }
+    validate_workflow_outcomes("validate-bookmarked", definition)
+
+
+def test_valid_prepare():
+    definition = {
+        "input_states": ["Validated"],
+        "outcomes": {
+            "prepared": "Prepared",
             "failed": "Manual Apply Required",
             "duplicate": "Duplicate",
             "system_error": "Dead Letters Queue",
         },
     }
-    validate_workflow_outcomes("prepare-bookmarked", definition)
+    validate_workflow_outcomes("prepare-validated", definition)
 
 
 def test_valid_submit_ready():
     definition = {
-        "input_states": ["Ready for Auto-Apply"],
+        "input_states": ["Prepared"],
         "outcomes": {
             "submitted": "Applied",
             "failed": "Manual Apply Required",
@@ -41,7 +65,7 @@ def test_valid_submit_ready():
             "system_error": "Dead Letters Queue",
         },
     }
-    validate_workflow_outcomes("submit-ready", definition)
+    validate_workflow_outcomes("submit-prepared", definition)
 
 
 def test_valid_handle_incoming_email():
@@ -88,7 +112,7 @@ def test_invalid_target_state_raises():
 def test_system_error_must_route_to_dead_letters():
     definition = {
         "input_states": ["Bookmarked"],
-        "outcomes": {"prepared": "Ready for Auto-Apply", "system_error": "Manual Apply Required"},
+        "outcomes": {"prepared": "Prepared", "system_error": "Manual Apply Required"},
     }
     with pytest.raises(ValueError, match="system_error must route to Dead Letters Queue"):
         validate_workflow_outcomes("bad-system-error", definition)
@@ -110,7 +134,7 @@ def test_null_outcome_is_skipped_during_transition_check():
         "input_states": ["Bookmarked"],
         "outcomes": {
             "no_change": None,
-            "accepted": "Ready for Auto-Apply",
+            "accepted": "Prepared",
             "system_error": "Dead Letters Queue",
         },
     }

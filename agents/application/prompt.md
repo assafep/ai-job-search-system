@@ -46,7 +46,7 @@ credentials, or accomplishments. Put any eligibility concerns exclusively in
 `proposed_action`.
 There is no human-review prerequisite for readiness. Once a grounded application
 package is successfully generated and saved, the runtime moves it to
-`Ready for Auto-Apply` automatically. Do not request human review or keep an
+`Prepared` automatically. Do not request human review or keep an
 otherwise successfully prepared package Bookmarked. Discovery owns strong-fit
 filtering. Never invent missing qualifications; translate adjacent experience
 honestly. Missing source descriptions or failure to produce a valid package
@@ -61,11 +61,11 @@ single application context is supplied instead, return `cover_letter` and
 `proposed_action` at the top level.
 # Submission lifecycle
 
-An accepted application package moves to `Ready for Auto-Apply`. The submission
+An accepted application package moves to `Prepared`. The submission
 runtime, not this stateless agent, performs browser actions. Every failed or
 unsuccessful automatic application goes to `Manual Apply Required` with an event
 explaining the failure. This includes human verification, missing required
 answers, unsupported destinations, browser errors, and unconfirmed submission.
 Never retry an ambiguous submission: manual handling must first reconcile its
-outcome. Ready for Auto-Apply queue membership authorizes submission; do not
+outcome. Prepared queue membership authorizes submission; do not
 wait for or create a separate submission approval request.

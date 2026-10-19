@@ -11,7 +11,8 @@ import re
 from .test_runner import AGENTS, resolve, read_json, validate_output
 from .document_generator import ensure_scheduling_link, generate_application_pdf
 from persistence_api.journal_format import normalize_posting_url
-from adapters.job_boards.posting_details import posting_content_bytes, posting_artifact_name, parse_saved_posting
+from adapters.job_boards.posting_details import (
+    posting_content_bytes, posting_artifact_name, parse_saved_posting)
 
 
 SCHEDULING_INTENTS = {
@@ -55,6 +56,65 @@ def _validate_agent_result(agent_name, result):
     errors = validate_output(result, schema)
     if errors:
         raise ValueError("invalid {} result: {}".format(agent_name, "; ".join(errors)))
+
+
+# Known ATS/HRIS domain patterns that should not be used as company names.
+# When the "company" field contains one of these, it means the job board API
+# returned the ATS hostname instead of the actual employer name.
+_ATS_DOMAIN_PATTERNS = [
+    r"^https?://",
+    r"\.oraclecloud\.com",
+    r"\.workday\.com",
+    r"\.greenhouse\.io",
+    r"\.lever\.co",
+    r"\.rippling\.com",
+    r"\.icims\.com",
+    r"\.talentlynx\.com",
+    r"\.smartrecruiters\.com",
+    r"\.jobsundirect\.com",
+    r"\.paradox\.io",
+    r"\.ashbyhq\.com",
+]
+
+# ATS tenant subdomain patterns: some HRIS platforms use tenant-specific
+# subdomains as the company field (e.g., "hibob-52bd16f51e4f4a" for HiBob,
+# "fa-extu-saasfaprod1" for Oracle Cloud HCM). These look like "name-hexhash"
+# or contain known ATS platform names followed by a dash and an identifier.
+_ATS_SUBDOMAIN_PATTERNS = [
+    # HiBob tenant subdomains: "hibob-" followed by hex characters
+    r"^hibob-[0-9a-f]{8,}$",
+    # Oracle Cloud HCM tenant subdomains: alphanumeric segments ending with
+    # known Oracle Cloud paths (already caught by .oraclecloud.com, but catch
+    # the bare tenant name too: e.g., "fa-extu-saasfaprod1")
+    r"^[a-z]{2}-[a-z0-9]{3,}-[a-z0-9]{3,}$",
+]
+
+_ATS_RE = re.compile("|".join(_ATS_DOMAIN_PATTERNS + _ATS_SUBDOMAIN_PATTERNS), re.IGNORECASE)
+
+
+def _normalize_company_name(posting: dict) -> str:
+    """Normalize the company name from a job posting, replacing ATS hostnames."""
+    company = (posting.get("company") or "").strip()
+    if not company:
+        return ""
+    # If the company field looks like a URL or an ATS domain, fall back to
+    # extracting a company hint from the posting URL or description.
+    if _ATS_RE.search(company):
+        # Try to extract a company name from the description's first sentence
+        description = (posting.get("description") or "").strip()
+        if description:
+            # Take the first sentence, up to 100 chars, as a fallback hint
+            first_sentence = description.split(".")[0].strip()
+            if len(first_sentence) > 100:
+                first_sentence = first_sentence[:100].rstrip() + "..."
+            if first_sentence:
+                return first_sentence
+        # Last resort: use the posting URL path as a hint
+        url = posting.get("posting_url", "")
+        if url:
+            return "Unknown (URL: {})".format(url[:80])
+        return "Unknown"
+    return company
 
 
 def plan_persistence_writes(workflow_name, context, agent_results):
@@ -138,41 +198,134 @@ def plan_persistence_writes(workflow_name, context, agent_results):
                     "data": {"source": "recruitment correspondence", "intent": result["intent"]},
                     "idempotency_key": _idempotency_key(context, "correspondence-state"),
                 })
-    elif workflow_name in ("discover-and-bookmark", "prepare-bookmarked"):
-        discovery = agent_results.get("job-discovery")
-        if discovery is not None:
-            _validate_agent_result("job-discovery", discovery)
-            for candidate in discovery["candidates"]:
-                for field in ("company", "role", "posting_url"):
-                    if not candidate.get(field):
-                        raise ValueError("job-discovery candidate is missing " + field)
-                posting_content = None
-                if workflow_name == 'discover-and-bookmark':
-                    matches = [posting for posting in context.get('job_postings', [])
-                               if normalize_posting_url(posting.get('posting_url') or '') ==
-                               normalize_posting_url(candidate['posting_url'])]
-                    if len(matches) != 1:
-                        raise ValueError('bookmark requires one matching scout source posting: ' + candidate['posting_url'])
-                    source = matches[0]
-                    posting_content = {
-                        'posting_url': candidate['posting_url'],
-                        'source_url': source.get('source_url') or source.get('listing_url') or source['posting_url'],
-                        'description': source.get('description'),
-                    }
-                    parse_saved_posting(posting_content_bytes(posting_content))
+    elif workflow_name == "discover":
+        # Discover workflow: no agent, just creates applications in Discovered state
+        # from job board sources. Filter by location to match applicant preferences.
+        applicant_profile = context.get("applicant_profile") or {}
+        preferred_countries = [
+            c.upper() for c in (applicant_profile.get("job_search") or {}).get("countries") or []
+        ]
+        postings = context.get("job_postings", [])
+        for posting in postings:
+            company = _normalize_company_name(posting)
+            role = posting.get("role", "")
+            posting_url = posting.get("posting_url", "")
+            if not posting_url:
+                raise ValueError("discover requires posting_url in job_postings")
+            # Filter by location: skip postings whose country doesn't match applicant preferences
+            posting_countries = [
+                c.upper() for c in (posting.get("countries") or [])
+                if isinstance(c, str)
+            ]
+            if preferred_countries:
+                if not set(posting_countries) & set(preferred_countries):
+                    continue
+            operations.append({
+                "operation": "create_application",
+                "company": company,
+                "role": role,
+                "posting_url": posting_url,
+                "data": {"source": "job discovery", **{
+                    key: posting[key] for key in (
+                        'source', 'source_id', 'listing_url', 'location', 'countries',
+                        'posted_at', 'updated_at', 'publication_date_kind', 'freshness',
+                        'matched_skills') if key in posting
+                }},
+                "target_state": "Discovered",
+                "idempotency_key": _idempotency_key(
+                    {"workload_id": posting_url}, "discovered-url"),
+            })
+    elif workflow_name == "bookmark-discovered":
+        # Extract posting content from URL, save as artifact, then transition
+        # to Bookmarked so score can consume it.
+        posting_result = agent_results.get("read-posting")
+        if posting_result is not None:
+            _validate_agent_result("read-posting", posting_result)
+            from .scout_reading import PostingReadFailure, posting_from_model
+            application_id = context.get("application_id")
+            posting_url = context.get("posting_url") or context.get("read_posting_url")
+            if not posting_url:
+                raise ValueError("read-posting requires posting_url in context")
+            company = posting_result.get("company") or context.get("company") or ""
+            role = posting_result.get("role") or context.get("role") or ""
+            try:
+                posting = posting_from_model(posting_url, company, role, posting_result)
+            except PostingReadFailure as exc:
+                # URL is inaccessible or posting content unavailable
                 operations.append({
-                    "operation": "create_application",
-                    "company": candidate["company"],
-                    "role": candidate["role"],
-                    "posting_url": candidate["posting_url"],
-                    "data": {"relevance_evidence": candidate.get("relevance_evidence", [])},
-                    "capture_posting_content": workflow_name == "discover-and-bookmark",
-                    "posting_content": posting_content,
+                    "operation": "transition",
+                    "application_id": application_id,
+                    "target": "Dead Letters Queue",
+                    "data": {"source": "read-posting agent", "bullets": [str(exc)]},
                     "idempotency_key": _idempotency_key(
-                        {"workload_id": candidate["posting_url"]}, "discovered-application"),
+                        {"workload_id": posting_url}, "read-failure"),
                 })
-        if workflow_name == "discover-and-bookmark":
-            return operations
+                return operations
+            if posting is None:
+                raise ValueError("read-posting returned no content")
+            operations.append({
+                "operation": "store_posting_artifact",
+                "application_id": application_id,
+                "posting_content": posting,
+                "idempotency_key": "posting-" + hashlib.sha256(posting_url.encode("utf-8")).hexdigest()[:24],
+            })
+            operations.append({
+                "operation": "transition",
+                "application_id": application_id,
+                "target": "Bookmarked",
+                "data": {"source": "read-posting agent"},
+                "idempotency_key": _idempotency_key(
+                    {"workload_id": posting_url}, "read-to-bookmarked"),
+            })
+    elif workflow_name == "validate-bookmarked":
+        # Validate saved posting content against applicant profile
+        result = agent_results.get("score")
+        if result is not None:
+            _validate_agent_result("score", result)
+            application_id = context.get("application_id")
+            if not application_id:
+                raise ValueError("validate requires application_id")
+            if result.get("is_match"):
+                # Validated: append explanation event and transition
+                evidence = result.get("relevance_evidence", [])
+                operations.append({
+                    "operation": "append_event",
+                    "application_id": application_id,
+                    "event_type": "posting_validated",
+                    "data": {
+                        "bullets": ["Validated: strong match for applicant"] + evidence,
+                        "source": "score agent",
+                    },
+                    "idempotency_key": "validate-event-" + application_id,
+                })
+                operations.append({
+                    "operation": "transition",
+                    "application_id": application_id,
+                    "target": "Validated",
+                    "data": {"source": "score agent"},
+                    "idempotency_key": "validate-transition-" + application_id,
+                })
+            else:
+                # Invalidated: append explanation event and transition
+                reason = result.get("decline_reason", "Not a strong match")
+                operations.append({
+                    "operation": "append_event",
+                    "application_id": application_id,
+                    "event_type": "posting_invalidated",
+                    "data": {
+                        "bullets": ["Invalidated: " + reason],
+                        "source": "score agent",
+                    },
+                    "idempotency_key": "invalidate-event-" + application_id,
+                })
+                operations.append({
+                    "operation": "transition",
+                    "application_id": application_id,
+                    "target": "Invalidated",
+                    "data": {"source": "score agent"},
+                    "idempotency_key": "invalidate-transition-" + application_id,
+                })
+    elif workflow_name == "prepare-validated":
         result = agent_results.get("application")
         if result is not None:
             _validate_agent_result("application", result)
@@ -309,19 +462,14 @@ def execute_persistence_writes(operations, persistence_client, dry_run=True):
             if not operation["application_id"]:
                 raise ValueError("no created application for posting URL: " + reference["posting_url"])
         if operation["operation"] == "create_application":
-            details = None
-            if operation.get('capture_posting_content'):
-                if not operation.get('posting_content'):
-                    raise ValueError('bookmark requires the posting content already evaluated by the scout')
-                details = parse_saved_posting(posting_content_bytes(operation['posting_content']))
-                if normalize_posting_url(details['posting_url']) != normalize_posting_url(operation['posting_url']):
-                    raise ValueError('saved posting content must match the bookmarked URL')
+            target_state = operation.get("target_state", "Bookmarked")
             result = persistence_client.create_application(
                 operation["company"],
                 operation["role"],
                 operation["posting_url"],
-                operation.get("data"),
-                operation.get("idempotency_key"),
+                target_state=target_state,
+                data=operation.get("data"),
+                idempotency_key=operation.get("idempotency_key"),
             )
             results.append(result)
             if isinstance(result, dict):
@@ -332,27 +480,29 @@ def execute_persistence_writes(operations, persistence_client, dry_run=True):
                 posting_url = getattr(result, "posting_url", None)
             if application_id and posting_url:
                 application_ids_by_url[normalize_posting_url(posting_url)] = application_id
-            if operation.get('capture_posting_content'):
-                content = posting_content_bytes(details)
-                content_key = ((operation.get('idempotency_key') or '') + '-posting-content-' +
-                               hashlib.sha256(content).hexdigest()[:16])
-                artifact = persistence_client.store_artifact(
-                    application_id,
-                    posting_artifact_name(operation['company'], operation['role']),
-                    content,
-                    'application/json',
-                    content_key,
-                )
-                drive_file_id = artifact.get('drive_file_id') if isinstance(artifact, dict) else getattr(artifact, 'drive_file_id', None)
-                artifact_id = artifact.get('artifact_id') if isinstance(artifact, dict) else getattr(artifact, 'artifact_id', None)
-                reference = ('https://drive.google.com/file/d/{}/view'.format(drive_file_id)
-                             if drive_file_id and not str(drive_file_id).startswith('memory://')
-                             else 'artifact://{}'.format(artifact_id))
-                event = persistence_client.append_event(
-                    application_id, 'posting_content_saved',
-                    {'bullets': ['Posting content: {}'.format(reference)], 'source': 'job discovery agent'},
-                    content_key + '-event')
-                results.extend([artifact, event])
+            continue
+        if operation["operation"] == "store_posting_artifact":
+            posting = operation["posting_content"]
+            content = posting_content_bytes(posting)
+            idem_key = operation.get("idempotency_key") or ""
+            artifact = persistence_client.store_artifact(
+                operation["application_id"],
+                posting_artifact_name(posting.get("company", ""), posting.get("role", ""), posting['posting_url']),
+                content,
+                "application/json",
+                idem_key,
+            )
+            results.append(artifact)
+            drive_file_id = artifact.get("drive_file_id") if isinstance(artifact, dict) else getattr(artifact, "drive_file_id", None)
+            artifact_id = artifact.get("artifact_id") if isinstance(artifact, dict) else getattr(artifact, "artifact_id", None)
+            reference = ("https://drive.google.com/file/d/{}/view".format(drive_file_id)
+                         if drive_file_id and not str(drive_file_id).startswith("memory://")
+                         else "artifact://{}".format(artifact_id))
+            event = persistence_client.append_event(
+                operation["application_id"], "posting_content_saved",
+                {"bullets": ["Posting content: {}".format(reference)], "source": "read-posting agent"},
+                idem_key + "-event")
+            results.append(event)
             continue
         if operation["operation"] == "generate_and_store_artifact":
             resume_pdf = None
@@ -383,10 +533,10 @@ def execute_persistence_writes(operations, persistence_client, dry_run=True):
             if application is None:
                 raise KeyError(operation["application_id"])
             status = application.get("status") if isinstance(application, dict) else getattr(application, "status", None)
-            if status == "Bookmarked":
+            if status in ("Bookmarked", "Validated"):
                 result = persistence_client.transition(
                     operation["application_id"],
-                    "Ready for Auto-Apply",
+                    "Prepared",
                     {"source": "application package prepared"},
                     operation.get("idempotency_key"),
                 )

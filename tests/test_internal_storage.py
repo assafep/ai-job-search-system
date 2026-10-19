@@ -4,7 +4,7 @@ from services.ready_submission import ReadySubmission
 
 def test_system_directory_keeps_leading_dot():
     assert safe_folder_name('.ai-job-search-system') == '.ai-job-search-system'
-    assert ReadySubmission.receipt_path('app-1') == '.ai-job-search-system/workloads-internal-state/submit-ready/submission-receipts/app-1.json'
+    assert ReadySubmission.receipt_path('app-1') == '.ai-job-search-system/workloads-internal-state/submit-prepared/submission-receipts/app-1.json'
 
 
 def test_profile_migration_preserves_file_id_and_is_repeatable():

@@ -38,9 +38,9 @@ def test_agent_runner_accepts_object_provider_contract():
 def test_agent_runner_rejects_malformed_nested_candidate():
     with pytest.raises(AgentContractError, match="posting_url"):
         run(
-            "job-discovery",
+            "read-posting",
             {},
-            lambda prompt, context: {"candidates": [{"company": "Example", "role": "Backend"}]},
+            lambda prompt, context: {"company": "Example", "role": "Backend"},
         )
 
 

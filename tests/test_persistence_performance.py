@@ -33,7 +33,7 @@ def test_repeated_journal_reads_share_one_fetch_until_expiry(monkeypatch):
 
 def test_mutation_refreshes_cached_journal_before_using_revision():
     states = [tab('state-' + name, name) for name in (
-        'Bookmarked', 'Ready for Auto-Apply', 'Manual Apply Required', 'Applied', 'Interviewing', 'Rejected', 'Offer')]
+        'Bookmarked', 'Prepared', 'Manual Apply Required', 'Applied', 'Interviewing', 'Rejected', 'Offer')]
     states[0]['childTabs'] = [tab('app', 'Example / Engineer')]
     repository = GoogleDocsRepository('token', 'doc')
     requests = []

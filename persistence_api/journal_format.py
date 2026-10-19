@@ -1,14 +1,34 @@
-"""Pure helpers for the Interviews Journal document format."""
+"""Pure helpers for the Interviews Journal document format.
+
+Event structure
+---------------
+Every journal event consists of three parts, separated by blank paragraphs:
+
+    YYYY-MM-DD <blank line>
+    • Bullet 1 <blank line>
+    • Bullet 2 <blank line>
+    • Bullet 3
+
+The date sits on its own line (not bulleted).  Each bullet is on its own line.
+A trailing blank paragraph separates adjacent events.  Use ``event_text()`` to
+produce the raw string, or ``build_event_text()`` to include the leading
+separator that precedes an event appended at the end of a tab.
+"""
 
 import hashlib
 import re
+from collections import namedtuple
 from datetime import datetime
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 
+# Canonical representation of a journal event.
+JournalEvent = namedtuple("JournalEvent", ["date", "bullets"])
+
+
 STATE_TABS = (
     "Bookmarked",
-    "Ready for Auto-Apply",
+    "Prepared",
     "Manual Apply Required",
     "Applied",
     "Interviewing",
@@ -16,8 +36,13 @@ STATE_TABS = (
     "Offer",
 )
 
-OPTIONAL_STATE_TABS = ("Replay", "Duplicate", "Dead Letters Queue")
+OPTIONAL_STATE_TABS = ("Discovered", "Validated", "Invalidated", "Duplicate", "Dead Letters Queue")
 ALL_STATES = STATE_TABS + OPTIONAL_STATE_TABS
+
+# Completed states live in a separate document suffixed with " - Completed".
+# They are still part of ALL_STATES for validation, but the repository routes
+# transitions to these states to the completed document.
+COMPLETED_STATES = ("Rejected", "Invalidated")
 
 TRACKING_QUERY_KEYS = {"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "fbclid", "gclid"}
 
@@ -97,8 +122,9 @@ def _try_date(value, pattern):
 def parse_application_title(title):
     clean = re.sub(r"^\(Rejected\)\s*", "", title.strip())
     clean = re.sub(r"\s*\(Rejected\)\s*$", "", clean)
-    if " / " in clean:
-        company, role = clean.split(" / ", 1)
+    parts = re.split(r"\s+/\s*|\s*/\s+", clean, maxsplit=1)
+    if len(parts) == 2:
+        company, role = parts
     else:
         company, role = clean, ""
     return company.strip(), role.strip()
@@ -166,8 +192,27 @@ def parse_events(paragraphs, application_tab_id):
 
 
 def event_text(event_date, bullets):
+    """Build the raw text of a single journal event (no leading separator).
+
+    Structure::
+
+        YYYY-MM-DD<nl><nl>bullet1<nl>bullet2<nl>...<nl><nl>
+
+    The date sits on its own line, followed by a blank spacer, then each
+    bullet on its own line, and a trailing blank paragraph that separates
+    this event from the next.
+    """
     if not bullets:
         raise ValueError("journal events require at least one bullet")
-    # Keep the date and bullets in separate paragraphs, with an unlisted
-    # spacer after the date and another between adjacent events.
     return event_date + "\n\n" + "\n".join(bullets) + "\n\n"
+
+
+def build_event_text(event_date, bullets, separator="\n\n"):
+    """Build event text including the leading separator for appending.
+
+    This is the single canonical way to produce event text for insertion
+    into a Google Docs tab.  It returns ``separator + event_text(...)``.
+    """
+    if not bullets:
+        raise ValueError("journal events require at least one bullet")
+    return separator + event_text(event_date, bullets)

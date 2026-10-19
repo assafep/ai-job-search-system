@@ -106,7 +106,7 @@ def test_another_meeting_alias_transitions_and_adds_link():
 
 def test_package_always_checks_readiness_when_application_snapshot_is_absent():
     operations = plan_persistence_writes(
-        "prepare-bookmarked", {
+        "prepare-validated", {
             "workload_id": "work-resumed-package", "application_id": "tab-1",
             "cv_html": "<p>CV</p>",
         }, {"application": {
@@ -130,10 +130,10 @@ def test_package_failure_cannot_promote_application():
 
         def transition(self, *args):
             calls.append("transition")
-            return {"status": "Ready for Auto-Apply"}
+            return {"status": "Prepared"}
 
     operations = plan_persistence_writes(
-        "prepare-bookmarked",
+        "prepare-validated",
         {"workload_id": "work-package-failure", "application_id": "tab-1", "cv_html": "<p>CV</p>"},
         {"application": {"cover_letter": "Dear team", "proposed_action": "request_review"}},
     )
@@ -149,7 +149,7 @@ def test_package_failure_cannot_promote_application():
 
 def test_application_agent_can_hold_weak_match_in_bookmarked():
     operations = plan_persistence_writes(
-        "prepare-bookmarked",
+        "prepare-validated",
         {"workload_id": "work-weak-match", "application_id": "tab-1"},
         {"application": {
             "cover_letter": "Dear team",
@@ -162,7 +162,7 @@ def test_application_agent_can_hold_weak_match_in_bookmarked():
 
 
 def test_review_recommendation_cannot_block_saved_package_readiness():
-    operations = plan_persistence_writes('prepare-bookmarked', {
+    operations = plan_persistence_writes('prepare-validated', {
         'application_id': 'app', 'existing_application_package': True,
         'existing_application_package_reference': 'https://drive.google.com/file/d/package/view',
     }, {'application': {'cover_letter': 'Grounded cover letter',

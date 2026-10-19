@@ -44,7 +44,7 @@ read the canonical `application_defaults.calendly_url` and fall back to the
 legacy `personal.calendly_url` field when present.
 
 Internal workflow state belongs under
-`.ai-job-search-system/workloads-internal-state/<workflow>/`. The `submit-ready`
+`.ai-job-search-system/workloads-internal-state/<workflow>/`. The `submit`
 workflow uses `submission-receipts/` for current receipts and `receipt-history/`
 for older duplicate files. `POST /storage/migrate-internal` moves existing
 root-level profile and receipt files in place; repeating it is safe.

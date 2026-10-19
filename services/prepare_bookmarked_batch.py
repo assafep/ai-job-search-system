@@ -23,7 +23,7 @@ def run(persistence, registry, runtime, agent_provider, migrate_review_holds=Fal
     run_id = datetime.now(timezone.utc).strftime('preparation-%Y%m%dT%H%M%S%fZ')
     report = {'run_id': run_id, 'started_at': datetime.now(timezone.utc).isoformat(),
               'initial_bookmarked_applications': initial, 'migrations': [], 'migration_errors': [], 'workload_results': []}
-    state_path = workload_state_path('prepare-bookmarked', 'batch-runs/' + run_id + '.json')
+    state_path = workload_state_path('prepare-validated', 'batch-runs/' + run_id + '.json')
     checkpoint = ReportCheckpoint(persistence, state_path, report)
     checkpoint.save(force=True)
     print(json.dumps({'run_id': run_id, 'bookmarked_count': len(initial)}), flush=True)
@@ -53,7 +53,7 @@ def run(persistence, registry, runtime, agent_provider, migrate_review_holds=Fal
         try:
             outcome = runtime.run(envelope['workload_id'], agent_provider=agent_provider)
         except Exception as exc:
-            outcome = {'workflow': 'prepare-bookmarked', 'workload_id': envelope['workload_id'],
+            outcome = {'workflow': 'prepare-validated', 'workload_id': envelope['workload_id'],
                        'application_id': app['application_id'], 'status': 'failed', 'error': str(exc)}
         outcome['application_id'] = app['application_id']
         report['workload_results'].append(outcome)

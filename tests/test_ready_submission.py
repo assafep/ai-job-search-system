@@ -18,7 +18,7 @@ class Client:
         self.repository = MemoryRepository()
         app = self.repository.create_application('Example', 'Backend Engineer', 'https://example.test/job')
         self.id = app.application_id
-        self.repository.transition(self.id, 'Ready for Auto-Apply')
+        self.repository.transition(self.id, 'Prepared')
         pdf = generate_application_pdf('Dear Example Hiring Team, Backend Engineer', '<p>Candidate resume</p>' * 60)
         self.repository.store_artifact(self.id, 'Candidate Cover Letter & Resume - Example - Backend Engineer.pdf', pdf, 'application/pdf')
 
@@ -112,6 +112,31 @@ def test_preflight_failure_is_explained_and_routed_to_dead_letters():
     assert client.get_application(client.id)['status'] == 'Dead Letters Queue'
 
 
+def test_verified_preflight_failure_can_resume_after_operator_restores_prepared():
+    calls = []
+    client, runner = make_runner(lambda context: calls.append(context) or {
+        'status': 'Submitted successfully', 'confirmation_text': 'Application received'})
+    original_listing = client.list_artifacts
+    client.list_artifacts = lambda id: []
+    first = runner.execute(client.id, 'first')
+    assert first['pre_submission_failure'] is True
+    assert not calls
+    client.list_artifacts = original_listing
+    client.repository.transition(client.id, 'Prepared')
+    assert runner.execute(client.id, 'restored')['status'] == 'Submitted successfully'
+    assert len(calls) == 1
+
+
+def test_system_error_after_adapter_call_is_never_automatically_retried():
+    calls = []
+    client, runner = make_runner(lambda context: calls.append(context) or {
+        'status': 'Blocked', 'failure_kind': 'system_error', 'blockers': ['Browser unavailable']})
+    runner.execute(client.id, 'first')
+    client.repository.transition(client.id, 'Prepared')
+    assert runner.execute(client.id, 'restored')['replayed'] is True
+    assert len(calls) == 1
+
+
 def test_human_verification_rejection_prevents_automatic_resubmission():
     calls = []
     def rejected(context):
@@ -123,6 +148,18 @@ def test_human_verification_rejection_prevents_automatic_resubmission():
     result = runner.run_one(client.id)
     assert result['replayed'] is True
     assert len(calls) == 1
+    assert client.get_application(client.id)['status'] == 'Manual Apply Required'
+
+
+def test_empty_receipt_stays_unconfirmed_and_does_not_submit_again():
+    calls = []
+    client, runner = make_runner(lambda ctx: calls.append(ctx) or {
+        'status': 'Submitted successfully', 'confirmation_text': 'should not run'})
+    client.store_file(runner.receipt_path(client.id), b'', 'application/json')
+    result = runner.run_one(client.id)
+    assert result['status'] == 'Submission unconfirmed'
+    assert 'empty or unreadable' in result['blockers'][0]
+    assert calls == []
     assert client.get_application(client.id)['status'] == 'Manual Apply Required'
 
 

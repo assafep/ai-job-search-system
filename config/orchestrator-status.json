@@ -1,36 +1,48 @@
 {
-  "pid": 716152,
-  "updated_at": "2026-10-14T10:27:44.789204+00:00",
+  "pid": 535439,
+  "updated_at": "2026-10-19T05:45:15.291070+00:00",
+  "discovery": {
+    "workers": 4,
+    "active": 1
+  },
   "config_error": null,
-  "last_error": "CODING_AGENT is not set. Scout uses that local coding-agent command and does not choose a model.",
+  "last_error": "persistence API returned 400: {\"error\": \"Google Docs API HTTP 400: {\\n  \\\"error\\\": {\\n    \\\"code\\\": 400,\\n    \\\"message\\\": \\\"Invalid requests[0].addDocumentTab: Docs are limited to 100 tabs. Please create a new doc or delete a tab in order to add a new one.\\\",\\n    \\\"status\\\": \\\"INVALID_ARGUMENT\\\"\\n  }\\n}\\n\"}",
   "stopping": false,
   "pipelines": {
-    "scout": {
-      "workers": 2,
-      "agent": "job-discovery",
-      "states": [
-        "Replay"
-      ],
-      "active": 1
-    },
-    "preparation": {
+    "bookmark": {
       "workers": 4,
-      "agent": "application",
+      "agent": "read-posting",
+      "states": [
+        "Discovered"
+      ],
+      "active": 0
+    },
+    "validate": {
+      "workers": 4,
+      "agent": "score",
       "states": [
         "Bookmarked"
       ],
       "active": 0
     },
-    "auto-apply": {
-      "workers": 1,
+    "prepare": {
+      "workers": 4,
+      "agent": "application",
+      "states": [
+        "Validated"
+      ],
+      "active": 0
+    },
+    "submit": {
+      "workers": 4,
       "agent": "auto-apply",
       "states": [
-        "Ready for Auto-Apply"
+        "Prepared"
       ],
       "active": 0
     },
     "correspondence": {
-      "workers": 0,
+      "workers": 4,
       "agent": "correspondence",
       "states": [
         "Applied",
@@ -39,7 +51,7 @@
       "active": 0
     },
     "interview": {
-      "workers": 0,
+      "workers": 4,
       "agent": "interview-prep",
       "states": [
         "Applied",
@@ -50,10 +62,11 @@
   },
   "inflight": [
     {
-      "application_id": "t.xlm78ypxmdo",
-      "pipeline": "scout",
-      "workload_id": "pipeline-c3df755fc60e5b62943f2b03",
-      "worker": 1
+      "application_id": "discovery-1",
+      "pipeline": "discovery",
+      "workload_id": "discovery-1",
+      "worker": 1,
+      "discovery": true
     }
   ]
 }

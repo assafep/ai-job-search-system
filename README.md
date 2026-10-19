@@ -11,14 +11,14 @@ API.
 The system runs four independent, event-driven workflows:
 
 1. **Job discovery** — scheduled scans of job boards. Matches are saved as `Bookmarked`.
-2. **Preparation** — each bookmarked posting receives a personalized cover letter and resume PDF. Successful packages move to `Ready for Auto-Apply`.
+2. **Preparation** — each bookmarked posting receives a personalized cover letter and resume PDF. Successful packages move to `Prepared`.
 3. **Auto-apply** — items in the ready queue are submitted automatically. Confirmed submissions become `Applied`; failures go to `Manual Apply Required` or `Dead Letters Queue`.
 4. **Recruitment correspondence** — incoming emails are matched to applications and classified. Rejections, offers, and interview invitations update the application state.
 
 Each application follows this lifecycle:
 
 ```text
-Bookmarked → Ready for Auto-Apply → Applied → Interviewing → Offer / Rejected
+Bookmarked → Prepared → Applied → Interviewing → Offer / Rejected
 ```
 
 State changes are recorded in a Google Docs journal. All mutations go through the persistence API — agents never touch external systems directly.
@@ -31,7 +31,7 @@ State changes are recorded in a Google Docs journal. All mutations go through th
 
 Once configured, you can:
 
-- **Replay scout** for positions under the `Replay` tab: `python3 -m services.replay_scout`
+- **Process Discovered queue** (bookmark workflow): `python3 -m services.run_single Discovered`
 - **Process Bookmarked and Ready queues** (8 threads): `python3 -m services.concurrent_queues`
 - **Run continuously**: `python3 -m services.orchestrator run`
 - **Monitor queues**: `python3 -m services.run --monitor`
@@ -42,24 +42,24 @@ For detailed operational reference, see [Running the system](#running-the-system
 
 ### Queue runners
 
-**Replay scout** — `python3 -m services.replay_scout` replays only the scout/bookmark stage for positions under the `Replay` tab. Supply `--application-id <tab_id>` for one position. Add `--workers 7 --progress-seconds 10` for seven workers with progress every ten seconds. The scout opens each recorded URL, extracts the posting, decides whether it fits, saves accepted postings, and prints phase timings. It does not run preparation or submission.
+**Bookmark workflow** — `python3 -m services.run_single Discovered` processes one position from the `Discovered` queue through the bookmark workflow. Add `--all` to process all positions. For a specific application: `--application-id <id>`. To read a posting URL without any workflow: `python3 -m services.agent_cli read-posting --url https://...`.
 
-The scout evaluates source descriptions in `job_postings`. Bookmarking stores the exact description in a `Job Posting - Company - Role.json` artifact and records its link. Preparation reads that saved artifact through the persistence API; missing or mismatched content stops preparation rather than re-fetching.
+The bookmark workflow extracts the posting content and saves it as a `Job Posting - Company - Role.json` artifact. Preparation reads that saved artifact through the persistence API; missing or mismatched content stops preparation rather than re-fetching.
 
-**Single ready submission** — Process one `Ready for Auto-Apply` position:
+**Single ready submission** — Process one `Prepared` position:
 ```bash
 python3 -m services.ready_submission --application-id <application_id>
 ```
 
 **Bounded system run** — `python3 -m services.system_run` processes Ready queue with per-workload activity and a persisted PDF report. Email and interview workflows poll Gmail (last 14 days) and Calendar (next 30 days) read-only. Ambiguous matches are skipped; event IDs prevent duplicates.
 
-**Concurrent queues** — `python3 -m services.concurrent_queues` consumes Bookmarked and Ready for Auto-Apply with eight posting threads. Preparation successes continue into submission in the same pool. One shared persistence client serializes all I/O; per-posting locks prevent duplicate work. A process lock prevents two runner copies. Do not run a separate daemon against the same registries.
+**Concurrent queues** — `python3 -m services.concurrent_queues` consumes Bookmarked and Prepared with eight posting threads. Preparation successes continue into submission in the same pool. One shared persistence client serializes all I/O; per-posting locks prevent duplicate work. A process lock prevents two runner copies. Do not run a separate daemon against the same registries.
 
 ### Continuous operation
 
-**Orchestrator** — `python3 -m services.orchestrator run` holds the process lock and routes agent outcomes from `config/pipelines.json`. Scale live: `python3 -m services.orchestrator scale scout 2` (use `0` to pause). Scout searches `discovery_sources` every `discovery_seconds` and once at start. Preparation consumes `Bookmarked`; auto-apply consumes `Ready for Auto-Apply`.
+**Orchestrator** — `python3 -m services.orchestrator run` holds the process lock and routes agent outcomes from `config/pipelines.json`. Scale live: `python3 -m services.orchestrator scale scout 2` (use `0` to pause). Scout searches `discovery_sources` every `discovery_seconds` and once at start. Preparation consumes `Bookmarked`; auto-apply consumes `Prepared`.
 
-**Duplicates** — Scout and preparation send duplicates of Applied, Interviewing, Rejected, or Offer postings to `Duplicate`. Moving to Applied or Rejected also retires matching items in Replay, Bookmarked, Ready, or Manual Apply. The journal needs a top-level `Duplicate` tab for these moves.
+**Duplicates** — Scout and preparation send duplicates of Applied, Interviewing, Rejected, or Offer postings to `Duplicate`. Moving to Applied or Rejected also retires matching items in Discovered, Bookmarked, Ready, or Manual Apply. The journal needs a top-level `Duplicate` tab for these moves.
 
 **Single-process runner** — Start the persistence API and pipelines in one process:
 ```bash
@@ -81,7 +81,7 @@ python3 -m services.run --monitor --log --log-file activity.log --workers scout=
 
 **Browser adapter** — Default adapter uses local Chrome and Playwright for Comeet forms. Run `npm install` and ensure `google-chrome` or `chromium` is on PATH. Configure `JOB_SUBMISSION_ADAPTER=module:callable` to override. Unsupported destinations report `Blocked` and move to `Manual Apply Required`.
 
-**Learned job-board routes** — Verified trial findings for Jobify, RVC Global, and EchoJobs live in `adapters/browser/playbooks/`. Start a trial: `BROWSER_HEADLESS=false node adapters/browser/trial_session.cjs jobify`. Progress is stored under `submit-ready/site-trials/<site>/<application_id>.json`. Inspect with `python3 -m services.site_trial_state --site jobify --application-id <id>`.
+**Learned job-board routes** — Verified trial findings for Jobify, RVC Global, and EchoJobs live in `adapters/browser/playbooks/`. Start a trial: `BROWSER_HEADLESS=false node adapters/browser/trial_session.cjs jobify`. Progress is stored under `submit/site-trials/<site>/<application_id>.json`. Inspect with `python3 -m services.site_trial_state --site jobify --application-id <id>`.
 
 ### Storage
 
@@ -126,7 +126,7 @@ discover jobs
   → track result
 ```
 
-Entering the `Ready for Auto-Apply` queue authorizes the system to submit the
+Entering the `Prepared` queue authorizes the system to submit the
 application automatically.
 
 ### B. Interview preparation
@@ -175,7 +175,7 @@ Google Drive is a persistence implementation, not an agent-facing API.
 The supported lifecycle states are:
 
 ```text
-Bookmarked → Ready for Auto-Apply → Applied → Interviewing → Offer
+Bookmarked → Prepared → Applied → Interviewing → Offer
                     ↓
           Manual Apply Required → Applied (after verified manual submission)
                          └──────────────────────→ Rejected
@@ -360,7 +360,7 @@ shortcut is `make run-workload WORKLOAD_ID=work_... AGENT_RESULTS=/path/results.
 For continuous processing, configure an LLM provider as
 `AGENT_PROVIDER=package.module:provider` (optional; Codex CLI is the default
 for preparation, auto-apply, correspondence, and interview). Job discovery,
-including Replay scout and choosing matches from job-board listings, runs the
+including bookmarking and choosing matches from job-board listings, runs the
 local coding agent named by `CODING_AGENT` or `scout.coding_agent` in
 `config/runtime.json` (environment settings take precedence). Scout does not choose the agent or
 the model. Set `CODING_AGENT_MODEL` only to override the agent's own default.
@@ -389,7 +389,7 @@ python3 -m services.worker_main --poll-seconds 30
 ```
 
 High-impact external actions are evaluated by `services.approval_service` against
-`config/automation-policy.yaml`. Ready for Auto-Apply submissions are authorized
+`config/automation-policy.yaml`. Prepared submissions are authorized
 by queue membership and do not create approval requests. Other missing policy
 entries default to `ask`. Dry-run mode never executes actions, regardless of the
 policy decision.

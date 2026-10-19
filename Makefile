@@ -1,4 +1,4 @@
-.PHONY: test verify list test-agent test-workload journal-status journal-repair dispatch-event approval-list dry-run-interview dry-run-discovery dry-run-correspondence dry-run-reconcile run-workload run-worker api compose-config
+.PHONY: test verify list test-agent test-workload journal-status journal-repair dispatch-event approval-list dry-run-bookmark dry-run-validate dry-run-discovery dry-run-interview dry-run-correspondence dry-run-reconcile dry-run-prepare dry-run-submit run-workload run-worker api compose-config
 
 test:
 	@env -u GOOGLE_ACCESS_TOKEN -u GOOGLE_REFRESH_TOKEN -u GOOGLE_CLIENT_ID -u GOOGLE_CLIENT_SECRET python3 -m pytest -q
@@ -7,7 +7,10 @@ verify:
 	@env -u GOOGLE_ACCESS_TOKEN -u GOOGLE_REFRESH_TOKEN -u GOOGLE_CLIENT_ID -u GOOGLE_CLIENT_SECRET python3 -m pytest -q
 	@python3 -m py_compile persistence_api/*.py services/*.py services/onboarding/*.py adapters/llm/*.py
 	@python3 -m services.test_runner list >/dev/null
-	@$(MAKE) dry-run-interview >/dev/null
+	@$(MAKE) dry-run-bookmark >/dev/null
+	@$(MAKE) dry-run-validate >/dev/null
+	@$(MAKE) dry-run-prepare >/dev/null
+	@$(MAKE) dry-run-submit >/dev/null
 	@$(MAKE) dry-run-discovery >/dev/null
 	@$(MAKE) dry-run-correspondence >/dev/null
 	@$(MAKE) dry-run-reconcile >/dev/null
@@ -39,15 +42,33 @@ dispatch-event:
 approval-list:
 	@python3 -m services.approval_cli list
 
+dry-run-bookmark:
+	@python3 -m services.workload_runner bookmark-discovered \
+		--fixture tests/fixtures/workloads/bookmark.json \
+		--agent-results tests/fixtures/workloads/bookmark-agent-results.json
+
+dry-run-validate:
+	@python3 -m services.workload_runner validate-bookmarked \
+		--fixture tests/fixtures/workloads/validate.json \
+		--agent-results tests/fixtures/workloads/validate-agent-results.json
+
+dry-run-prepare:
+	@python3 -m services.workload_runner prepare-validated \
+		--fixture tests/fixtures/workloads/prepare.json \
+		--agent-results tests/fixtures/workloads/prepare-agent-results.json
+
+dry-run-submit:
+	@python3 -m services.workload_runner submit-prepared \
+		--fixture tests/fixtures/workloads/submit.json
+
 dry-run-interview:
 	@python3 -m services.workload_runner prepare-interview \
 		--fixture tests/fixtures/workloads/prepare-interview.json \
 		--agent-results tests/fixtures/workloads/prepare-interview-agent-results.json
 
 dry-run-discovery:
-	@python3 -m services.workload_runner discover-and-bookmark \
-		--fixture tests/fixtures/workloads/discover-and-bookmark.json \
-		--agent-results tests/fixtures/workloads/discover-and-bookmark-agent-results.json
+	@python3 -m services.workload_runner discover \
+		--fixture tests/fixtures/workloads/discover.json
 
 dry-run-correspondence:
 	@python3 -m services.workload_runner handle-incoming-email \

@@ -1,0 +1,13 @@
+name: discover
+trigger:
+  type: schedule
+  cadence: daily
+  event_type: job_discovery_schedule
+agent: null
+input_states: []
+external_actions: []
+outcomes:
+  discovered: Discovered
+  duplicate: Duplicate
+  system_error: Dead Letters Queue
+side_effects: through_data_layer

@@ -118,6 +118,24 @@ class WorkloadRegistry:
         return record
 
     @synchronized
+    def defer(self, workload_id, error):
+        """Return a claimed workload to the queue without consuming a retry.
+
+        Used when the provider is temporarily unavailable. The claim already
+        incremented the attempt counter, and a quota outage must not move the
+        workload toward the dead-letter limit.
+        """
+        record = self._get(workload_id)
+        if record.status != "running":
+            raise ValueError("only running workloads can be deferred")
+        record.attempts = max(0, record.attempts - 1)
+        record.status = "queued"
+        record.error = str(error)
+        record.updated_at = timestamp()
+        self._persist()
+        return record
+
+    @synchronized
     def fail(self, workload_id, error):
         record = self._get(workload_id)
         if record.status != "running":

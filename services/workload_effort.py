@@ -3,11 +3,12 @@
 import json
 import os
 
+from .test_runner import discover_workflows
+
 DEFAULT_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)),
                             'config', 'workload-effort.json')
 LEVELS = {'low', 'medium', 'high', 'xhigh'}
-WORKFLOWS = {'discover-and-bookmark', 'prepare-bookmarked',
-             'prepare-interview', 'handle-incoming-email', 'reconcile', 'submit-ready'}
+WORKFLOWS = set(discover_workflows().keys())
 
 
 def effort_for_workflow(workflow, path=None):

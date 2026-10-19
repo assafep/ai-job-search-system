@@ -21,34 +21,33 @@ def test_scout_environment_overrides_persisted_command(monkeypatch):
     assert provider._executable() == 'grok'
 
 
-def test_job_discovery_passes_the_url_without_choosing_an_agent():
-    def pipeline_provider(prompt, context):
-        raise AssertionError("preparation provider must not read postings")
-
+def test_read_posting_passes_the_url_without_choosing_an_agent(monkeypatch):
     seen = {}
 
     class Discovery:
         def generate_with_schema(self, prompt, context, schema):
             seen["context"] = context
-            return {"candidates": []}
+            return {"company": "Acme", "role": "Backend", "posting_url": "https://example.test/job",
+                    "description": "Backend role description. " * 100}
 
-    agents = PipelineAgents(None, None, pipeline_provider, discovery_provider=Discovery())
-    context = {"read_posting_url": "https://example.test/job", "job_postings": []}
-    assert agents.invoke("job-discovery", context, "discover-and-bookmark") == {"candidates": []}
+    monkeypatch.setattr("services.worker_main.load_discovery_provider", lambda: Discovery())
+    agents = PipelineAgents(None, None, lambda p, c: AssertionError("pipeline provider must not read"))
+    context = {"read_posting_url": "https://example.test/job"}
+    result = agents.invoke("read-posting", context, "read-posting")
     assert seen["context"]["read_posting_url"] == "https://example.test/job"
 
 
-def test_job_discovery_uses_the_discovery_provider():
-    def pipeline_provider(prompt, context):
-        raise AssertionError("preparation provider must not score postings")
-
+def test_read_posting_uses_the_discovery_provider(monkeypatch):
     class Discovery:
         def generate_with_schema(self, prompt, context, schema):
-            assert "candidates" in schema["properties"]
-            return {"candidates": []}
+            assert "company" in schema["properties"]
+            return {"company": "Acme", "role": "Backend", "posting_url": "https://example.test/job",
+                    "description": "Backend role description. " * 100}
 
-    agents = PipelineAgents(None, None, pipeline_provider, discovery_provider=Discovery())
-    assert agents.invoke("job-discovery", {"job_postings": []}, "discover-and-bookmark") == {"candidates": []}
+    monkeypatch.setattr("services.worker_main.load_discovery_provider", lambda: Discovery())
+    agents = PipelineAgents(None, None, lambda p, c: AssertionError("pipeline provider must not read"))
+    result = agents.invoke("read-posting", {"read_posting_url": "https://example.test/job"}, "read-posting")
+    assert result["company"] == "Acme"
 
 
 def test_preparation_keeps_its_own_provider():
@@ -60,7 +59,7 @@ def test_preparation_keeps_its_own_provider():
             raise AssertionError("discovery provider must not write the application")
 
     agents = PipelineAgents(None, None, pipeline_provider, discovery_provider=Discovery())
-    result = agents.invoke("application", {"company": "Example"}, "prepare-bookmarked")
+    result = agents.invoke("application", {"company": "Example"}, "prepare")
     assert result["proposed_action"] == "Proceed"
 
 
@@ -87,9 +86,25 @@ def test_empty_search_terms_are_derived_once(monkeypatch, tmp_path):
     repository = MemoryRepository()
     repository.profile = {"job_search": {"countries": ["IL"], "search_terms": []}}
     agents = PipelineAgents(repository, None, lambda prompt, context: pytest.fail("pipeline provider"), discovery_provider=Discovery())
-    orchestrator = Orchestrator(repository, WorkloadRegistry(), agents, str(pipeline_file(tmp_path, scout=1)))
+    orchestrator = Orchestrator(repository, WorkloadRegistry(), agents, str(pipeline_file(tmp_path, read_posting=1)))
     try:
         assert orchestrator._collect_postings(repository.profile) == []
     finally:
         orchestrator.close()
     assert calls == [["search_terms"]]
+
+
+def test_jobicy_searches_individual_terms_and_deduplicates(monkeypatch):
+    from services.workflow_runtime import WorkflowRuntime
+    calls = []
+    class Board:
+        def search(self, **kwargs):
+            calls.append(kwargs)
+            return [{'posting_url': 'https://jobicy.com/jobs/one', 'company': 'Example'}]
+    monkeypatch.setattr('adapters.job_boards.jobicy.JobicyJobBoard', Board)
+    terms = ['Senior Backend Software Engineer', 'Distributed Systems Engineer']
+    assert len(' OR '.join(terms)) > 50
+    context = {'source_names': ['jobicy'], 'search_terms': terms, 'countries': ['IL']}
+    WorkflowRuntime._enrich_discovery_context(context)
+    assert [call['query'] for call in calls] == terms
+    assert len(context['job_postings']) == 1

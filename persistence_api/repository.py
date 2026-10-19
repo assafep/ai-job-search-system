@@ -2,7 +2,7 @@ from typing import Dict, List, Optional
 import uuid
 
 from .models import Application, Artifact, Event, now
-from .journal_format import ALL_STATES, normalize_posting_url
+from .journal_format import ALL_STATES, COMPLETED_STATES, normalize_posting_url
 from services.activity_log import log_transition
 from .profile import validate_profile
 from .state_machine import validate_transition
@@ -12,10 +12,13 @@ from .file_paths import normalize_file_path
 class Repository:
     """Persistence boundary. Agents and HTTP handlers must use this interface."""
 
-    def create_application(self, company: str, role: str, posting_url: str, data=None, idempotency_key=None) -> Application:
+    def create_application(self, company: str, role: str, posting_url: str, target_state: str = "Bookmarked", data=None, idempotency_key=None) -> Application:
         raise NotImplementedError
 
     def get_application(self, application_id: str) -> Optional[Application]:
+        raise NotImplementedError
+
+    def update_application(self, application_id: str, company: Optional[str] = None, role: Optional[str] = None) -> Application:
         raise NotImplementedError
 
     def list_applications(self, status: Optional[str] = None) -> List[Application]:
@@ -79,6 +82,10 @@ class Repository:
     def repair_journal(self):
         raise NotImplementedError
 
+    def migrate_completed(self):
+        """Move Rejected and Invalidated applications to the completed document."""
+        raise NotImplementedError
+
 
 class MemoryRepository(Repository):
     """Runnable reference backend used for local development and contract tests."""
@@ -96,7 +103,7 @@ class MemoryRepository(Repository):
     def _cached(self, key):
         return self.idempotency.get(key) if key else None
 
-    def create_application(self, company, role, posting_url, data=None, idempotency_key=None):
+    def create_application(self, company, role, posting_url, target_state="Bookmarked", data=None, idempotency_key=None):
         cached = self._cached(idempotency_key)
         if cached:
             return cached
@@ -106,7 +113,7 @@ class MemoryRepository(Repository):
                 if idempotency_key:
                     self.idempotency[idempotency_key] = existing
                 return existing
-        app = Application.create(company, role, posting_url)
+        app = Application.create(company, role, posting_url, status=target_state)
         self.applications[app.application_id] = app
         event_data = {
             "date": app.created_at[:10],
@@ -127,6 +134,17 @@ class MemoryRepository(Repository):
 
     def get_application(self, application_id):
         return self.applications.get(application_id)
+
+    def update_application(self, application_id, company=None, role=None):
+        app = self.applications.get(application_id)
+        if not app:
+            raise KeyError(application_id)
+        if company is not None:
+            app.company = company
+        if role is not None:
+            app.role = role
+        app.updated_at = now()
+        return app
 
     def list_applications(self, status=None):
         values = list(self.applications.values())
@@ -282,10 +300,10 @@ class MemoryRepository(Repository):
         return {
             "valid": True,
             "required_states": [
-                "Bookmarked", "Ready for Auto-Apply", "Manual Apply Required", "Applied", "Interviewing", "Rejected", "Offer"
+                "Bookmarked", "Prepared", "Manual Apply Required", "Applied", "Interviewing", "Rejected", "Offer"
             ],
             "present_states": [
-                "Bookmarked", "Ready for Auto-Apply", "Manual Apply Required", "Dead Letters Queue", "Applied", "Interviewing", "Rejected", "Offer"
+                "Bookmarked", "Prepared", "Manual Apply Required", "Dead Letters Queue", "Applied", "Interviewing", "Rejected", "Offer"
             ],
             "missing_states": [],
             "duplicate_states": [],
@@ -317,30 +335,6 @@ class MemoryRepository(Repository):
             })
         return tabs
 
-    def bookmark_staged_tab(self, application_id, idempotency_key):
-        if not idempotency_key:
-            raise ValueError("staging bookmark requires an idempotency key")
-        cached = self._cached(idempotency_key)
-        if cached:
-            return cached
-        app = self.applications.get(application_id)
-        if not app:
-            raise KeyError(application_id)
-        if app.status == "Bookmarked":
-            self.idempotency[idempotency_key] = app
-            return app
-        if app.status not in {"Replay", "Relay"}:
-            raise ValueError("only a direct child of Replay or Relay may be bookmarked")
-        if app.status == "Replay":
-            validate_transition(app.status, "Bookmarked")
-        self.append_event(application_id, "replay_bookmarked", {
-            "bullets": ["Position bookmarked from the operator Replay tab."],
-            "source": "explicit replay workflow",
-        }, idempotency_key + ":bookmark-event")
-        app.status = "Bookmarked"
-        app.updated_at = now()
-        self.idempotency[idempotency_key] = app
-        return app
 
     def repair_journal(self):
         return self.journal_status()
@@ -348,5 +342,18 @@ class MemoryRepository(Repository):
     def migrate_application_states(self):
         for application in self.applications.values():
             if application.status == 'Ready To Apply':
-                application.status = 'Ready for Auto-Apply'
+                application.status = 'Prepared'
         return self.journal_status()
+
+    def migrate_completed(self):
+        """In memory mode, completed states stay in the same store — nothing to migrate."""
+        migrated = []
+        for app in self.applications.values():
+            if app.status in COMPLETED_STATES:
+                migrated.append({
+                    "application_id": app.application_id,
+                    "company": app.company,
+                    "role": app.role,
+                    "status": app.status,
+                })
+        return {"migrated": migrated, "count": len(migrated)}

@@ -3,38 +3,45 @@
   "scan_seconds": 5,
   "event_poll_seconds": 60,
   "discovery_seconds": 86400,
-  "discovery_sources": ["freehire", "jobicy"],
+  "discovery_workers": 7,
+  "discovery_sources": ["freehire", "jobicy", "greenhouse", "ashby", "comeet", "lever", "himalayas", "smartrecruiters"],
   "pipelines": {
-    "scout": {
-      "states": ["Replay"],
-      "agent": "job-discovery",
-      "workers": 0,
-      "routes": {"accepted": "Bookmarked", "declined": null, "failed": "Manual Apply Required", "duplicate": "Duplicate", "system_error": "Dead Letters Queue"}
+    "bookmark": {
+      "states": ["Discovered"],
+      "agent": "read-posting",
+      "workers": 4,
+      "routes": {"read": "Bookmarked", "read_failure": "Manual Apply Required", "system_error": "Dead Letters Queue"}
     },
-    "preparation": {
+    "validate": {
       "states": ["Bookmarked"],
-      "agent": "application",
-      "workers": 0,
-      "routes": {"prepared": "Ready for Auto-Apply", "failed": "Manual Apply Required", "duplicate": "Duplicate", "system_error": "Dead Letters Queue"}
+      "agent": "score",
+      "workers": 4,
+      "routes": {"validated": "Validated", "invalidated": "Invalidated", "duplicate": "Duplicate", "system_error": "Dead Letters Queue"}
     },
-    "auto-apply": {
-      "states": ["Ready for Auto-Apply"],
+    "prepare": {
+      "states": ["Validated"],
+      "agent": "application",
+      "workers": 4,
+      "routes": {"prepared": "Prepared", "failed": "Manual Apply Required", "duplicate": "Duplicate", "system_error": "Dead Letters Queue"}
+    },
+    "submit": {
+      "states": ["Prepared"],
       "agent": "auto-apply",
-      "workers": 0,
+      "workers": 4,
       "routes": {"submitted": "Applied", "failed": "Manual Apply Required", "unconfirmed": "Manual Apply Required", "waiting": null, "system_error": "Dead Letters Queue"}
     },
     "correspondence": {
       "states": ["Applied", "Interviewing"],
       "event_type": "incoming_email",
       "agent": "correspondence",
-      "workers": 0,
+      "workers": 4,
       "routes": {"processed": null, "interview": "Interviewing", "rejected": "Rejected", "offered": "Offer", "failed": null, "system_error": "Dead Letters Queue"}
     },
     "interview": {
       "states": ["Applied", "Interviewing"],
       "event_type": "calendar_event",
       "agent": "interview-prep",
-      "workers": 0,
+      "workers": 4,
       "routes": {"prepared": "Interviewing", "failed": null, "system_error": "Dead Letters Queue"}
     }
   }

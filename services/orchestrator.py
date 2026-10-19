@@ -10,8 +10,8 @@ import signal
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
-from datetime import datetime, timezone
-from threading import Event, Thread
+from datetime import datetime, timedelta, timezone
+from threading import Event, Thread, RLock
 from time import monotonic
 
 from persistence_api.journal_format import ALL_STATES, normalize_posting_url
@@ -20,6 +20,7 @@ from services.activity_log import configure_from_runtime, log_worker
 from services.queue_monitor import paint_queues, watch
 from . import pipeline_config
 from .orchestration_lock import runner_lock
+from .persistence_client import PersistenceApiError
 from .pipeline_agents import PipelineAgents, plain, read_posting
 from .runtime_config import ROOT, load as load_runtime
 from .workload_registry import WorkloadRegistry
@@ -27,9 +28,9 @@ from .workload_registry import WorkloadRegistry
 PREFIX = 'pipeline-'
 DEFAULT_STATUS = os.path.join(ROOT, 'config', 'orchestrator-status.json')
 HANDLED_STATUSES = {'Applied', 'Interviewing', 'Rejected', 'Offer'}
-RETIRE_STATUSES = {'Replay', 'Bookmarked', 'Ready for Auto-Apply', 'Manual Apply Required'}
-DUPLICATE_AGENTS = {'job-discovery', 'application'}
-BOOKMARK_OUTCOMES = {'accepted', 'prepared'}
+RETIRE_STATUSES = {'Discovered', 'Bookmarked', 'Validated', 'Prepared', 'Manual Apply Required'}
+DUPLICATE_AGENTS = {'read-posting', 'score', 'application'}
+BOOKMARK_OUTCOMES = {'accepted', 'read', 'prepared'}
 
 
 def digest(value):
@@ -56,6 +57,47 @@ def posting_identity(application, description=None):
         'role': normalized_text(application.get('role')),
         'description': description,
     }
+
+
+QUOTA_MARKERS = ("usage limit", "insufficient_quota")
+TRANSIENT_STORAGE_MARKERS = (
+    "remote end closed connection",
+    "connection reset",
+    "connection refused",
+    "timed out",
+    "timeout",
+    "temporarily unavailable",
+)
+QUOTA_RETRY_RE = re.compile(
+    r"try again at ([A-Za-z]+ \d{1,2})(?:st|nd|rd|th)?, (\d{4}) (\d{1,2}:\d{2} [AP]M)",
+    re.IGNORECASE)
+# Pipelines that call the Codex-backed application provider. Reading and scoring
+# use the configured local coding agent and keep running during a Codex outage.
+QUOTA_AGENTS = {"application", "correspondence", "interview-prep", "auto-apply"}
+
+
+def transient_storage_error(error):
+    """Return whether a failed artifact save can be retried without a new model call."""
+    text = str(error or "").lower()
+    return any(marker in text for marker in TRANSIENT_STORAGE_MARKERS)
+
+
+def provider_quota_until(error, now=None):
+    """Return the next retry time for a provider quota failure, or None."""
+    text = str(error or "")
+    if not any(marker in text.lower() for marker in QUOTA_MARKERS):
+        return None
+    now = now or datetime.now(timezone.utc)
+    match = QUOTA_RETRY_RE.search(text)
+    if match:
+        parsed = datetime.strptime(
+            "{} {} {}".format(match.group(1), match.group(2), match.group(3)),
+            "%b %d %Y %I:%M %p")
+        local = datetime.now().astimezone().tzinfo
+        parsed = parsed.replace(tzinfo=local).astimezone(timezone.utc)
+        if parsed > now:
+            return parsed
+    return now + timedelta(minutes=30)
 
 
 def duplicate_reason(candidate, handled):
@@ -122,7 +164,7 @@ def omit_document_bodies(value):
 
 
 def journal_output(agent, output):
-    if agent in {'application', 'job-discovery'}:
+    if agent in {'application', 'read-posting'}:
         output = omit_document_bodies(output)
     return output_bullets(output)
 
@@ -144,6 +186,9 @@ class Orchestrator:
         self.last_scan = self.last_event_poll = self.last_discovery = float('-inf')
         self.applications = []
         self.last_error = None
+        self.provider_backoff_until = None
+        self._description_lock = RLock()
+        self._descriptions = {}
         # Recover checkpoints, not side effects. A submission handler reads its
         # durable receipt before any possible external submission retry.
         for record in registry.snapshot():
@@ -152,9 +197,13 @@ class Orchestrator:
 
     def _apply_worker_overrides(self):
         for name, count in self.worker_overrides.items():
+            if name == 'discovery':
+                self.config['discovery_workers'] = count
+                continue
             if name not in self.config['pipelines']:
                 raise ValueError('unknown pipeline: ' + name)
             self.config['pipelines'][name]['workers'] = count
+        pipeline_config.validate(self.config)
 
     def reload(self):
         try:
@@ -195,10 +244,21 @@ class Orchestrator:
         self.registry.complete(record.workload_id)
 
     def _saved_description(self, application):
-        try:
-            return read_posting(self.persistence, application).get('description')
-        except (ValueError, KeyError, TypeError):
-            return None
+        app_id = application['application_id']
+        observed = version(application)
+        with self._description_lock:
+            cached = self._descriptions.get(app_id)
+            if cached and cached[0] == observed:
+                return cached[1]
+            try:
+                description = read_posting(self.persistence, application).get('description')
+            except (ValueError, KeyError, TypeError, PersistenceApiError):
+                # A handled posting that can no longer be read, including a 404
+                # after its journal tab moved, must not fail the posting being
+                # checked. Company, role, and URL matching still run.
+                description = None
+            self._descriptions[app_id] = (observed, description)
+            return description
 
     def _result_description(self, result):
         for item in (result or {}).get('artifacts') or []:
@@ -222,7 +282,9 @@ class Orchestrator:
                 continue
             if other.get('status') not in HANDLED_STATUSES:
                 continue
-            reason = duplicate_reason(candidate, posting_identity(other, self._saved_description(other)))
+            reason = duplicate_reason(candidate, posting_identity(other))
+            if not reason and candidate['description']:
+                reason = duplicate_reason(candidate, posting_identity(other, self._saved_description(other)))
             if reason:
                 return other, reason
         return None
@@ -264,6 +326,11 @@ class Orchestrator:
         spec = payload['spec']
         checkpoint = deepcopy(record.result)
         result = checkpoint['value']
+        # Older bookmark checkpoints used an undeclared failure outcome. Resume
+        # their saved result through the current route without reading the URL again.
+        if spec['agent'] == 'read-posting' and result.get('outcome') == 'failed':
+            result['outcome'] = 'read_failure'
+            self.registry.checkpoint_result(record.workload_id, checkpoint)
         app_id = payload['application_id']
         app = plain(self.persistence.get_application(app_id))
         if app is None:
@@ -298,6 +365,10 @@ class Orchestrator:
                 checkpoint['effects_saved'] = True
                 self.registry.checkpoint_result(record.workload_id, checkpoint)
         except Exception as error:
+            # A dropped connection still has the saved model result. Retry the
+            # upload on a later attempt instead of dead-lettering the posting.
+            if transient_storage_error(error) and record.attempts < self.registry.max_attempts:
+                raise
             # Save the agent output and storage error for central failure routing.
             # No second model invocation is needed to finish this operation.
             checkpoint['value'] = {'outcome': 'system_error', 'output': {
@@ -355,7 +426,18 @@ class Orchestrator:
                     json.dumps(result)
                 except Exception as error:
                     from .scout_reading import PostingReadFailure
-                    outcome = 'failed' if isinstance(error, PostingReadFailure) else 'system_error'
+                    quota_until = provider_quota_until(error)
+                    if quota_until is not None:
+                        # A quota reset is not a defect in the posting. Leave it
+                        # in its current state and try again when the provider
+                        # is available instead of dead-lettering it.
+                        self.provider_backoff_until = quota_until
+                        self.last_error = "provider quota exhausted; affected pipelines paused until {}".format(
+                            quota_until.isoformat())
+                        self.registry.defer(workload_id, self.last_error)
+                        return
+                    outcome = ('read_failure' if isinstance(error, PostingReadFailure)
+                               and payload['spec']['agent'] == 'read-posting' else 'system_error')
                     result = {'outcome': outcome, 'output': {'error': str(error)}}
                 self.registry.checkpoint_result(workload_id, {'value': result})
             else:
@@ -372,26 +454,29 @@ class Orchestrator:
                 log_worker(posting[0], posting[1], posting[2], posting[3], 'finished')
 
     def _maybe_discover(self):
-        """Search job boards when scout has a free worker. Replay still uses the rest."""
+        """Search each configured source once per cycle in the discovery pool."""
         interval = self.config.get('discovery_seconds')
         if not interval:
             return
-        spec = self.config['pipelines'].get('scout') or {}
-        if not spec.get('workers') or self._capacity('scout') <= 0:
+        workers = self.config.get('discovery_workers', 0)
+        if not workers:
             return
         if any(item.get('discovery') for item in self.inflight.values()):
             return
         if monotonic() - self.last_discovery < interval:
             return
-        slot = self._worker_slot('scout')
         self.last_discovery = monotonic()
-        future = self.pool.submit(self._run_discovery, slot)
-        self.inflight[future] = {
-            'application_id': 'discovery', 'pipeline': 'scout', 'workload_id': 'discovery',
-            'worker': slot, 'discovery': True,
-        }
+        sources = self.config.get('discovery_sources') or ['freehire', 'jobicy']
+        for index in range(min(workers, len(sources))):
+            slot = index + 1
+            batch = sources[index::workers]
+            future = self.pool.submit(self._run_discovery, slot, batch)
+            self.inflight[future] = {
+                'application_id': 'discovery-' + str(slot), 'pipeline': 'discovery',
+                'workload_id': 'discovery-' + str(slot), 'worker': slot, 'discovery': True,
+            }
 
-    def _collect_postings(self, profile):
+    def _collect_postings(self, profile, sources=None):
         from services.workflow_runtime import WorkflowRuntime
         job_search = profile.get('job_search') if isinstance(profile, dict) else None
         job_search = job_search or {}
@@ -402,7 +487,7 @@ class Orchestrator:
         if not terms:
             from services.search_planner import derive_search_terms
             terms = derive_search_terms(profile, self.agents.discovery_provider)
-        for name in self.config.get('discovery_sources') or ['freehire', 'jobicy']:
+        for name in sources or self.config.get('discovery_sources') or ['freehire', 'jobicy']:
             context = {
                 'source_names': [name],
                 'search_terms': terms,
@@ -416,6 +501,8 @@ class Orchestrator:
             except Exception as error:
                 errors.append('{}: {}'.format(name, error))
                 continue
+            errors.extend('{}: {}'.format(name, error)
+                          for error in context.get('discovery_source_errors') or [])
             for posting in context.get('job_postings') or []:
                 url = normalize_posting_url(posting.get('posting_url') or '')
                 if not url or url in seen:
@@ -445,42 +532,30 @@ class Orchestrator:
                 return True
         return False
 
-    def _run_discovery(self, slot):
+    def _run_discovery(self, slot, sources=None):
         from services.workload_executor import execute_persistence_writes, plan_persistence_writes
         log_worker(slot, 'discovery', 'job boards', 'search', 'started')
         try:
             profile = plain(self.persistence.get_profile()) or {}
-            postings = self._collect_postings(profile)
+            postings = self._collect_postings(profile, sources)
             if not postings:
                 return
-            output = self.agents.invoke('job-discovery', {
-                'job_postings': postings,
-                'applicant_profile': profile,
-            }, 'discover-and-bookmark')
-            candidates = output.get('candidates') if isinstance(output, dict) else None
-            if not isinstance(candidates, list):
-                raise ValueError('job-discovery must return candidates')
-            by_url = {normalize_posting_url(posting.get('posting_url') or ''): posting for posting in postings}
             applications = [plain(app) for app in self.persistence.list_applications() or []]
-            for candidate in candidates:
-                if not isinstance(candidate, dict):
+            for posting in postings:
+                posting_url = posting.get('posting_url', '')
+                if not posting_url:
                     continue
-                source = by_url.get(normalize_posting_url(candidate.get('posting_url') or ''))
-                description = (source or {}).get('description') or ''
-                if source is None or len(str(description)) < 500:
+                company = posting.get('company', '')
+                role = posting.get('role', '')
+                if self._already_known({'posting_url': posting_url, 'company': company, 'role': role}, '', applications):
                     continue
-                if not candidate.get('company') or not candidate.get('role'):
-                    continue
-                if self._already_known(candidate, description, applications):
-                    continue
-                log_worker(slot, 'discovery', candidate['company'], candidate['role'], 'started')
+                log_worker(slot, 'discovery', company or posting_url, role, 'started')
                 try:
                     operations = plan_persistence_writes(
-                        'discover-and-bookmark', {'job_postings': [source]},
-                        {'job-discovery': {'candidates': [candidate]}})
+                        'discover', {'job_postings': [posting], 'applicant_profile': profile}, {})
                     written = execute_persistence_writes(operations, self.persistence, dry_run=False)
                 finally:
-                    log_worker(slot, 'discovery', candidate['company'], candidate['role'], 'finished')
+                    log_worker(slot, 'discovery', company or posting_url, role, 'finished')
                 results = written.get('results') or []
                 created = next((plain(item) for item in results
                                 if isinstance(plain(item), dict) and plain(item).get('company')), None)
@@ -500,9 +575,21 @@ class Orchestrator:
             slot += 1
         return slot
 
+    def _quota_blocked(self, name):
+        until = self.provider_backoff_until
+        if until is None:
+            return False
+        if datetime.now(timezone.utc) >= until:
+            self.provider_backoff_until = None
+            return False
+        agent = (self.config.get('pipelines') or {}).get(name, {}).get('agent')
+        return agent in QUOTA_AGENTS
+
     def _launch(self, record):
         payload = record.event['payload']
         app_id, name = payload['application_id'], payload['pipeline']
+        if self._quota_blocked(name):
+            return False
         if self._capacity(name) <= 0 or any(value['application_id'] == app_id for value in self.inflight.values()):
             return False
         slot = self._worker_slot(name)
@@ -512,6 +599,9 @@ class Orchestrator:
         return True
 
     def tick(self):
+        # Publish a heartbeat before the journal scan. A cold read of the
+        # position journal can take longer than the supervisor's startup wait.
+        self.write_status()
         self.reload()
         for future in list(self.inflight):
             if future.done():
@@ -531,7 +621,8 @@ class Orchestrator:
             if record.status in {'queued', 'failed', 'running', 'dead_letter', 'awaiting_input'}:
                 pending_ids.add(payload['application_id'])
             if record.status in {'queued', 'failed'} and record.attempts < self.registry.max_attempts:
-                self._launch(record)
+                if not self._quota_blocked(payload.get('pipeline')):
+                    self._launch(record)
         enabled = {name: spec for name, spec in self.config['pipelines'].items() if spec['workers']}
         if enabled and monotonic() - self.last_scan >= self.config['scan_seconds']:
             self.applications = [plain(app) for app in self.persistence.list_applications()]
@@ -543,6 +634,8 @@ class Orchestrator:
         self._maybe_discover()
         by_id = {record.workload_id: record for record in records}
         for name, spec in enabled.items():
+            if self._quota_blocked(name):
+                continue
             for app in self.applications:
                 app_id = app['application_id']
                 if self._capacity(name) <= 0:
@@ -576,6 +669,8 @@ class Orchestrator:
 
     def write_status(self):
         value = {'pid': os.getpid(), 'updated_at': datetime.now(timezone.utc).isoformat(),
+                 'discovery': {'workers': self.config.get('discovery_workers', 0),
+                               'active': sum(1 for item in self.inflight.values() if item.get('discovery'))},
                  'config_error': self.config_error, 'last_error': self.last_error, 'stopping': self.stop.is_set(),
                  'pipelines': {name: {'workers': spec['workers'], 'agent': spec['agent'], 'states': spec['states'],
                                     'active': sum(1 for item in self.inflight.values() if item['pipeline'] == name)}
@@ -615,6 +710,7 @@ class Orchestrator:
         if monitor:
             monitor.start()
         try:
+            self.write_status()
             while not self.stop.is_set():
                 try:
                     self.tick()

@@ -46,7 +46,7 @@ def render_pdf(report):
     groups = {}
     for item in results:
         groups.setdefault(item.get('workflow', 'unknown'), []).append(item)
-    for name in ['discover-and-bookmark', 'prepare-bookmarked', 'submit-ready', 'handle-incoming-email', 'prepare-interview', 'reconcile']:
+    for name in ['discover', 'bookmark-discovered', 'validate-bookmarked', 'prepare-validated', 'submit-prepared', 'handle-incoming-email', 'prepare-interview', 'reconcile']:
         items = groups.get(name, [])
         paragraph(name.replace('-', ' ').title(), 'Heading3')
         statuses = Counter('failed' if item.get('error') else item.get('status') or (item.get('result') or {}).get('status', 'processed') for item in items)
@@ -68,14 +68,14 @@ def render_pdf(report):
                 if op['operation'] == 'create_application':
                     paragraph('Bookmarked match: {} / {}'.format(op['company'], op['role']))
                 if op['operation'] == 'ensure_ready_to_apply':
-                    paragraph('Promoted to Ready for Auto-Apply: ' + str(op.get('application_id', '')))
+                    paragraph('Promoted to Prepared: ' + str(op.get('application_id', '')))
             submission = item.get('submission') or item.get('result') or {}
             if submission:
                 paragraph('{}: {}'.format(label, submission.get('status', 'Unknown')))
                 for blocker in submission.get('blockers') or []:
                     paragraph('Reason: ' + blocker)
     for migration in report.get('migrations') or []:
-        paragraph('Migrated {} / {} to Ready for Auto-Apply.'.format(migration.get('company'), migration.get('role')))
+        paragraph('Migrated {} / {} to Prepared.'.format(migration.get('company'), migration.get('role')))
     for item in report.get('migration_errors') or []:
         app = applications.get(item.get('application_id'), {})
         paragraph('Migration not applied to {}: {}'.format(app.get('company', item.get('application_id')), item.get('reason')))

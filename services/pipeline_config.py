@@ -11,7 +11,8 @@ from .runtime_config import ROOT
 
 DEFAULT_PATH = os.path.join(ROOT, 'config', 'pipelines.json')
 OUTCOMES = {
-    'job-discovery': {'accepted', 'declined', 'failed', 'duplicate', 'system_error'},
+    'read-posting': {'read', 'read_failure', 'system_error'},
+    'score': {'validated', 'invalidated', 'duplicate', 'system_error'},
     'application': {'prepared', 'failed', 'duplicate', 'system_error'},
     'auto-apply': {'submitted', 'unconfirmed', 'waiting', 'failed', 'system_error'},
     'correspondence': {'processed', 'interview', 'rejected', 'offered', 'failed', 'system_error'},
@@ -29,6 +30,10 @@ def validate(config):
         raise ValueError('pipelines must be a nonempty object')
     queues = set()
     total = 0
+    discovery_workers = config.get('discovery_workers', 0)
+    if isinstance(discovery_workers, bool) or not isinstance(discovery_workers, int) or not 0 <= discovery_workers <= 64:
+        raise ValueError('discovery_workers must be an integer between 0 and 64')
+    total += discovery_workers
     for name, spec in pipelines.items():
         if not isinstance(spec, dict) or spec.get('agent') not in OUTCOMES:
             raise ValueError('unknown agent for pipeline ' + name)
@@ -46,10 +51,10 @@ def validate(config):
             raise ValueError('correspondence requires incoming_email events')
         if spec['agent'] == 'interview-prep' and event != 'calendar_event':
             raise ValueError('interview preparation requires calendar_event events')
-        if spec['agent'] == 'auto-apply' and states != ['Ready for Auto-Apply']:
-            raise ValueError('automatic submission may consume only Ready for Auto-Apply')
-        if spec['agent'] == 'application' and states != ['Bookmarked']:
-            raise ValueError('preparation consumes Bookmarked positions')
+        if spec['agent'] == 'auto-apply' and states != ['Prepared']:
+            raise ValueError('automatic submission may consume only Prepared')
+        if spec['agent'] == 'application' and states != ['Validated']:
+            raise ValueError('preparation consumes Validated positions')
         routes = spec.get('routes')
         if not isinstance(routes, dict) or set(routes) != OUTCOMES[spec['agent']]:
             raise ValueError('routes must cover every agent outcome: ' + name)
@@ -61,27 +66,29 @@ def validate(config):
                     validate_transition(state, target)
             if target == 'Applied' and (spec['agent'] != 'auto-apply' or outcome != 'submitted'):
                 raise ValueError('only a confirmed submission can route to Applied')
-        if spec['agent'] == 'application' and (routes['prepared'] != 'Ready for Auto-Apply' or routes['failed'] != 'Manual Apply Required' or routes['duplicate'] != 'Duplicate'):
+        if spec['agent'] == 'application' and (routes['prepared'] != 'Prepared' or routes['failed'] != 'Manual Apply Required' or routes['duplicate'] != 'Duplicate'):
             raise ValueError('preparation routes must follow the application policy')
-        if spec['agent'] == 'job-discovery' and routes['duplicate'] != 'Duplicate':
-            raise ValueError('scout duplicates route to Duplicate')
+        if spec['agent'] == 'score' and routes.get('duplicate') != 'Duplicate':
+            raise ValueError('score duplicates route to Duplicate')
         if spec['agent'] == 'auto-apply' and any(routes[key] != 'Manual Apply Required' for key in ('failed', 'unconfirmed')):
             raise ValueError('failed/unconfirmed submissions require manual reconciliation')
         for state in states:
             key = (state, event)
-            if key in queues:
+            if key in queues and event is not None:
                 raise ValueError('multiple pipelines own the same state/event queue')
-            queues.add(key)
+            if event is not None:
+                queues.add(key)
     if 'discovery_seconds' in config:
         value = config['discovery_seconds']
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value <= 86400:
             raise ValueError('discovery_seconds must be between 0 and 86400 seconds')
     if 'discovery_sources' in config:
         sources = config['discovery_sources']
-        allowed = {'freehire', 'jobicy', 'adzuna'}
+        from .discovery_sources import SOURCE_NAMES
+        allowed = SOURCE_NAMES
         if (not isinstance(sources, list) or not sources
                 or any(not isinstance(name, str) or name not in allowed for name in sources)):
-            raise ValueError('discovery_sources must list freehire, jobicy, or adzuna')
+            raise ValueError('discovery_sources must list supported sources: ' + ', '.join(sorted(allowed)))
     if total > 64:
         raise ValueError('at most 64 consumers may be allocated')
     return config

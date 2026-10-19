@@ -6,7 +6,7 @@ from services.site_trial_state import checkpoint_path, record_checkpoint
 
 
 def test_checkpoint_path_is_private_and_site_scoped():
-    assert checkpoint_path('jobify', 'app-1') == '.ai-job-search-system/workloads-internal-state/submit-ready/site-trials/jobify/app-1.json'
+    assert checkpoint_path('jobify', 'app-1') == '.ai-job-search-system/workloads-internal-state/submit-prepared/site-trials/jobify/app-1.json'
     for site, app in [('unknown', 'a'), ('rvc', '../a'), ('rvc', '')]:
         with pytest.raises(ValueError):
             checkpoint_path(site, app)
@@ -15,7 +15,7 @@ def test_checkpoint_path_is_private_and_site_scoped():
 def test_registration_checkpoint_only_writes_internal_state():
     class Persistence:
         def get_application(self, app):
-            return {'status': 'Ready for Auto-Apply'}
+            return {'status': 'Prepared'}
         def store_file(self, path, content, mime):
             self.saved = json.loads(content)
     persistence = Persistence()

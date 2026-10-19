@@ -1,8 +1,9 @@
 {
   "application_id": "fixture-application",
   "application": {
-    "status": "Ready for Auto-Apply",
+    "status": "Validated",
     "company": "Example",
     "role": "Backend Engineer"
-  }
+  },
+  "cv_html": "<p>Senior backend engineer</p>"
 }

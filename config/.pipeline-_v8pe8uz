@@ -1,0 +1,72 @@
+{
+  "pid": 535439,
+  "updated_at": "2026-10-19T05:45:17.310473+00:00",
+  "discovery": {
+    "workers": 4,
+    "active": 1
+  },
+  "config_error": null,
+  "last_error": "persistence API returned 400: {\"error\": \"Google Docs API HTTP 400: {\\n  \\\"error\\\": {\\n    \\\"code\\\": 400,\\n    \\\"message\\\": \\\"Invalid requests[0].addDocumentTab: Docs are limited to 100 tabs. Please create a new doc or delete a tab in order to add a new one.\\\",\\n    \\\"status\\\": \\\"INVALID_ARGUMENT\\\"\\n  }\\n}\\n\"}",
+  "stopping": false,
+  "pipelines": {
+    "bookmark": {
+      "workers": 4,
+      "agent": "read-posting",
+      "states": [
+        "Discovered"
+      ],
+      "active": 0
+    },
+    "validate": {
+      "workers": 4,
+      "agent": "score",
+      "states": [
+        "Bookmarked"
+      ],
+      "active": 0
+    },
+    "prepare": {
+      "workers": 4,
+      "agent": "application",
+      "states": [
+        "Validated"
+      ],
+      "active": 0
+    },
+    "submit": {
+      "workers": 4,
+      "agent": "auto-apply",
+      "states": [
+        "Prepared"
+      ],
+      "active": 0
+    },
+    "correspondence": {
+      "workers": 4,
+      "agent": "correspondence",
+      "states": [
+        "Applied",
+        "Interviewing"
+      ],
+      "active": 0
+    },
+    "interview": {
+      "workers": 4,
+      "agent": "interview-prep",
+      "states": [
+        "Applied",
+        "Interviewing"
+      ],
+      "active": 0
+    }
+  },
+  "inflight": [
+    {
+      "application_id": "discovery-1",
+      "pipeline": "discovery",
+      "workload_id": "discovery-1",
+      "worker": 1,
+      "discovery": true
+    }
+  ]
+}

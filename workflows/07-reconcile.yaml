@@ -2,13 +2,10 @@ name: reconcile
 trigger:
   type: schedule
   cadence: daily
+  event_type: reconciliation_schedule
+agent: null
 input_states: []
-steps:
-  - recheck_missed_events
-  - recover_incomplete_workloads
-  - reconcile_application_status
-  - renew_subscriptions
-  - report_errors_and_pending_review_requests
+external_actions: []
 outcomes:
   recovered: null
   system_error: Dead Letters Queue

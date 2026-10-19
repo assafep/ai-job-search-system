@@ -1,4 +1,7 @@
 import json
+from urllib.parse import parse_qs, urlsplit
+
+import pytest
 
 from adapters.job_boards.jobicy import JobicyJobBoard
 
@@ -38,3 +41,13 @@ def test_jobicy_public_search_requires_no_credentials_and_normalizes():
     assert jobs[0]["posting_url"] == "https://jobicy.com/jobs/7"
     assert jobs[0]["source"] == "jobicy"
     assert "tag=python" in requests[0].full_url
+
+
+@pytest.mark.parametrize(('country', 'slug'), [('IL', 'israel'), ('US', 'usa'), ('GB', 'uk'), ('canada', 'canada')])
+def test_country_codes_are_translated_to_jobicy_location_slugs(country, slug):
+    requests = []
+    def opener(request):
+        requests.append(request)
+        return Response({'jobs': []})
+    assert JobicyJobBoard(opener=opener).search('backend', geo=country) == []
+    assert parse_qs(urlsplit(requests[0].full_url).query)['geo'] == [slug]

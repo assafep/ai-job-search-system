@@ -3,11 +3,11 @@
 Optional boundary for sites that require browser interaction. It must be
 invoked by a workload runtime, never by a stateless agent.
 
-Every unsuccessful auto-apply attempt moves postings from `Ready for Auto-Apply`
+Every unsuccessful auto-apply attempt moves postings from `Prepared`
 to `Manual Apply Required`, with a reason recorded by the auto-apply runtime.
 Distinguish human verification, missing answers, unsupported destinations,
 preparation errors, and ambiguous receipts accurately. Never bypass checks or
-blindly retry an ambiguous submission. Ready for Auto-Apply queue membership
+blindly retry an ambiguous submission. Prepared queue membership
 authorizes submission without a separate approval pause. The manual queue is
 not consumed automatically.
 

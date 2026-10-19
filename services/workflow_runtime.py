@@ -1,8 +1,8 @@
 """Lifecycle boundary between queued workloads and stateless workflow execution."""
 
 import argparse
-import base64
 import json
+import os
 import sys
 from dataclasses import asdict
 
@@ -10,7 +10,7 @@ from .agent_runner import run as run_agent
 from .approval_service import evaluate
 from .approval_registry import approval_registry_from_environment
 from .runtime_config import calendly_url as configured_calendly_url
-from .workload_runner import WORKFLOW_AGENTS, execute
+from .workload_runner import _get_agents, execute
 from .workload_registry import registry_from_environment
 from persistence_api.profile import calendly_url as profile_calendly_url
 
@@ -31,7 +31,7 @@ class WorkflowRuntime:
 
     def _record_preparation_failure(self, record, error):
         """Route preparation failures through the data layer, with retry-safe history."""
-        if record.workflow != 'prepare-bookmarked':
+        if record.workflow != 'prepare-validated':
             return
         application_id = (record.event.get('payload') or {}).get('application_id')
         if not application_id:
@@ -48,7 +48,7 @@ class WorkflowRuntime:
         if application is None:
             return
         state = application.get('status') if isinstance(application, dict) else application.status
-        if state not in {'Bookmarked', 'Ready for Auto-Apply', 'Dead Letters Queue'}:
+        if state not in {'Validated', 'Prepared', 'Dead Letters Queue'}:
             return  # Never regress a submitted or closed application.
         self.persistence_client.transition(application_id, 'Dead Letters Queue', {
             'source': 'application package preparation agent',
@@ -63,54 +63,97 @@ class WorkflowRuntime:
             raise RuntimeError('Preparation failed: {}. Recording Dead Letters Queue also failed: {}'.format(
                 error, routing_error)) from routing_error
 
-    def _enrich_agent_context(self, workflow, context, agent_provider=None, application_snapshot=None):
-        """Read workflow context through the persistence API, never into agents."""
+    def prepare_context(self, workflow, context, agent_provider=None):
+        """Read all persistence data needed for a workflow and return enriched context.
+
+        This is the ONLY method that reads from the persistence API for workflow
+        execution. It must be called by the main consumer thread before dispatching
+        to worker threads.
+        """
+        enriched = dict(context)
         profile = None
         if hasattr(self.persistence_client, "get_profile"):
             profile = self.persistence_client.get_profile()
-            context["applicant_profile"] = profile
-            if not context.get("calendly_url"):
-                context["calendly_url"] = profile_calendly_url(profile)
-        if workflow == "discover-and-bookmark":
-            self._enrich_discovery_context(context, profile, agent_provider)
-        if workflow == "prepare-bookmarked":
-            context["source_resume_path"] = (profile or {}).get("source_resume", {}).get("path")
-            if not context["source_resume_path"]:
+            enriched["applicant_profile"] = profile
+            if not enriched.get("calendly_url"):
+                enriched["calendly_url"] = profile_calendly_url(profile)
+        if workflow in ("discover", "validate-bookmarked"):
+            self._enrich_discovery_context(enriched, profile, agent_provider)
+        if workflow == "prepare-validated":
+            enriched["source_resume_path"] = (profile or {}).get("source_resume", {}).get("path")
+            if not enriched["source_resume_path"]:
                 raise ValueError("original onboarding resume PDF is required to prepare an application package")
-            context.pop("cv_html", None)
-        application_id = context.get("application_id")
+            enriched.pop("cv_html", None)
+        application_id = enriched.get("application_id")
         if not application_id:
-            return context
-        if application_snapshot is not None:
-            context['application'] = application_snapshot
-        elif hasattr(self.persistence_client, "get_application"):
-            context["application"] = self.persistence_client.get_application(application_id)
-        if workflow == "prepare-bookmarked":
-            from adapters.job_boards.posting_details import parse_saved_posting
+            return enriched
+        if hasattr(self.persistence_client, "get_application"):
+            enriched["application"] = self.persistence_client.get_application(application_id)
+        if workflow == "prepare-validated":
+            from adapters.job_boards.posting_details import read_posting_artifact
             from pypdf import PdfReader
-            application = context.get("application") or {}
-            artifacts = self.persistence_client.list_artifacts(application_id)
-            artifacts = [item if isinstance(item, dict) else asdict(item) for item in artifacts]
-            posting_artifact = next((item for item in reversed(artifacts)
-                                     if str(item.get('name', '')).startswith('Job Posting - ')), None)
-            if not posting_artifact:
-                raise ValueError('saved posting content is missing; bookmark must be refreshed before preparation')
-            artifact_id = posting_artifact.get('artifact_id')
-            saved = self.persistence_client.read_artifact(application_id, artifact_id)
-            raw = saved.get('content') if isinstance(saved, dict) else None
-            if raw is None and isinstance(saved, dict) and saved.get('content_base64'):
-                raw = base64.b64decode(saved['content_base64'])
-            context["job_posting"] = parse_saved_posting(raw)
-            from persistence_api.journal_format import normalize_posting_url
-            if normalize_posting_url(context['job_posting']['posting_url']) != normalize_posting_url(application['posting_url']):
-                raise ValueError('saved posting content belongs to a different posting')
-            context["resume_text"] = '\n'.join(
-                page.extract_text() or '' for page in PdfReader(context["source_resume_path"]).pages)
+            application = enriched.get("application") or {}
+            enriched["job_posting"] = read_posting_artifact(
+                self.persistence_client, application_id, application.get('posting_url', ''))
+            enriched["resume_text"] = '\n'.join(
+                page.extract_text() or '' for page in PdfReader(enriched["source_resume_path"]).pages)
+        if workflow == "bookmark-discovered":
+            application = enriched.get("application") or {}
+            if not enriched.get("posting_url") and not enriched.get("read_posting_url"):
+                enriched["posting_url"] = application.get("posting_url")
+        if workflow == "validate-bookmarked":
+            from adapters.job_boards.posting_details import read_posting_artifact
+            application = enriched.get("application") or {}
+            enriched["posting_content"] = read_posting_artifact(
+                self.persistence_client, application_id, application.get('posting_url', ''))
         if hasattr(self.persistence_client, "list_events"):
-            context["application_events"] = self.persistence_client.list_events(application_id)
+            enriched["application_events"] = self.persistence_client.list_events(application_id)
         if workflow == "prepare-interview" and hasattr(self.persistence_client, "list_research"):
-            context["existing_research"] = self.persistence_client.list_research(application_id)
-        return context
+            enriched["existing_research"] = self.persistence_client.list_research(application_id)
+        return enriched
+
+    def run_agent(self, workflow, enriched_context, agent_provider):
+        """Invoke the workflow's agent(s) on pre-enriched context.
+
+        This is a stateless operation: no persistence reads or writes.
+        It is safe to call from worker threads.
+        """
+        from .workload_runner import _get_agents
+        if workflow == "bookmark-discovered":
+            # Retrieval is an adapter concern, not an LLM capability. Fetch
+            # and validate the exact posting before invoking any agent. This
+            # handles SPA shells and ATS-specific public data endpoints and
+            # guarantees that the saved artifact does not depend on the
+            # coding agent having browser/network access.
+            from adapters.job_boards.posting_details import fetch_posting_details
+            posting_url = (enriched_context.get("posting_url") or
+                           enriched_context.get("read_posting_url"))
+            if not posting_url:
+                raise ValueError("bookmark-discovered requires posting_url")
+            details = fetch_posting_details(posting_url)
+            enriched_context["retrieved_posting"] = details
+            return {"read-posting": {
+                "company": enriched_context.get("company"),
+                "role": enriched_context.get("role"),
+                "posting_url": posting_url,
+                "resolved_url": details.get("source_url") or posting_url,
+                "description": details["description"],
+                "read_failure": "",
+            }}
+        agent_results = {}
+        for agent_name in _get_agents(workflow):
+            agent_context = dict(enriched_context)
+            if hasattr(agent_provider, "with_reasoning_effort"):
+                from .workload_effort import effort_for_workflow
+                agent_context["reasoning_effort"] = effort_for_workflow(workflow)
+                agent_provider = agent_provider.with_reasoning_effort(agent_context["reasoning_effort"])
+            agent_results[agent_name] = run_agent(agent_name, agent_context, agent_provider)
+        return agent_results
+
+    def _enrich_agent_context(self, workflow, context, agent_provider=None, application_snapshot=None):
+        """Legacy: delegate to prepare_context for backward compatibility."""
+        return self.prepare_context(workflow, context, agent_provider)
+
 
     @staticmethod
     def _enrich_discovery_context(context, profile=None, agent_provider=None):
@@ -121,7 +164,10 @@ class WorkflowRuntime:
         query, otherwise failing here is safer than producing fabricated jobs.
         """
         source_names = context.get("source_names") or []
-        source = next((name for name in ("freehire", "jobicy", "adzuna") if name in source_names), None)
+        source = next((name for name in (
+            "freehire", "jobicy", "adzuna", "greenhouse", "ashby", "comeet", "lever", "himalayas",
+            "smartrecruiters",
+        ) if name in source_names), None)
         if source is None:
             return
 
@@ -139,28 +185,97 @@ class WorkflowRuntime:
             locations = [locations]
         query = " OR ".join(str(item).strip() for item in terms if str(item).strip())
         where = " OR ".join(str(item).strip() for item in locations if str(item).strip())
+        # Resolve preferred countries from the applicant profile for all adapters.
+        # Context override > profile job_search.countries > location codes > default IL.
+        preferred_countries = context.get("countries") or job_search.get("countries") or [
+            item.upper() for item in locations if isinstance(item, str) and len(item) == 2
+        ] or ["IL"]
+        if source in {'greenhouse', 'ashby', 'comeet', 'lever', 'smartrecruiters'}:
+            from .discovery_sources import source_boards, select_live_postings, fetch_employer_boards
+            if source == 'greenhouse':
+                from adapters.job_boards.greenhouse import GreenhouseJobBoard, boards_from_environment
+                board_class = GreenhouseJobBoard
+                boards = boards_from_environment() or source_boards(source)
+            elif source == 'ashby':
+                from adapters.job_boards.ashby import AshbyJobBoard
+                board_class = AshbyJobBoard
+                boards = source_boards(source)
+            elif source == 'comeet':
+                from adapters.job_boards.comeet import ComeetJobBoard
+                board_class = ComeetJobBoard
+                boards = source_boards(source)
+            elif source == 'lever':
+                from adapters.job_boards.lever import LeverJobBoard
+                board_class = LeverJobBoard
+                boards = source_boards(source)
+            else:
+                from adapters.job_boards.smartrecruiters import SmartRecruitersJobBoard
+                board_class = SmartRecruitersJobBoard
+                boards = source_boards(source)
+            postings, errors = fetch_employer_boards(board_class, boards)
+            context['job_postings'] = select_live_postings(
+                postings, profile, preferred_countries)
+            if errors:
+                context['discovery_source_errors'] = errors
+            return
+        if source == 'himalayas':
+            from adapters.job_boards.himalayas import HimalayasJobBoard
+            from .discovery_sources import select_live_postings
+            board = HimalayasJobBoard()
+            collected = {}
+            errors = []
+            queries = [str(term).strip() for term in terms if str(term).strip()]
+            if not queries:
+                queries = ['backend', 'java', 'scala', 'python', 'data engineer']
+            country = preferred_countries[0] if preferred_countries else 'IL'
+            for term in queries[:6]:
+                try:
+                    for posting in board.search(query=term, country=country):
+                        url = posting.get('posting_url')
+                        if url:
+                            collected[url] = posting
+                except (RuntimeError, ValueError, OSError) as error:
+                    errors.append('{}: {}'.format(term, error))
+            if errors and not collected:
+                raise RuntimeError('; '.join(errors))
+            context['job_postings'] = select_live_postings(
+                list(collected.values()), profile, preferred_countries)
+            if errors:
+                context['discovery_source_errors'] = errors
+            return
         if source == "jobicy":
             from adapters.job_boards.jobicy import JobicyJobBoard
-            context["job_postings"] = JobicyJobBoard().search(
-                query=query,
-                count=int(context.get("results_per_page", 100)),
-            )
+            # Jobicy's tag is one keyword phrase, limited to 50 characters.
+            # Boolean OR strings exceed that limit and are not its query syntax.
+            board = JobicyJobBoard()
+            postings = {}
+            for term in terms or ['']:
+                for posting in board.search(
+                        query=str(term).strip(),
+                        count=int(context.get("results_per_page", 100)),
+                        geo=preferred_countries[0] if preferred_countries else ""):
+                    postings[posting['posting_url']] = posting
+            context["job_postings"] = list(postings.values())
             return
         if source == "freehire":
             from adapters.job_boards.freehire import FreehireJobBoard
-            countries = context.get("countries") or job_search.get("countries") or [
-                item.upper() for item in locations if isinstance(item, str) and len(item) == 2
-            ] or ["IL"]
             context["job_postings"] = FreehireJobBoard().search(
                 query=query,
-                countries=countries,
+                countries=preferred_countries,
                 limit=int(context.get("results_per_page", 100)),
             )
             return
-        from adapters.job_boards.adzuna import client_from_environment
+        from adapters.job_boards.adzuna import AdzunaJobBoard, client_from_environment
         if not query and not where:
             raise ValueError("Adzuna discovery requires search_terms or locations")
-        context["job_postings"] = client_from_environment().search(
+        # Use the applicant's preferred country for Adzuna API path
+        adzuna_country = preferred_countries[0].lower() if preferred_countries else "il"
+        adzuna_client = AdzunaJobBoard(
+            os.environ.get("ADZUNA_APP_ID", ""),
+            os.environ.get("ADZUNA_APP_KEY", ""),
+            country=adzuna_country,
+        )
+        context["job_postings"] = adzuna_client.search(
             what=query, where=where, page=int(context.get("page", 1)),
             results_per_page=int(context.get("results_per_page", 20)),
         )
@@ -172,14 +287,14 @@ class WorkflowRuntime:
         # the persistence API.
         record = self.registry.get(workload_id)
         previous_error = record.error
-        if record.workflow == 'prepare-bookmarked' and agent_results is None and hasattr(self.persistence_client, 'list_artifacts'):
+        if record.workflow == 'prepare-validated' and agent_results is None and hasattr(self.persistence_client, 'list_artifacts'):
             from .application_package import saved_package, promote_saved_package
             self.registry.claim(workload_id)
             try:
                 app = self.persistence_client.get_application((record.event.get('payload') or {})['application_id'])
                 if app is not None and not isinstance(app, dict):
                     app = asdict(app)
-                if app['status'] != 'Bookmarked':
+                if app['status'] != 'Validated':
                     if app['status'] == 'Dead Letters Queue' and previous_error:
                         self._record_preparation_failure(record, previous_error)
                     self.registry.complete(workload_id)
@@ -200,7 +315,7 @@ class WorkflowRuntime:
                 raise
         else:
             preclaimed = False
-        if record.workflow == 'submit-ready':
+        if record.workflow == 'submit-prepared':
             from .ready_submission import ReadySubmission
             self.registry.claim(workload_id)
             runner = ReadySubmission(self.persistence_client, self.registry)
@@ -211,7 +326,7 @@ class WorkflowRuntime:
                     self.registry.complete(workload_id)
                 else:
                     self.registry.wait_for_input(workload_id, '; '.join(outcome.get('blockers') or [outcome['status']]))
-                return {'workload_id': workload_id, 'workflow': 'submit-ready',
+                return {'workload_id': workload_id, 'workflow': 'submit-prepared',
                         'status': self.registry.get(workload_id).status, 'submission': outcome}
             except Exception as exc:
                 self.registry.fail(workload_id, str(exc))
@@ -246,12 +361,8 @@ class WorkflowRuntime:
                 context = self._enrich_agent_context(record.workflow, context, agent_provider,
                                                      application_snapshot=app if preclaimed else None)
                 agent_results = {}
-                for agent_name in WORKFLOW_AGENTS[record.workflow]:
+                for agent_name in _get_agents(record.workflow):
                     agent_context = dict(context)
-                    if agent_name == "application" and "job-discovery" in agent_results:
-                        discovery = agent_results["job-discovery"]
-                        if isinstance(discovery, dict):
-                            agent_context["discovered_candidates"] = discovery.get("candidates", [])
                     agent_results[agent_name] = run_agent(agent_name, agent_context, agent_provider)
             requested_actions = context.get("approval_actions") or []
             if not isinstance(requested_actions, list):

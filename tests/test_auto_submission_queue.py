@@ -5,7 +5,7 @@ from services.workload_registry import WorkloadRegistry
 def test_scheduler_only_consumes_auto_apply_queue():
     class Client:
         def list_applications(self, status):
-            assert status == 'Ready for Auto-Apply'
+            assert status == 'Prepared'
             return [{'application_id': 'auto-app'}]
     class Runtime:
         pass

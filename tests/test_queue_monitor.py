@@ -11,8 +11,8 @@ from tests.test_orchestrator import pipeline_file, scout_provider
 
 
 def test_queue_frame_rewrites_the_same_lines():
-    first = paint_queues({'Bookmarked': 1, 'Replay': 4})
-    second = paint_queues({'Bookmarked': 2, 'Replay': 0})
+    first = paint_queues({'Bookmarked': 1, 'Discovered': 4})
+    second = paint_queues({'Bookmarked': 2, 'Discovered': 0})
     assert first.startswith('\033[H')
     assert first.endswith('\033[J')
     assert '\033[2K' in first
@@ -38,8 +38,8 @@ def test_watch_updates_values_without_adding_a_second_frame():
 
 
 def test_worker_flags_override_the_config_file_and_survive_reload(tmp_path):
-    path = pipeline_file(tmp_path, scout=1)
-    assert parse_worker_overrides(['scout=2', 'auto-apply=0']) == {'scout': 2, 'auto-apply': 0}
+    path = pipeline_file(tmp_path, bookmark=1)
+    assert parse_worker_overrides(['bookmark=2', 'auto-apply=0']) == {'bookmark': 2, 'auto-apply': 0}
     try:
         parse_worker_overrides(['scout'])
     except ValueError as error:
@@ -47,7 +47,7 @@ def test_worker_flags_override_the_config_file_and_survive_reload(tmp_path):
     else:
         raise AssertionError('a bare pipeline name must be rejected')
     try:
-        parse_worker_overrides(['scout=65'])
+        parse_worker_overrides(['bookmark=65'])
     except ValueError as error:
         assert 'between 0 and 64' in str(error)
     else:
@@ -56,16 +56,16 @@ def test_worker_flags_override_the_config_file_and_survive_reload(tmp_path):
     registry = WorkloadRegistry()
     orchestrator = Orchestrator(
         object(), registry, PipelineAgents(object(), registry, scout_provider), str(path),
-        worker_overrides={'scout': 3, 'preparation': 2})
+        worker_overrides={'bookmark': 3, 'prepare': 2})
     try:
-        assert orchestrator.config['pipelines']['scout']['workers'] == 3
-        assert orchestrator.config['pipelines']['preparation']['workers'] == 2
-        assert orchestrator.config['pipelines']['auto-apply']['workers'] == 0
+        assert orchestrator.config['pipelines']['bookmark']['workers'] == 3
+        assert orchestrator.config['pipelines']['prepare']['workers'] == 2
+        assert orchestrator.config['pipelines']['submit']['workers'] == 0
         saved = path.read_text().replace('"workers": 1', '"workers": 9', 1)
         path.write_text(saved)
         orchestrator.reload()
-        assert orchestrator.config['pipelines']['scout']['workers'] == 3
-        assert orchestrator.config['pipelines']['preparation']['workers'] == 2
+        assert orchestrator.config['pipelines']['bookmark']['workers'] == 3
+        assert orchestrator.config['pipelines']['prepare']['workers'] == 2
         try:
             Orchestrator(object(), WorkloadRegistry(), PipelineAgents(object(), WorkloadRegistry(), scout_provider),
                          str(path), worker_overrides={'missing': 1})
@@ -82,20 +82,20 @@ def test_run_script_accepts_monitor_log_and_worker_flags(tmp_path, monkeypatch):
     from services.run import apply_log_flags, parse_args
     with pytest.raises(SystemExit):
         parse_args(['--log', '--no-log'])
-    args = parse_args(['--monitor', '--workers', 'scout=2', '--workers', 'preparation=0'])
+    args = parse_args(['--monitor', '--workers', 'bookmark=2', '--workers', 'preparation=0'])
     assert args.monitor is True
-    assert args.workers == ['scout=2', 'preparation=0']
+    assert args.workers == ['bookmark=2', 'preparation=0']
     monkeypatch.setenv('ACTIVITY_LOG_ENABLED', '1')
     monkeypatch.setenv('ACTIVITY_LOG_FILE', str(tmp_path / 'env.log'))
     runtime = {'activity_log': {'enabled': True, 'path': str(tmp_path / 'runtime.log')}}
     try:
         apply_log_flags(parse_args(['--no-log']), runtime)
-        activity_log.log_transition('A', 'B', 'Replay', 'Bookmarked')
+        activity_log.log_transition('A', 'B', 'Discovered', 'Bookmarked')
         assert not (tmp_path / 'env.log').exists()
         path = tmp_path / 'activity.log'
         apply_log_flags(parse_args(['--log-file', str(path)]), runtime)
-        activity_log.log_transition('A', 'B', 'Replay', 'Bookmarked')
-        assert path.read_text() == 'Posting A / B moved from Replay to Bookmarked\n'
+        activity_log.log_transition('A', 'B', 'Discovered', 'Bookmarked')
+        assert path.read_text() == 'Posting A / B moved from Discovered to Bookmarked\n'
     finally:
         activity_log.configure(False, None)
 

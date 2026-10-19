@@ -1,0 +1,13 @@
+name: bookmark-discovered
+trigger:
+  type: queued_application
+  event_type: read_posting_schedule
+agent: read-posting
+input_states:
+  - Discovered
+external_actions: []
+outcomes:
+  read: Bookmarked
+  read_failure: Manual Apply Required
+  system_error: Dead Letters Queue
+side_effects: through_data_layer

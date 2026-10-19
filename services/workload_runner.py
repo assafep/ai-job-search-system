@@ -20,32 +20,19 @@ from persistence_api.journal_format import ALL_STATES
 from persistence_api.state_machine import ALLOWED_TRANSITIONS
 
 
-WORKFLOW_AGENTS = {
-    "submit-ready": [],
-    "discover-and-bookmark": ["job-discovery"],
-    "prepare-bookmarked": ["application"],
-    "prepare-interview": ["interview-prep"],
-    "handle-incoming-email": ["correspondence"],
-    "reconcile": [],
-}
+def _get_agents(workflow_name):
+    """Return the list of agent names for a workflow from its blueprint."""
+    definition = parse_workflow(WORKFLOWS[workflow_name])
+    agent = definition.get("agent")
+    if agent is None:
+        return []
+    return [agent]
 
-PERSISTENCE_ACTIONS = {
-    "submit-ready": ["read_application", "read_application_package", "record_submission_receipt", "record_application_state"],
-    "discover-and-bookmark": ["read_preferences", "upsert_postings", "record_application_state"],
-    "prepare-bookmarked": ["read_application", "write_application_package", "record_application_state"],
-    "prepare-interview": ["read_application", "write_interview_briefing", "record_preparation_status"],
-    "handle-incoming-email": ["read_application", "record_correspondence_event", "record_proposed_response"],
-    "reconcile": ["read_pending_workloads", "record_reconciliation_result", "record_errors"],
-}
 
-EXTERNAL_ACTIONS = {
-    "submit-ready": ["submit_job_application"],
-    "discover-and-bookmark": [],
-    "prepare-bookmarked": [],
-    "prepare-interview": [],
-    "handle-incoming-email": ["send_recruitment_email"],
-    "reconcile": [],
-}
+def _get_external_actions(workflow_name):
+    """Return the list of external actions for a workflow from its blueprint."""
+    definition = parse_workflow(WORKFLOWS[workflow_name])
+    return definition.get("external_actions", [])
 
 
 def validate_workflow_outcomes(workflow_name, definition):
@@ -71,6 +58,9 @@ def validate_workflow_outcomes(workflow_name, definition):
         for outcome, target in outcomes.items():
             if target is None:
                 continue
+            # Same-state transition is a safe no-op (matches state_machine.validate_transition)
+            if target == state:
+                continue
             if target not in ALLOWED_TRANSITIONS.get(state, set()):
                 raise ValueError(
                     "workflow {} outcome '{}' routes to '{}' which is not allowed from input state '{}'"
@@ -82,12 +72,11 @@ def build_plan(workflow_name, context):
         raise ValueError("unknown workflow: " + workflow_name)
     definition = parse_workflow(WORKFLOWS[workflow_name])
     validate_workflow_outcomes(workflow_name, definition)
-    agents = WORKFLOW_AGENTS[workflow_name]
+    agents = _get_agents(workflow_name)
     return {
         "mode": "workload-dry-run",
         "workflow": workflow_name,
         "trigger_context": context,
-        "workflow_steps": definition["steps"],
         "input_states": definition.get("input_states", []),
         "outcomes": definition.get("outcomes", {}),
         "agent_invocations": [
@@ -99,8 +88,7 @@ def build_plan(workflow_name, context):
             }
             for name in agents
         ],
-        "proposed_persistence_actions": PERSISTENCE_ACTIONS[workflow_name],
-        "approval_requirements": evaluate(EXTERNAL_ACTIONS[workflow_name]),
+        "approval_requirements": evaluate(_get_external_actions(workflow_name)),
         "side_effects": "disabled",
     }
 
@@ -153,7 +141,7 @@ def main(argv=None):
         if agent_results is not None and not isinstance(agent_results, dict):
             raise ValueError("--agent-results must contain an object keyed by agent name")
         if agent_results is not None:
-            expected_agents = set(WORKFLOW_AGENTS[args.workflow])
+            expected_agents = set(_get_agents(args.workflow))
             supplied_agents = set(agent_results)
             unknown_agents = supplied_agents - expected_agents
             if unknown_agents:
@@ -165,7 +153,7 @@ def main(argv=None):
         if args.execute:
             if agent_results is None:
                 raise ValueError("--execute requires --agent-results")
-            expected_agents = set(WORKFLOW_AGENTS[args.workflow])
+            expected_agents = set(_get_agents(args.workflow))
             missing_agents = expected_agents - set(agent_results)
             if missing_agents:
                 raise ValueError(

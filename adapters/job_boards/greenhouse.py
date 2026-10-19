@@ -41,11 +41,12 @@ def boards_from_environment(environ=None):
 
 
 class GreenhouseJobBoard:
-    def __init__(self, boards, opener=None):
+    def __init__(self, boards, opener=None, timeout=30):
         if not isinstance(boards, dict) or not boards:
             raise ValueError("at least one Greenhouse board token is required")
         self.boards = boards
         self.opener = opener or urllib.request.urlopen
+        self.timeout = timeout
 
     def list_jobs(self):
         postings = []
@@ -54,13 +55,18 @@ class GreenhouseJobBoard:
             url = "{}/{}/jobs?{}".format(BASE_URL, urllib.parse.quote(token, safe=""), query)
             request = urllib.request.Request(url, headers={"Accept": "application/json"})
             try:
-                with self.opener(request) as response:
+                # Custom openers retain the small test/adapter interface.
+                response_context = (self.opener(request, timeout=self.timeout)
+                                    if self.opener is urllib.request.urlopen else self.opener(request))
+                with response_context as response:
                     payload = json.loads(response.read().decode("utf-8"))
             except urllib.error.HTTPError as error:
                 raise RuntimeError("Greenhouse board {} returned HTTP {}".format(token, error.code))
             except urllib.error.URLError as error:
                 raise RuntimeError("Greenhouse board {} unavailable: {}".format(token, error.reason))
-            for job in payload.get("jobs", []):
+            if not isinstance(payload, dict) or not isinstance(payload.get('jobs'), list):
+                raise RuntimeError('Greenhouse board {} returned an invalid response'.format(token))
+            for job in payload['jobs']:
                 postings.append(self._normalize(company, job))
         return postings
 
@@ -79,6 +85,8 @@ class GreenhouseJobBoard:
             "source": "greenhouse",
             "source_id": str(job.get("id", "")),
             "updated_at": job.get("updated_at"),
+            "posted_at": job.get("first_published"),
+            "publication_date_kind": "first_published",
         }
 
 

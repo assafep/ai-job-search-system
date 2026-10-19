@@ -22,7 +22,7 @@ def checkpoint_path(site, application_id):
         raise ValueError('unsupported trial site')
     if not application_id or '/' in application_id or application_id in {'.', '..'}:
         raise ValueError('invalid application ID')
-    return workload_state_path('submit-ready', 'site-trials/{}/{}.json'.format(site, application_id))
+    return workload_state_path('submit-prepared', 'site-trials/{}/{}.json'.format(site, application_id))
 
 
 def record_checkpoint(persistence, site, application_id, stage, evidence):
@@ -30,8 +30,8 @@ def record_checkpoint(persistence, site, application_id, stage, evidence):
     if stage not in STAGES or not evidence.strip():
         raise ValueError('an observed, non-submission checkpoint is required')
     application = persistence.get_application(application_id)
-    if not application or application['status'] != 'Ready for Auto-Apply':
-        raise ValueError('trial checkpoint requires a Ready for Auto-Apply application')
+    if not application or application['status'] != 'Prepared':
+        raise ValueError('trial checkpoint requires a Prepared application')
     result = {
         'site': site, 'application_id': application_id, 'stage': stage,
         'status': 'Prepared but not submitted', 'submission_confirmed': False,

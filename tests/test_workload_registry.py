@@ -33,7 +33,7 @@ def test_registry_loads_records_saved_before_result_checkpoints(tmp_path):
     path = tmp_path / "workloads.json"
     path.write_text(json.dumps({"work_1": {
         "workload_id": "work_1",
-        "workflow": "discover-and-bookmark",
+        "workflow": "discover",
         "event": {"event_id": "event-1", "event_type": "pipeline_item", "payload": {}},
         "status": "succeeded",
         "attempts": 1,
@@ -331,7 +331,7 @@ def test_calendar_event_flows_through_runtime_and_http_persistence(monkeypatch):
         application = client.create_application(
             "Example", "Backend", "https://example.test/runtime"
         )
-        client.transition(application["application_id"], "Ready for Auto-Apply")
+        client.transition(application["application_id"], "Prepared")
         application = client.transition(application["application_id"], "Applied")
         registry = WorkloadRegistry()
         record = registry.enqueue(dispatch(

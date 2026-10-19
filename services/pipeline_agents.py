@@ -9,8 +9,10 @@ import re
 from dataclasses import asdict, is_dataclass
 
 from pypdf import PdfReader
-from adapters.job_boards.posting_details import posting_artifact_name, posting_content_bytes, parse_saved_posting
-from .scout_reading import posting_from_model
+from adapters.job_boards.posting_details import (
+    fetch_posting_details, posting_artifact_name, posting_content_bytes,
+    read_posting_artifact)
+from .scout_reading import PostingReadFailure, posting_from_model
 from persistence_api.journal_format import normalize_posting_url
 from persistence_api.profile import calendly_url
 from .agent_runner import run as run_agent
@@ -30,33 +32,12 @@ def artifact(name, content, mime_type, label):
 
 
 def read_posting(persistence, application):
-    app_id = application['application_id']
-    artifacts = [plain(item) for item in persistence.list_artifacts(app_id)]
-    postings = [a for a in artifacts if a.get('name', '').startswith('Job Posting - ')]
-    if not postings:
-        raise ValueError('saved posting content is missing')
-    # A folder listing is not chronological. Prefer the latest explicit
-    # posting-content event instead of choosing the last file returned by Drive.
-    selected = None
-    for event in reversed(persistence.list_events(app_id)):
-        for bullet in (plain(event).get('data') or {}).get('bullets', []):
-            if bullet.startswith('Posting content:'):
-                selected = next((a for a in postings if (a.get('drive_file_id') or a['artifact_id']) in bullet), None)
-                if selected:
-                    break
-        if selected:
-            break
-    if selected is None and len(postings) != 1:
-        raise ValueError('multiple saved postings without an authoritative content link')
-    selected = selected or postings[0]
-    raw = persistence.read_artifact(app_id, selected['artifact_id'])
-    content = raw.get('content')
-    if content is None:
-        content = base64.b64decode(raw['content_base64'], validate=True)
-    posting = parse_saved_posting(content)
-    if normalize_posting_url(posting['posting_url']) != normalize_posting_url(application['posting_url']):
-        raise ValueError('saved posting content belongs to another position')
-    return posting
+    """Read a saved posting artifact for an application.
+
+    Delegates to the shared read_posting_artifact() in posting_details.
+    """
+    return read_posting_artifact(
+        persistence, application['application_id'], application['posting_url'])
 
 
 class PipelineAgents:
@@ -68,8 +49,12 @@ class PipelineAgents:
         self.submission = ReadySubmission(persistence, registry, submission_adapter, manage_state=False)
 
     def invoke(self, name, context, workflow):
-        provider = self.discovery_provider if name == 'job-discovery' else self.provider
-        if hasattr(provider, 'with_reasoning_effort'):
+        if name in ("read-posting", "score"):
+            from .worker_main import load_discovery_provider
+            provider = load_discovery_provider()
+        else:
+            provider = self.provider
+        if hasattr(provider, "with_reasoning_effort"):
             provider = provider.with_reasoning_effort(effort_for_workflow(workflow))
         return run_agent(name, context, provider)
 
@@ -96,23 +81,53 @@ class PipelineAgents:
             context.update(event.get('payload') or {})
             context['application'] = application
             context['application_id'] = application['application_id']
-        if name == 'job-discovery':
-            # The model opens the posting URL. Scout does not download it.
+        if name == 'read-posting':
             context['read_posting_url'] = application['posting_url']
             context['company'] = application['company']
             context['role'] = application['role']
-            context['job_postings'] = [{
-                'company': application['company'],
-                'role': application['role'],
-                'posting_url': application['posting_url'],
-            }]
-            output = self.invoke(name, context, 'discover-and-bookmark')
-            posting = posting_from_model(application['posting_url'], application['company'], application['role'], output)
+            # A coding-agent failure, including "max turns reached", means the
+            # model produced no posting. The exact-URL adapter still gets a try
+            # before this is reported as a read failure.
+            try:
+                output = self.invoke(name, context, 'read-posting')
+                reader_error = None
+            except Exception as error:
+                output = None
+                reader_error = error
+            try:
+                if reader_error is not None:
+                    raise PostingReadFailure(str(reader_error))
+                posting = posting_from_model(
+                    application['posting_url'], application['company'], application['role'], output)
+            except PostingReadFailure as model_failure:
+                # Some ATS pages are exact and public but are difficult for a
+                # model-only reader to render. The deterministic adapter knows
+                # how to resolve those URLs without changing the URL identity.
+                try:
+                    posting = fetch_posting_details(application['posting_url'])
+                except Exception as adapter_failure:
+                    raise PostingReadFailure(
+                        'model reader: {}; exact URL adapter: {}'.format(model_failure, adapter_failure))
+                output = {
+                    'company': application['company'],
+                    'role': application['role'],
+                    'posting_url': application['posting_url'],
+                    'resolved_url': posting.get('source_url'),
+                    'description': posting['description'],
+                    'read_failure': '',
+                }
             if posting is None:
-                return {'outcome': 'declined', 'output': output}
-            return {'outcome': 'accepted', 'output': output, 'artifacts': [artifact(
-                posting_artifact_name(application['company'], application['role']),
+                return {'outcome': 'read_failure', 'output': output}
+            return {'outcome': 'read', 'output': output, 'artifacts': [artifact(
+                posting_artifact_name(application['company'], application['role'], application['posting_url']),
                 posting_content_bytes(posting), 'application/json', 'Posting content')]}
+        if name == 'score':
+            context['posting_content'] = read_posting(self.persistence, application)
+            output = self.invoke(name, context, 'score')
+            if output.get('is_match'):
+                return {'outcome': 'validated', 'output': output}
+            else:
+                return {'outcome': 'invalidated', 'output': output}
         if name == 'application':
             existing = saved_package(self.persistence, application)
             if existing:
@@ -122,7 +137,7 @@ class PipelineAgents:
             if not path:
                 raise ValueError('original onboarding resume PDF is required')
             context['resume_text'] = '\n'.join(page.extract_text() or '' for page in PdfReader(path).pages)
-            output = self.invoke(name, context, 'prepare-bookmarked')
+            output = self.invoke(name, context, 'prepare-validated')
             if not str(output.get('cover_letter') or '').strip():
                 return {'outcome': 'failed', 'output': output}
             with open(path, 'rb') as handle:

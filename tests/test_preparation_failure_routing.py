@@ -23,6 +23,7 @@ class Client:
     def store_artifact(self, *args): return asdict(self.repository.store_artifact(*args))
     def append_event(self, *args): return asdict(self.repository.append_event(*args))
     def transition(self, *args): return asdict(self.repository.transition(*args))
+    def storage_statistics(self): return {}
 
 
 def make_runtime(profile):
@@ -32,6 +33,7 @@ def make_runtime(profile):
                                     posting_content_bytes({'posting_url': client.application.posting_url,
                                                            'description': 'Verified original posting details. ' * 30}),
                                     'application/json')
+    client.application.status = 'Validated'
     registry = WorkloadRegistry()
     envelope = dispatch('application_package_schedule', {'application_id': client.application.application_id}, 'failure-routing', registry)
     return client, registry, WorkflowRuntime(registry, client), envelope['workload_id']

@@ -114,11 +114,16 @@ class PersistenceApiClient:
     def delete_application(self, application_id):
         return self._request("POST", "/applications/{}/delete".format(application_id), {})
 
+    def delete_last_event(self, application_id):
+        return self._request("POST", "/applications/{}/delete-last-event".format(application_id), {})
+
     def get_application(self, application_id):
         return self._request("GET", "/applications/{}".format(application_id))
 
-    def create_application(self, company, role, posting_url, data=None, idempotency_key=None):
+    def create_application(self, company, role, posting_url, target_state="Bookmarked", data=None, idempotency_key=None):
         payload = {"company": company, "role": role, "posting_url": posting_url}
+        if target_state != "Bookmarked":
+            payload["target_state"] = target_state
         if data is not None:
             payload["data"] = data
         if idempotency_key is not None:
