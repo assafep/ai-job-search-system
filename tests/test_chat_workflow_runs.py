@@ -13,6 +13,10 @@ class MemoryStore:
         self.records = {}
         self.lock = RLock()
 
+    def snapshot(self):
+        with self.lock:
+            return deepcopy(self.records)
+
     @contextmanager
     def locked(self):
         with self.lock:
@@ -90,6 +94,34 @@ def test_disabled_and_ineligible(runs, monkeypatch):
         runs.start({'workflow': 'discover', 'idempotency_key': 'b'}, repository)
 
 
+def test_list_runs_filters_paginates_and_does_not_mutate(runs):
+    repository = MemoryRepository()
+    for number in range(5):
+        runs.start({'workflow': 'discover', 'idempotency_key': str(number)}, repository)
+    claim = runs.claim('private-worker')['run']
+    # Equal timestamps must still produce stable pages.
+    for record in runs.store.records.values():
+        record['created_at'] = '2026-10-25T00:00:00+00:00'
+    before = deepcopy(runs.store.records)
+    seen, cursor = [], None
+    while True:
+        page = runs.list(limit=2, cursor=cursor)
+        seen.extend(row['run_id'] for row in page['runs'])
+        assert all('worker_id' not in row and 'claim_token' not in row for row in page['runs'])
+        cursor = page['next_cursor']
+        if cursor is None:
+            break
+    assert seen == sorted(before, reverse=True)
+    assert runs.list(status='running')['runs'][0]['run_id'] == claim['run_id']
+    assert len(runs.list(status='queued', workflow='discover')['runs']) == 4
+    assert runs.list(workflow='retired-workflow') == {'runs': [], 'next_cursor': None}
+    assert runs.store.records == before
+    for arguments in ({'limit': 0}, {'limit': 201}, {'limit': True},
+                      {'status': 'unknown'}, {'cursor': 'missing'}, {'workflow': ''}):
+        with pytest.raises(ValueError):
+            runs.list(**arguments)
+
+
 def test_run_single_filters_before_execution(monkeypatch):
     from services import run_single
     calls = []
@@ -157,6 +189,8 @@ def test_http_and_mcp_workflow_tools(monkeypatch):
     try:
         with httpx.Client(base_url=url, headers={'Authorization': 'Bearer test-workflow-token'}) as client:
             assert httpx.get(url + '/workflows').status_code == 401
+            assert httpx.get(url + '/workflow-runs').status_code == 401
+            assert client.get('/workflow-runs').json() == {'runs': [], 'next_cursor': None}
             request = {'workflow': 'validate-bookmarked', 'application_id': app.application_id, 'idempotency_key': 'http'}
             response = client.post('/workflow-runs', json=request)
             assert response.status_code == 202
@@ -164,6 +198,11 @@ def test_http_and_mcp_workflow_tools(monkeypatch):
             assert run['application_ids'] == [app.application_id]
             assert client.post('/workflow-runs', json=request).json() == run
             claim = client.post('/workflow-runs/claim', json={'worker_id': 'test'}).json()['run']
+            listed = client.get('/workflow-runs', params={'status': 'running', 'limit': 1}).json()
+            assert listed['runs'] == [client.get('/workflow-runs/' + run['run_id']).json()]
+            for query in ('limit=0', 'limit=no', 'limit=201', 'status=bad', 'cursor=missing',
+                          'workflow=', 'status=running&status=queued', 'unknown=x'):
+                assert client.get('/workflow-runs?' + query).status_code == 400
             assert 'claim_token' not in client.get('/workflow-runs/' + run['run_id']).json()
             repository.store_file('test/report.pdf', b'%PDF-test', 'application/pdf')
             assert client.post('/workflow-runs/' + run['run_id'] + '/worker-update', json={
@@ -175,7 +214,10 @@ def test_http_and_mcp_workflow_tools(monkeypatch):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     names = {tool.name for tool in (await session.list_tools()).tools}
-                    assert {'listWorkflows', 'startWorkflow', 'getWorkflowRun', 'getWorkflowRunReport'} <= names
+                    assert {'listWorkflows', 'listWorkflowRuns', 'startWorkflow', 'getWorkflowRun', 'getWorkflowRunReport'} <= names
+                    listed = await session.call_tool('listWorkflowRuns', {'status': 'succeeded', 'limit': 1})
+                    assert not listed.isError
+                    assert listed.structuredContent['data']['runs'][0]['run_id'] == run['run_id']
                     assert not names & {'claimWorkflowRun', 'updateWorkflowRun', 'reconcileWorkflowRun'}
                     result = await session.call_tool('startWorkflow', {'body': dict(request, idempotency_key='mcp')})
                     assert not result.isError
@@ -194,6 +236,7 @@ def test_workflow_only_catalog():
     catalog = Catalog(profile='workflows')
     names = {tool.name for tool in catalog.tools}
     assert 'startWorkflow' in names
+    assert 'listWorkflowRuns' in names
     assert 'transitionApplication' not in names
     assert 'deleteApplication' not in names
     assert 'claimWorkflowRun' not in names

@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import uuid
+from urllib.parse import parse_qs, urlparse
 
 
 def timestamp():
@@ -55,6 +56,13 @@ def validate_request(data):
 
 
 class Store:
+    def snapshot(self):
+        """Read without rewriting the registry or acquiring a worker claim."""
+        from .database import connect
+        from .initialization import resource
+        with connect() as connection:
+            return resource(connection, 'workflow_runs') or {}
+
     @contextmanager
     def locked(self):
         from .database import connect, installation_lock
@@ -102,6 +110,28 @@ class Runs:
             if run_id not in records:
                 raise KeyError(run_id)
             return public(records[run_id])
+
+    def list(self, status=None, workflow=None, limit=50, cursor=None):
+        if status is not None and status not in {
+            'queued', 'running', 'succeeded', 'failed', 'reconciliation_required'
+        }:
+            raise ValueError('Invalid run status')
+        if workflow is not None and (not isinstance(workflow, str) or not workflow.strip()):
+            raise ValueError('workflow must be non-empty')
+        if type(limit) is not int or not 1 <= limit <= 200:
+            raise ValueError('limit must be between 1 and 200')
+        records = self.store.snapshot()
+        order = lambda record: (record['created_at'], record['run_id'])
+        if cursor is not None and cursor not in records:
+            raise ValueError('Invalid run cursor')
+        rows = sorted((record for record in records.values()
+                       if (status is None or record['status'] == status)
+                       and (workflow is None or record['request']['workflow'] == workflow)
+                       and (cursor is None or order(record) < order(records[cursor]))),
+                      key=order, reverse=True)
+        page = rows[:limit]
+        return {'runs': [public(record) for record in page],
+                'next_cursor': page[-1]['run_id'] if len(rows) > limit else None}
 
     def claim(self, worker_id):
         if not isinstance(worker_id, str) or not worker_id.strip():
@@ -162,6 +192,17 @@ def handle(handler, method, parts, repository, payload=None):
     runs = Runs()
     if method == 'GET' and parts == ['workflows']:
         return handler.send_json(200, list_workflows())
+    if method == 'GET' and parts == ['workflow-runs']:
+        query = parse_qs(urlparse(handler.path).query, keep_blank_values=True)
+        if set(query) - {'status', 'workflow', 'limit', 'cursor'} or any(len(v) != 1 for v in query.values()):
+            raise ValueError('Unknown or repeated run-list parameters')
+        arguments = {key: values[0] for key, values in query.items()}
+        if 'limit' in arguments:
+            try:
+                arguments['limit'] = int(arguments['limit'])
+            except ValueError:
+                raise ValueError('limit must be an integer') from None
+        return handler.send_json(200, runs.list(**arguments))
     if method == 'POST' and parts == ['workflow-runs']:
         return handler.send_json(202, runs.start(payload, repository))
     if method == 'POST' and parts == ['workflow-runs', 'claim']:

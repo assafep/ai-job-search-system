@@ -19,7 +19,7 @@ from OpenAPI `operationId` values; path/query parameters are top-level arguments
 and JSON bodies use `body`. Keyed writes require a non-empty `idempotency_key`.
 Start with the read-only `journalQueueCounts` tool and empty arguments.
 
-The endpoint exposes domain operations and the workflow tools `listWorkflows`,
+The endpoint exposes domain operations and the workflow tools `listWorkflows`, `listWorkflowRuns`,
 `startWorkflow`, `getWorkflowRun`, and `getWorkflowRunReport`. `startWorkflow`
 enqueues a durable request; a separately provisioned worker executes existing
 Python workflows. Connecting MCP does not provision or start that worker.
@@ -30,6 +30,12 @@ an operator must stop its worker and reconcile submissions first. Workflow
 agents remain stateless decision-makers and must not call MCP tools themselves.
 See [the endpoint reference](../../application_service/README.md#mcp-endpoint) and
 [connection setup](../../deployment/README.md#mcp-connections).
+
+For monitoring, use read-only `listWorkflowRuns` (`GET /workflow-runs`). Filter
+by exact `status` or `workflow`; pages default to 50 records (maximum 200).
+Follow `next_cursor` with the same filters until null. This enumerates durable
+API-admitted requests, not legacy local workload registry entries. Check running
+records' `updated_at` for stale heartbeats; never claim or retry work to inspect it.
 
 ## Non-negotiable boundary
 

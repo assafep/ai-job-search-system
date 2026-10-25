@@ -49,6 +49,24 @@ workers are also serialized by the service's durable installation-wide claim.
 
 ## Tools
 
+For monitoring, call `listWorkflowRuns` with `{}` to discover durable requests.
+Optional arguments are `status` (`queued`, `running`, `succeeded`, `failed`, or
+`reconciliation_required`), `workflow` (exact name), `limit` (1–200; default 50),
+and `cursor`. Results contain `runs` and `next_cursor`; pass that cursor with
+the same filters to fetch the next page, until it is null. Runs are ordered by
+creation time descending, then run ID descending. Concurrent status updates can
+change filtered membership between pages. Each record includes public status,
+timestamps, resolved scope, and any summary/report metadata; claim tokens and
+worker IDs are excluded. Listing never claims, retries, or updates work.
+
+The equivalent authenticated REST endpoint is
+`GET /workflow-runs?status=running&limit=50`; Python callers can use
+`ApplicationServiceClient.list_workflow_runs(status='running')`. This lists
+API-admitted requests, including ChatGPT requests, rather than legacy local
+`config/workloads.json` entries. Inspect `updated_at` on running requests for
+stale heartbeats; listing does not prove that a worker process is alive.
+Refresh the ChatGPT app's tool catalog after deploying to discover the new tool.
+
 1. Call `listWorkflows` with `{}` to discover deployed workflow names and scopes.
 2. Call `startWorkflow` with a `body`, for example:
 

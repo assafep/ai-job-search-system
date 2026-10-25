@@ -57,6 +57,36 @@ paths:
             application/json:
               schema: {type: object}
   /workflow-runs:
+    get:
+      operationId: listWorkflowRuns
+      description: List durable workflow requests for monitoring, newest created first (run ID breaks ties). Read-only; never claims or retries work. Optional exact status and workflow filters. Follow next_cursor with the same filters; null means the last page. Concurrent status changes may change filtered membership. This lists API-admitted requests, not legacy local workload registry entries.
+      parameters:
+        - name: status
+          in: query
+          schema: {type: string, enum: [queued, running, succeeded, failed, reconciliation_required]}
+        - name: workflow
+          in: query
+          schema: {type: string, minLength: 1}
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 200, default: 50}
+        - name: cursor
+          in: query
+          description: Run ID returned as next_cursor on the previous page.
+          schema: {type: string, minLength: 1}
+      responses:
+        '200':
+          description: Public run records with timestamps, scope, summary and report metadata when available. Worker IDs and claim tokens are excluded.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [runs, next_cursor]
+                properties:
+                  runs: {type: array, items: {type: object}}
+                  next_cursor: {type: string, nullable: true}
+        '400': {description: Invalid filters, limit, cursor, or repeated or unknown parameters}
+        '401': {description: Authentication required}
     post:
       operationId: startWorkflow
       description: Enqueue a named workflow in the existing runtime. Omit limit to process all eligible positions. application_id scopes execution to one posting. Prepared submission is automatic. Reuse idempotency_key on retries. Requires a separately configured worker.

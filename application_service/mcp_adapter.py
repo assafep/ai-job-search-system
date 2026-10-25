@@ -71,7 +71,7 @@ class Catalog:
                     continue
                 name = operation['operationId']
                 if profile == 'workflows' and name not in {
-                    'listWorkflows', 'startWorkflow', 'getWorkflowRun', 'getWorkflowRunReport',
+                    'listWorkflows', 'listWorkflowRuns', 'startWorkflow', 'getWorkflowRun', 'getWorkflowRunReport',
                     'journalQueueCounts', 'listApplications', 'getApplication',
                     'listApplicationEvents', 'getJournalStatus',
                 }:

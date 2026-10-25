@@ -278,3 +278,9 @@ class ApplicationServiceClient:
         result = self._request("GET", "/files?" + query)
         result["content"] = base64.b64decode(result.pop("content_base64"), validate=True)
         return result
+
+    def list_workflow_runs(self, status=None, workflow=None, limit=50, cursor=None):
+        query = urllib.parse.urlencode({key: value for key, value in {
+            'status': status, 'workflow': workflow, 'limit': limit, 'cursor': cursor
+        }.items() if value is not None})
+        return self._request('GET', '/workflow-runs?' + query)
