@@ -5,13 +5,13 @@ from http.server import HTTPServer
 from threading import Thread
 
 from services.event_dispatcher import dispatch
-from services.persistence_client import PersistenceApiClient
+from services.application_service_client import ApplicationServiceClient
 from services.runtime_config import OnboardingRequired
 from services.workload_registry import WorkloadRegistry, registry_from_environment
 from services.workflow_runtime import WorkflowRuntime, runtime_from_environment
 from services.approval_registry import ApprovalRegistry
-from persistence_api import main as persistence_main
-from persistence_api.repository import MemoryRepository
+from application_service import main as persistence_main
+from application_service.repository import MemoryRepository
 
 
 def test_registry_deduplicates_and_recovers_workload():
@@ -327,7 +327,7 @@ def test_calendar_event_flows_through_runtime_and_http_persistence(monkeypatch):
     thread.daemon = True
     thread.start()
     try:
-        client = PersistenceApiClient("http://127.0.0.1:{}".format(server.server_port))
+        client = ApplicationServiceClient("http://127.0.0.1:{}".format(server.server_port))
         application = client.create_application(
             "Example", "Backend", "https://example.test/runtime"
         )

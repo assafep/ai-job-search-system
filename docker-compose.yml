@@ -1,5 +1,5 @@
 services:
-  persistence-api:
+  application-service:
     build:
       context: .
       dockerfile: deployment/docker/Dockerfile
@@ -10,8 +10,8 @@ services:
       # config/runtime.json, the API should select Google Drive automatically.
       # Set REPOSITORY_BACKEND=memory explicitly for an isolated local run.
       REPOSITORY_BACKEND: "${REPOSITORY_BACKEND:-}"
-      PERSISTENCE_API_URL: "http://persistence-api:8080"
-      PERSISTENCE_API_TOKEN: "${PERSISTENCE_API_TOKEN:-}"
+      APPLICATION_SERVICE_URL: "http://application-service:8080"
+      APPLICATION_SERVICE_TOKEN: "${APPLICATION_SERVICE_TOKEN:-}"
       GOOGLE_ACCESS_TOKEN: "${GOOGLE_ACCESS_TOKEN:-}"
       GOOGLE_REFRESH_TOKEN: "${GOOGLE_REFRESH_TOKEN:-}"
       GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID:-}"

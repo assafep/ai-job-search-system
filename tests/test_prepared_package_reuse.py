@@ -4,7 +4,7 @@ from services.workflow_runtime import WorkflowRuntime
 from services.document_generator import generate_application_pdf
 from services.workload_registry import WorkloadRegistry
 from services.event_dispatcher import dispatch
-from persistence_api.repository import MemoryRepository
+from application_service.repository import MemoryRepository
 
 
 def test_review_hold_does_not_gate_successfully_saved_package_or_call_llm():

@@ -98,9 +98,8 @@ def test_another_meeting_alias_transitions_and_adds_link():
             "intent": "request_another_meeting", "proposed_action": "draft_response",
         }},
     )
-    assert operations[0]["data"]["bullets"][-1].endswith(
-        "https://calendly.com/example/intro"
-    )
+    assert any(bullet.endswith("https://calendly.com/example/intro")
+               for bullet in operations[0]["data"]["bullets"])
     assert operations[1]["target"] == "Interviewing"
 
 

@@ -2,7 +2,7 @@ from dataclasses import asdict
 
 import pytest
 
-from persistence_api.repository import MemoryRepository
+from application_service.repository import MemoryRepository
 from services.event_dispatcher import dispatch
 from services.workflow_runtime import WorkflowRuntime
 from services.workload_registry import WorkloadRegistry
@@ -40,7 +40,7 @@ def make_runtime(profile):
 
 
 @pytest.mark.parametrize('phase', ['retrieval', 'generation', 'storage', 'agent'])
-def test_preparation_failures_move_to_dead_letters_with_reason(monkeypatch, candidate_profile, phase):
+def test_preparation_failures_move_to_manual_apply_with_reason(monkeypatch, candidate_profile, phase):
     client, registry, runtime, id = make_runtime(candidate_profile)
     def failure(*args, **kwargs): raise RuntimeError(phase + ' failed')
     monkeypatch.setattr('adapters.job_boards.posting_details.fetch_posting_details',
@@ -54,20 +54,20 @@ def test_preparation_failures_move_to_dead_letters_with_reason(monkeypatch, cand
     provider = failure if phase == 'agent' else lambda prompt, context: {'cover_letter': 'Dear Example Hiring Team,\n\nI build reliable backends.', 'proposed_action': 'Proceed'}
     with pytest.raises(RuntimeError, match=phase + ' failed'):
         runtime.run(id, agent_provider=provider)
-    assert client.application.status == 'Dead Letters Queue'
+    assert client.application.status == 'Manual Apply Required'
     assert registry.get(id).status == 'failed'
     event = next(e for e in client.repository.list_events(client.application.application_id) if e.event_type == 'status_changed')
     assert phase + ' failed' in str(event.data['bullets'])
     assert event.data['data']['source'] == 'application package preparation agent'
 
 
-def test_invalid_saved_package_routes_to_dead_letters_and_preserves_artifact(candidate_profile):
+def test_invalid_saved_package_routes_to_manual_apply_and_preserves_artifact(candidate_profile):
     client, registry, runtime, id = make_runtime(candidate_profile)
     client.repository.store_artifact(client.application.application_id,
                                     'Candidate Cover Letter & Resume - Example - Backend.pdf', b'not a PDF')
     with pytest.raises(Exception):
         runtime.run(id, agent_provider=lambda p, c: pytest.fail('invalid saved PDF must not be sent to agent'))
-    assert client.application.status == 'Dead Letters Queue'
+    assert client.application.status == 'Manual Apply Required'
     assert len(client.repository.list_artifacts(client.application.application_id)) == 2
 
 
@@ -95,12 +95,12 @@ def test_routing_failure_remains_visible_and_retry_reconciles_partial_move(monke
     client.transition = interrupted
     def failure(url): raise RuntimeError('Posting unavailable')
     monkeypatch.setattr('adapters.job_boards.posting_details.fetch_posting_details', failure)
-    with pytest.raises(RuntimeError, match='Recording Dead Letters Queue also failed'):
+    with pytest.raises(RuntimeError, match='Recording Manual Apply Required also failed'):
         runtime.run(id, agent_provider=lambda p, c: {})
     assert registry.get(id).status == 'failed'
     client.transition = original
     runtime.run(id, agent_provider=lambda p, c: pytest.fail('must reconcile without regenerating'))
-    assert client.application.status == 'Dead Letters Queue'
+    assert client.application.status == 'Manual Apply Required'
     assert len([e for e in client.repository.list_events(client.application.application_id) if e.event_type == 'status_changed']) == 1
 
 

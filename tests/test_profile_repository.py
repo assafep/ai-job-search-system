@@ -1,4 +1,4 @@
-from persistence_api.repository import MemoryRepository
+from application_service.repository import MemoryRepository
 
 
 def test_memory_profile_round_trip():

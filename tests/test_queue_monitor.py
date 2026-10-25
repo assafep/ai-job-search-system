@@ -1,8 +1,9 @@
 import io
+import json
 
 import pytest
 
-from persistence_api.journal_format import ALL_STATES
+from application_service.journal_format import ALL_STATES
 from services.orchestrator import Orchestrator, parse_worker_overrides
 from services.pipeline_agents import PipelineAgents
 from services.queue_monitor import paint_queues, queue_lines, watch
@@ -39,6 +40,7 @@ def test_watch_updates_values_without_adding_a_second_frame():
 
 def test_worker_flags_override_the_config_file_and_survive_reload(tmp_path):
     path = pipeline_file(tmp_path, bookmark=1)
+    original_submit_workers = json.loads(path.read_text())['pipelines']['submit']['workers']
     assert parse_worker_overrides(['bookmark=2', 'auto-apply=0']) == {'bookmark': 2, 'auto-apply': 0}
     try:
         parse_worker_overrides(['scout'])
@@ -60,7 +62,7 @@ def test_worker_flags_override_the_config_file_and_survive_reload(tmp_path):
     try:
         assert orchestrator.config['pipelines']['bookmark']['workers'] == 3
         assert orchestrator.config['pipelines']['prepare']['workers'] == 2
-        assert orchestrator.config['pipelines']['submit']['workers'] == 0
+        assert orchestrator.config['pipelines']['submit']['workers'] == original_submit_workers
         saved = path.read_text().replace('"workers": 1', '"workers": 9', 1)
         path.write_text(saved)
         orchestrator.reload()
@@ -104,8 +106,8 @@ def test_queue_requests_do_not_write_an_access_log(capsys, monkeypatch):
     from http.server import HTTPServer
     from threading import Thread
     from urllib.request import urlopen
-    from persistence_api import main
-    from persistence_api.repository import MemoryRepository
+    from application_service import main
+    from application_service.repository import MemoryRepository
     monkeypatch.setattr(main, 'repository', MemoryRepository())
     server = HTTPServer(('127.0.0.1', 0), main.Handler)
     thread = Thread(target=server.serve_forever, daemon=True)

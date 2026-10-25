@@ -1,7 +1,7 @@
 # Kubernetes deployment
 
 Build and push the image from the repository's Dockerfile, replace
-`YOUR_REGISTRY/...` in `persistence-api.yaml`, then create the non-secret
+`YOUR_REGISTRY/...` in `application-service.yaml`, then create the non-secret
 configuration and secret objects:
 
 ```bash
@@ -15,9 +15,9 @@ folder layout.
 
 kubectl create secret generic job-search-google \
   --from-literal=access-token="$GOOGLE_ACCESS_TOKEN" \
-  --from-literal=persistence-api-token="$PERSISTENCE_API_TOKEN"
+  --from-literal=application-service-token="$APPLICATION_SERVICE_TOKEN"
 
-kubectl apply -f deployment/kubernetes/persistence-api.yaml
+kubectl apply -f deployment/kubernetes/application-service.yaml
 ```
 
 For renewable authentication, provide `refresh-token`, `client-id`, and
@@ -25,6 +25,6 @@ For renewable authentication, provide `refresh-token`, `client-id`, and
 marks both credential modes optional and the repository selects the configured
 mode.
 
-The manifest deploys only the persistence API. A scheduler should invoke
+The manifest deploys only the Application Service. A scheduler should invoke
 `python3 -m services.workflow_runtime` as a short-lived job, using the same
 API URL and registry configuration; application state remains in Google Drive.

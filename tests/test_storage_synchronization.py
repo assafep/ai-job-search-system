@@ -6,7 +6,7 @@ from threading import Lock
 
 from services.approval_registry import ApprovalRegistry
 from services.event_dispatcher import dispatch
-from services.persistence_client import PersistenceApiClient
+from services.application_service_client import ApplicationServiceClient
 from services.workload_registry import WorkloadRegistry
 
 
@@ -23,7 +23,7 @@ def test_eight_threads_serialize_reads_and_writes_through_shared_client():
         with guard:
             active[0] -= 1
         return BytesIO(b'{}')
-    client = PersistenceApiClient(opener=opener)
+    client = ApplicationServiceClient(opener=opener)
     def work(index):
         for _ in range(5):
             client.get_application(str(index))

@@ -1,7 +1,7 @@
 """Operational workload lifecycle for scheduling and reconciliation.
 
 This registry tracks execution bookkeeping, not application state. Application
-mutations continue to go through the persistence API and the Interviews Journal.
+mutations continue to go through the Application Service and the Interviews Journal.
 """
 
 from dataclasses import dataclass, field
@@ -154,6 +154,22 @@ class WorkloadRegistry:
         record.status = 'awaiting_input'
         record.error = str(reason)
         record.attempts = max(0, record.attempts - 1)
+        record.updated_at = timestamp()
+        self._persist()
+        return record
+
+    @synchronized
+    def reopen(self, workload_id):
+        """Queue a dead-lettered workload again.
+
+        The journal still owns whether the posting needs work. A dead letter
+        only means the last attempts failed, so a later pass may claim it.
+        """
+        record = self._get(workload_id)
+        if record.status != "dead_letter":
+            return record
+        record.status = "queued"
+        record.attempts = 0
         record.updated_at = timestamp()
         self._persist()
         return record

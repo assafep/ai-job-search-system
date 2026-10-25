@@ -9,9 +9,10 @@ from io import BytesIO
 from pypdf import PdfReader
 
 from adapters.browser.submission import adapter_from_environment
+from .event_attempt import with_attempt
 from .event_dispatcher import dispatch
 from .application_package import cover_matches_application
-from .persistence_client import PersistenceApiClient, PersistenceApiError
+from .application_service_client import ApplicationServiceClient, ApplicationServiceError
 from .runtime_config import load
 from .workload_effort import effort_for_workflow
 from .workload_registry import registry_from_environment
@@ -19,6 +20,28 @@ from .workload_registry import registry_from_environment
 
 OUTCOMES = {'Submitted successfully', 'Already submitted', 'Prepared but not submitted',
             'Submission unconfirmed', 'Blocked'}
+SUBMISSION_MODEL = "grok-4.7"
+
+
+def describe_attempt(receipt, effort, prior_logic):
+    """Record the model, effort, logic, obstacles, and what was done about them."""
+    attempt = dict(receipt.get("attempt") or {})
+    attempt["model"] = attempt.get("model") or SUBMISSION_MODEL
+    attempt["effort"] = attempt.get("effort") or effort
+    logic = list(prior_logic)
+    for step in attempt.get("logic") or []:
+        if step not in logic:
+            logic.append(step)
+    attempt["logic"] = logic
+    if not attempt.get("obstacles"):
+        attempt["obstacles"] = list(receipt.get("blockers") or [])
+    attempt.setdefault("tackled", [])
+    return attempt
+
+
+def attempt_lines(attempt):
+    from .event_attempt import attempt_lines as render
+    return render(attempt)
 
 
 class ReadySubmission:
@@ -30,14 +53,14 @@ class ReadySubmission:
 
     @staticmethod
     def receipt_path(application_id):
-        from persistence_api.storage_layout import workload_state_path
+        from application_service.storage_layout import workload_state_path
         return workload_state_path('submit-prepared', 'submission-receipts/{}.json'.format(application_id))
 
     def _receipt(self, application_id):
         try:
             result = self.persistence.read_file(self.receipt_path(application_id))
-        except (KeyError, PersistenceApiError) as exc:
-            if isinstance(exc, PersistenceApiError) and 'returned 404:' not in str(exc):
+        except (KeyError, ApplicationServiceError) as exc:
+            if isinstance(exc, ApplicationServiceError) and 'returned 404:' not in str(exc):
                 raise
             return None
         if not result:
@@ -72,11 +95,15 @@ class ReadySubmission:
             raise ValueError('a successful submission requires observed confirmation evidence')
         if not self.manage_state:
             return
+        attempt = receipt.get("attempt") or describe_attempt(receipt, "medium", [])
+        application = self.persistence.get_application(application_id)
         self.persistence.append_event(application_id, 'application_submitted', {
-            'bullets': ['Application submitted successfully.', 'Confirmation: ' + str(confirmation)],
+            'bullets': with_attempt(
+                ['Application submitted successfully.', 'Confirmation: ' + str(confirmation)],
+                attempt),
+            'attempt': attempt,
             'source': 'submission workflow',
         }, 'submission-confirmed-' + application_id)
-        application = self.persistence.get_application(application_id)
         if application['status'] in {'Prepared', 'Manual Apply Required'}:
             self.persistence.transition(application_id, 'Applied', {
                 'source': 'verified external submission',
@@ -91,11 +118,15 @@ class ReadySubmission:
         target = ('Dead Letters Queue' if receipt.get('failure_kind') == 'system_error'
                   and receipt.get('status') != 'Submission unconfirmed' else 'Manual Apply Required')
         if application['status'] in {'Prepared', target}:
+            attempt = receipt.get("attempt") or describe_attempt(receipt, "medium", [])
             self.persistence.transition(application_id, target, {
                 'source': 'auto-apply agent',
-                'bullets': ['Auto-apply failed: ' + '; '.join(receipt.get('blockers') or [receipt.get('status', 'Unknown failure')]),
-                            *(['Submission outcome is unconfirmed. Verify whether it was received before applying again.']
-                              if receipt.get('status') == 'Submission unconfirmed' else [])],
+                'attempt': attempt,
+                'bullets': with_attempt(
+                    ['Auto-apply failed: ' + '; '.join(receipt.get('blockers') or [receipt.get('status', 'Unknown failure')])]
+                    + (['Submission outcome is unconfirmed. Verify whether it was received before applying again.']
+                       if receipt.get('status') == 'Submission unconfirmed' else []),
+                    attempt),
             }, 'submission-failure-{}-{}'.format(target, application_id))
 
     def execute(self, application_id, workload_id):
@@ -111,6 +142,9 @@ class ReadySubmission:
                                blockers=['Auto-apply error: ' + str(exc)])
                 if receipt['status'] == 'Blocked':
                     receipt['failure_kind'] = 'system_error'
+                receipt["attempt"] = describe_attempt(
+                    receipt, effort_for_workflow("submit-prepared"),
+                    ["Started auto-submit for a Prepared application."])
                 self.persistence.store_file(self.receipt_path(application_id), json.dumps(receipt).encode(), 'application/json')
                 self._record_manual_required(application_id, receipt)
                 return receipt
@@ -138,6 +172,10 @@ class ReadySubmission:
                     and receipt.get('failure_kind') == 'system_error'
                     and not receipt.get('package_sha256')):
                 receipt = None
+            elif any(needle in str(item) for item in (receipt.get('blockers') or []) for needle in (
+                    'No verified employer application destination',
+                    'XAI_API_KEY is not configured')):
+                receipt = None
             else:
                 return dict(receipt, replayed=True)
         if app['status'] != 'Prepared':
@@ -159,10 +197,14 @@ class ReadySubmission:
         if not cover_matches_application(cover, app):
             raise ValueError('cover letter does not match the employer and role')
         digest = hashlib.sha256(content).hexdigest()
+        effort = effort_for_workflow('submit-prepared')
+        prior_logic = [
+            "Checked that one combined PDF exists, every page has text, and the cover letter matches the employer and role.",
+        ]
         context = {
             'application': app, 'applicant_profile': self.persistence.get_profile(),
             'package': artifact, 'package_bytes': content, 'package_sha256': digest,
-            'reasoning_effort': effort_for_workflow('submit-prepared'),
+            'reasoning_effort': effort,
             'submission_authorized_by_queue': True,
         }
         # Durably mark the attempt before transmission. An interrupted adapter
@@ -180,6 +222,7 @@ class ReadySubmission:
                 raise ValueError('submission adapter supplied no confirmation; attempt remains unconfirmed')
         receipt = dict(result, application_id=application_id, package_sha256=digest,
                        package_name=artifact['name'], original_posting_url=app['posting_url'])
+        receipt["attempt"] = describe_attempt(receipt, effort, prior_logic)
         self.persistence.store_file(self.receipt_path(application_id), json.dumps(receipt).encode(), 'application/json')
         if result['status'] in {'Submitted successfully', 'Already submitted'}:
             self._record_confirmed(application_id, receipt)
@@ -213,7 +256,7 @@ def main(argv=None):
     if args.limit < 1:
         parser.error('--limit must be positive')
     load(require=True)
-    persistence = PersistenceApiClient()
+    persistence = ApplicationServiceClient()
     runner = ReadySubmission(persistence, registry_from_environment())
     ids = [args.application_id] if args.application_id else [a['application_id'] for a in
            persistence.list_applications(status='Prepared')[:args.limit]]

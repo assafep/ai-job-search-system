@@ -1,4 +1,4 @@
-from persistence_api.repository import MemoryRepository
+from application_service.repository import MemoryRepository
 from services.workload_executor import execute_persistence_writes, plan_persistence_writes
 from adapters.job_boards.posting_details import parse_saved_posting
 import pytest
@@ -68,7 +68,7 @@ def test_preparation_uses_the_exact_scout_content_without_network(monkeypatch, c
     monkeypatch.setattr('urllib.request.urlopen', lambda *args, **kwargs: pytest.fail('no repeat network reads'))
     execute_persistence_writes(operations, client, dry_run=False)
     # bookmark transitions to Bookmarked; validate transitions to Validated
-    repository.transition(app.application_id, 'Validated', {'source': 'score'}, 'validate-1')
+    repository.transition(app.application_id, 'Validated', {'source': 'validate'}, 'validate-1')
 
     registry = WorkloadRegistry()
     envelope = dispatch('application_package_schedule', {'application_id': app.application_id}, registry=registry)

@@ -1,8 +1,8 @@
 """Consume all application queues driven by workflow blueprints.
 
-Single-consumer architecture: the main thread reads from the persistence API,
+Single-consumer architecture: the main thread reads from the Application Service,
 enriches context, dispatches agent work to a capped thread pool, and writes
-results back. Worker threads never touch the persistence API.
+results back. Worker threads never touch the Application Service.
 
 Discovers queue-driven workflows from their blueprints (non-empty input_states),
 builds a state-to-workflow map, and processes each pipeline stage with eight
@@ -10,7 +10,7 @@ posting workers and serialized storage.
 
 Pipeline order (from blueprint prefixes):
   Discovered → bookmark-discovered → Bookmarked
-  Bookmarked → validate-bookmarked → Validated / Invalidated
+  Bookmarked → validate-bookmarked → Validated / completed as invalidated
   Validated → prepare-validated → Prepared / Manual Apply Required
   Prepared → submit-prepared → Applied / Manual Apply Required
 """
@@ -24,9 +24,9 @@ from datetime import datetime, timezone
 from threading import Lock
 
 from adapters.llm.codex_provider import provider
-from persistence_api.storage_layout import workload_state_path
+from application_service.storage_layout import workload_state_path
 from .activity_report import publish
-from .persistence_client import PersistenceApiClient
+from .application_service_client import ApplicationServiceClient
 from .report_checkpoint import ReportCheckpoint
 from .runtime_config import load, ROOT
 from .test_runner import discover_workflows, parse_workflow
@@ -44,6 +44,8 @@ def _discover_queue_workflows():
     result = {}
     for name, path in discover_workflows().items():
         definition = parse_workflow(path)
+        if definition.get("trigger", {}).get("poll_kind") != "queue":
+            continue
         input_states = definition.get("input_states") or []
         if not input_states:
             continue
@@ -59,11 +61,15 @@ def _discover_queue_workflows():
     return result
 
 
-def run(persistence, registry, runtime, agent_provider, workers=8):
+def run(persistence, registry, runtime, agent_provider, workers=8, *, workflows=None, application_ids=None, limit=None, run_id=None, code_revision=None):
     if workers != 8:
         raise ValueError('this queue runner requires exactly eight posting workers')
 
     queue_workflows = _discover_queue_workflows()
+    queue_workflows = {state: info for state, info in queue_workflows.items()
+                       if workflows is None or info["workflow"] in workflows}
+    if limit is not None and (type(limit) is not int or limit < 1):
+        raise ValueError("limit must be a positive integer")
     if not queue_workflows:
         raise ValueError("no queue-driven workflows found in blueprints")
 
@@ -73,9 +79,15 @@ def run(persistence, registry, runtime, agent_provider, workers=8):
     # Defensive deduplication: a posting can never be assigned twice.
     initial = list({a["application_id"]: a for a in initial}.values())
 
-    run_id = datetime.now(timezone.utc).strftime('queues-%Y%m%dT%H%M%S%fZ')
+    if application_ids is not None:
+        selected = set(application_ids)
+        initial = [a for a in initial if a["application_id"] in selected]
+    if limit is not None:
+        initial = initial[:limit]
+    run_id = run_id or datetime.now(timezone.utc).strftime('queues-%Y%m%dT%H%M%S%fZ')
     report = {
         "run_id": run_id,
+        "code_revision": code_revision,
         "started_at": datetime.now(timezone.utc).isoformat(),
         "workers": workers,
         "queue_workflows": {state: info["workflow"] for state, info in queue_workflows.items()},
@@ -203,7 +215,7 @@ def main(argv=None):
             fcntl.flock(process_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise RuntimeError('Another concurrent queue run is already active')
-        persistence = PersistenceApiClient()
+        persistence = ApplicationServiceClient()
         if not persistence.journal_status()['valid']:
             raise ValueError('journal validation failed; refusing to start queue workers')
         registry = registry_from_environment()

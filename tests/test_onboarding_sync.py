@@ -35,7 +35,7 @@ def test_sync_validates_journal_before_writing_profile(monkeypatch):
 
     monkeypatch.setenv("GOOGLE_ACCESS_TOKEN", "token")
     monkeypatch.setattr(
-        "persistence_api.google_docs_repository.repository_from_environment",
+        "application_service.google_docs_repository.repository_from_environment",
         lambda: InvalidJournalRepository(),
     )
 

@@ -22,6 +22,8 @@ def render_pdf(report):
             return datetime.fromisoformat(value).strftime('%d %b %Y, %H:%M:%S %Z')
         except (ValueError, TypeError):
             return str(value)
+    if report.get('code_revision'):
+        paragraph('Code revision: ' + report['code_revision'])
     paragraph('Started: ' + date_label(report.get('started_at', 'Unknown')))
     paragraph('Finished: ' + date_label(report.get('finished_at', 'In progress')))
     if report.get('workers'):
@@ -46,7 +48,8 @@ def render_pdf(report):
     groups = {}
     for item in results:
         groups.setdefault(item.get('workflow', 'unknown'), []).append(item)
-    for name in ['discover', 'bookmark-discovered', 'validate-bookmarked', 'prepare-validated', 'submit-prepared', 'handle-incoming-email', 'prepare-interview', 'reconcile']:
+    names = ['discover', 'bookmark-discovered', 'validate-bookmarked', 'prepare-validated', 'submit-prepared', 'handle-incoming-email', 'prepare-interview', 'reconcile']
+    for name in dict.fromkeys(names + list(groups)):
         items = groups.get(name, [])
         paragraph(name.replace('-', ' ').title(), 'Heading3')
         statuses = Counter('failed' if item.get('error') else item.get('status') or (item.get('result') or {}).get('status', 'processed') for item in items)
@@ -60,6 +63,8 @@ def render_pdf(report):
             label = ' / '.join(str(app.get(k, '')) for k in ('company', 'role')).strip(' /') or item.get('application_id') or item.get('workload_id', '')
             if item.get('error'):
                 paragraph('{}: {}'.format(label, item['error']))
+            elif item.get('final_state'):
+                paragraph('{}: {} → {} ({}).'.format(label, item.get('initial_state', 'Unknown'), item['final_state'], item.get('status', 'processed')))
             elif item.get('activity'):
                 paragraph('{}: {}'.format(label, item['activity']))
             for op in execution.get('persistence_operations') or []:
@@ -94,7 +99,7 @@ def render_pdf(report):
 
 
 def publish(persistence, report):
-    from persistence_api.storage_layout import workload_state_path
+    from application_service.storage_layout import workload_state_path
     path = workload_state_path('system-run', 'reports/Activity Report - {}.pdf'.format(report['run_id']))
     saved = persistence.store_file(path, render_pdf(report), 'application/pdf')
     return dict(saved, path=path)

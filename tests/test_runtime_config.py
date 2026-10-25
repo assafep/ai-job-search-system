@@ -51,6 +51,43 @@ def test_runtime_config_resolves_relative_profile_path(tmpdir, monkeypatch):
     assert validate(config) is None
 
 
+def test_bookmark_reader_uses_only_its_runtime_section(tmp_path, monkeypatch):
+    from services.bookmark_read import configured_reader
+
+    path = os.path.join(str(tmp_path), "runtime.json")
+    profile_path = os.path.join(str(tmp_path), "applicant_profile.json")
+    with open(profile_path, "w") as handle:
+        json.dump({"schema_version": 1}, handle)
+    with open(path, "w") as handle:
+        json.dump({"google_drive": {
+            "connection": "default",
+            "interview_journal_url": "https://docs.google.com/document/d/example",
+            "artifact_root_url": "https://drive.google.com/drive/folders/example",
+            "applicant_profile_path": profile_path,
+        }, "scout": {"coding_agent": "codex"}, "bookmark-discovered": {
+            "coding_agent": "grok", "model": "grok-4.7", "effort": "medium"}}, handle)
+    monkeypatch.setenv("RUNTIME_CONFIG_PATH", path)
+    reader, model, effort = configured_reader()
+    assert reader._executable() == "grok"
+    assert model == "grok-4.7"
+    assert effort == "medium"
+    assert reader.reasoning_effort == "medium"
+
+
+def test_bookmark_section_must_name_model_and_effort():
+    try:
+        validate({"google_drive": {
+            "connection": "default",
+            "interview_journal_url": "https://docs.google.com/document/d/example",
+            "artifact_root_url": "https://drive.google.com/drive/folders/example",
+            "applicant_profile_path": "config/applicant_profile.json",
+        }, "bookmark-discovered": {"coding_agent": "grok"}})
+    except ValueError as error:
+        assert "bookmark-discovered.model" in str(error)
+        return
+    raise AssertionError("incomplete bookmark settings should fail validation")
+
+
 def test_runtime_config_reads_optional_calendly_url():
     from services.runtime_config import calendly_url
 

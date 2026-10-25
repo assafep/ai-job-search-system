@@ -1,7 +1,8 @@
 name: reconcile
 trigger:
-  type: schedule
-  cadence: daily
+  type: polling
+  cadence: minute
+  poll_kind: scheduled
   event_type: reconciliation_schedule
 agent: null
 input_states: []

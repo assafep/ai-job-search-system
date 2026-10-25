@@ -2,7 +2,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from persistence_api.repository import MemoryRepository
+from application_service.repository import MemoryRepository
 from services.orchestrator import Orchestrator, provider_quota_until
 from services.workload_registry import WorkloadRegistry
 

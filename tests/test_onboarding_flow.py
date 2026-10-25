@@ -47,6 +47,8 @@ def test_first_run_onboarding_writes_runtime_and_profile(tmp_path, monkeypatch):
     assert config["google_drive"]["applicant_profile_path"] == str(profile_path)
     assert config["google_drive"]["application_root_path"] == "applications"
     assert config["scheduling"]["calendly_url"] == "https://calendly.com/example/intro"
+    assert config["bookmark-discovered"] == {
+        "coding_agent": "grok", "model": "grok-4.7", "effort": "medium"}
     saved_profile = json.loads(profile_path.read_text())
     assert saved_profile["source_resume"]["file_name"] == "resume.pdf"
     assert saved_profile['personal']['phone'] == '+972502345678'
@@ -55,6 +57,23 @@ def test_first_run_onboarding_writes_runtime_and_profile(tmp_path, monkeypatch):
     )
     assert saved_profile["job_search"]["countries"] == ["IL", "US"]
     assert saved_profile["job_search"]["search_terms"] == []
+
+
+def test_completed_onboarding_backfills_bookmark_settings(tmp_path, monkeypatch):
+    runtime_path = tmp_path / "runtime.json"
+    runtime_path.write_text(json.dumps({
+        "google_drive": {"connection": "default"},
+        "scheduling": {"calendly_url": "https://calendly.com/example/intro"},
+        "scout": {"coding_agent": "codex"},
+    }))
+    monkeypatch.setattr(onboarding, "CONFIG_PATH", str(runtime_path))
+    monkeypatch.setattr("builtins.input", lambda prompt: (_ for _ in ()).throw(AssertionError(prompt)))
+
+    assert onboarding.main() == 0
+    config = json.loads(runtime_path.read_text())
+    assert config["scout"] == {"coding_agent": "codex"}
+    assert config["bookmark-discovered"] == {
+        "coding_agent": "grok", "model": "grok-4.7", "effort": "medium"}
 
 
 def test_runtime_profile_path_is_relative_for_project_files(monkeypatch):

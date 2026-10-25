@@ -14,11 +14,15 @@ import urllib.request
 
 def posting_content_bytes(details):
     """Serialize the normalized posting so later workflows need no network."""
-    return json.dumps({
+    saved = {
         'posting_url': details['posting_url'],
         'source_url': details.get('source_url') or details['posting_url'],
         'description': details['description'],
-    }, ensure_ascii=False, indent=2).encode('utf-8')
+    }
+    # Our id is not on the employer page. Record it when the bookmark has one.
+    if details.get('application_id'):
+        saved['application_id'] = details['application_id']
+    return json.dumps(saved, ensure_ascii=False, indent=2).encode('utf-8')
 
 
 def parse_saved_posting(content):
@@ -35,53 +39,57 @@ def posting_artifact_name(company, role, posting_url=None):
     label = re.sub(r'[\\/:*?"<>|]+', '-', label).strip()
     suffix = ''
     if posting_url:
-        from persistence_api.journal_format import normalize_posting_url
+        from application_service.journal_format import normalize_posting_url
         suffix = ' - ' + hashlib.sha256(normalize_posting_url(posting_url).encode()).hexdigest()[:16]
     return 'Job Posting - {}{}.json'.format(label[:180], suffix)
 
 
-def find_posting_artifact(artifacts, events):
-    """Find the authoritative posting artifact from a list of artifacts and events.
+def find_posting_artifact(artifacts, events, posting_url=None):
+    """Find the saved posting for this application.
 
-    Returns the artifact dict, or raises ValueError if not found.
-    A folder listing is not chronological. Prefer the latest explicit
-    posting-content event instead of choosing the last file returned by Drive.
+    A journal "Posting content" bullet is used when it names a file. That
+    bullet is not on every bookmark, so the filename hash of the posting URL
+    is the fallback, then the only saved posting in the folder.
     """
     from dataclasses import asdict, is_dataclass
     def plain(value):
         return asdict(value) if is_dataclass(value) else value
 
-    postings = [a for a in artifacts if str(a.get('name', '')).startswith('Job Posting - ')]
+    postings = [plain(item) for item in artifacts if str(plain(item).get('name', '')).startswith('Job Posting - ')]
     if not postings:
         raise ValueError('saved posting content is missing')
-    selected = None
-    for event in reversed(events):
+    for event in reversed(events or []):
         for bullet in (plain(event).get('data') or {}).get('bullets', []):
-            if bullet.startswith('Posting content:'):
-                selected = next((a for a in postings
-                                 if (a.get('drive_file_id') or a['artifact_id']) in bullet), None)
-                if selected:
-                    break
-        if selected:
-            break
-    if selected is None and len(postings) != 1:
-        raise ValueError('multiple saved postings without an authoritative content link')
-    return selected or postings[0]
+            if not str(bullet).startswith('Posting content:'):
+                continue
+            selected = next((item for item in postings
+                             if (item.get('drive_file_id') or item.get('artifact_id') or '') in str(bullet)), None)
+            if selected:
+                return selected
+    if posting_url:
+        from application_service.journal_format import normalize_posting_url
+        suffix = hashlib.sha256(normalize_posting_url(posting_url).encode()).hexdigest()[:16]
+        named = [item for item in postings if suffix in str(item.get('name') or '')]
+        if len(named) == 1:
+            return named[0]
+    if len(postings) == 1:
+        return postings[0]
+    raise ValueError('multiple saved postings without an authoritative content link')
 
 
 def read_posting_artifact(persistence, application_id, expected_posting_url):
-    """Read and validate a saved posting artifact from the persistence API.
+    """Read and validate a saved posting artifact from the Application Service.
 
     This is the single way to read a previously saved posting. It finds the
     artifact, reads it, parses it, and validates the URL matches.
     """
     from dataclasses import asdict, is_dataclass
-    from persistence_api.journal_format import normalize_posting_url
+    from application_service.journal_format import normalize_posting_url
 
     artifacts = [asdict(item) if is_dataclass(item) else item
                  for item in persistence.list_artifacts(application_id)]
     events = persistence.list_events(application_id)
-    selected = find_posting_artifact(artifacts, events)
+    selected = find_posting_artifact(artifacts, events, expected_posting_url)
     raw = persistence.read_artifact(application_id, selected['artifact_id'])
     content = raw.get('content')
     if content is None:
@@ -242,7 +250,11 @@ def fetch_posting_details(posting_url):
             failures.append('retrieval time budget exhausted')
             break
         try:
-            headers = {'User-Agent': 'Mozilla/5.0'}
+            headers = {
+                'User-Agent': 'Mozilla/5.0',
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache',
+            }
             if url == api_url:
                 headers.update(api_headers)
             request = urllib.request.Request(url, headers=headers)

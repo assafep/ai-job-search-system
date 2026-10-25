@@ -12,7 +12,7 @@ from time import sleep
 
 from adapters.job_boards.posting_details import (
     fetch_posting_details, posting_artifact_name, posting_content_bytes)
-from persistence_api.journal_format import ALL_STATES
+from application_service.journal_format import ALL_STATES, parse_transition_arrow
 
 
 DEAD_LETTERS = 'Dead Letters Queue'
@@ -53,7 +53,11 @@ def previous_state(events):
         payload = data.get('data') or {}
         if payload.get('to') == DEAD_LETTERS and payload.get('from') in ALL_STATES:
             return payload['from']
-        for bullet in reversed(event_bullets(event)):
+        for bullet in event_bullets(event):
+            parsed = parse_transition_arrow(bullet)
+            if parsed and parsed[1] == DEAD_LETTERS and parsed[0] in ALL_STATES:
+                return parsed[0]
+        for bullet in reversed(bullets):
             match = MOVE_RE.match(bullet)
             if match and match.group(2) == DEAD_LETTERS and match.group(1) in ALL_STATES:
                 return match.group(1)
@@ -75,6 +79,7 @@ def repair_application(persistence, application):
     if len(str(posting.get('description') or '').strip()) < 500:
         raise ValueError('verified URL response contains an incomplete posting')
 
+    from .event_attempt import with_attempt
     artifact_key = 'dlq-url-repair-artifact-' + app_id
     artifact = plain(persistence.store_artifact(
         app_id,
@@ -91,15 +96,15 @@ def repair_application(persistence, application):
         reference = ('https://drive.google.com/file/d/{}/view'.format(artifact['drive_file_id'])
                      if artifact.get('drive_file_id') else artifact['artifact_id'])
         persistence.append_event(app_id, 'posting_content_repaired', {
-            'source': 'DLQ URL repair monitor', 'bullets': ['Posting content: ' + reference],
+            'source': 'DLQ URL repair monitor', 'bullets': with_attempt(['Posting content: ' + reference]),
         }, artifact_key + '-reference')
     transition_key = 'dlq-url-repair-transition-' + app_id
     persistence.transition(app_id, target, {
         'source': 'DLQ URL repair monitor',
-        'bullets': [
+        'bullets': with_attempt([
             'Verified posting URL after dead-lettered read failure.',
             'Posting content saved by the URL adapter.',
-        ],
+        ]),
     }, transition_key)
     return {'application_id': app_id, 'status': 'repaired', 'restored_state': target}
 
@@ -143,13 +148,13 @@ def main(argv=None):
     parser.add_argument('--interval', type=float, default=30,
                         help='Seconds between DLQ polls')
     args = parser.parse_args(argv)
-    from .persistence_client import PersistenceApiClient
+    from .application_service_client import ApplicationServiceClient
 
     def report(result):
         print(result, flush=True)
 
     try:
-        watch(PersistenceApiClient(), interval=args.interval, reporter=report)
+        watch(ApplicationServiceClient(), interval=args.interval, reporter=report)
     except KeyboardInterrupt:
         sys.stdout.write('\n')
     return 0

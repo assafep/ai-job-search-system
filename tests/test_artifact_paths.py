@@ -1,10 +1,12 @@
-from persistence_api.google_drive_artifacts import (
+import json
+
+from application_service.google_drive_artifacts import (
     GoogleDriveArtifactStore,
     application_folder_name,
     folder_id_from_url,
     safe_folder_name,
 )
-from persistence_api.google_docs_repository import GoogleDocsRepository
+from application_service.google_docs_repository import GoogleDocsRepository
 
 
 def test_folder_id_is_resolved_from_drive_url():
@@ -48,6 +50,33 @@ def test_drive_store_retries_update_file_marked_with_idempotency_key():
     result = store.save("Example", "Backend", "application.pdf", b"new", "application/pdf", "attempt-1")
     assert result["id"] == "drive-file-1"
     assert store.replaced == [("drive-file-1", b"new", "application/pdf")]
+
+
+def test_completed_document_is_created_in_the_position_folder():
+    class RecordingStore(GoogleDriveArtifactStore):
+        def __init__(self):
+            super().__init__("token", "root", "Applications")
+            self.posts = []
+
+        def _ensure_folder(self, parent_id, name):
+            return {"id": "applications" if name == "Applications" else "position"}
+
+        def _request(self, method, url, payload=None, content_type="application/json"):
+            self.posts.append((method, url, payload))
+            return {"id": "doc-1", "name": "Completed", "parents": ["position"]}
+
+        def _replace_content(self, file_id, content, mime_type):
+            self.posts.append(("content", file_id, content, mime_type))
+            return {"id": file_id, "name": "Completed"}
+
+    store = RecordingStore()
+    from application_service.completion_drive import DriveCompletion
+    DriveCompletion(store).create_completion(
+        "app-1", "Invalidated", "Completed (Invalidated) Journal - DealHub / Staff",
+        "declined", [], {"company": "DealHub", "role": "Staff Software Engineer"})
+    body = json.loads(store.posts[0][2].decode())
+    assert body["parents"] == ["position"]
+    assert body["mimeType"] == "text/plain"
 
 
 def test_application_folders_can_be_nested_under_configured_parent():

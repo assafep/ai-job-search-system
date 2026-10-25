@@ -1,7 +1,7 @@
 from dataclasses import asdict
 from threading import Barrier, RLock
 
-from persistence_api.repository import MemoryRepository
+from application_service.repository import MemoryRepository
 from services import concurrent_queues
 from services.synchronization import synchronized
 from services.workload_registry import WorkloadRegistry
@@ -103,7 +103,7 @@ def test_run_one_rechecks_state(monkeypatch):
         def prepare_context(self, workflow, context, agent_provider=None):
             return context
         def run_agent(self, workflow, enriched_context, agent_provider):
-            return {'score': {'is_match': True, 'relevance_evidence': ['test']}}
+            return {'validate': {'is_match': True, 'relevance_evidence': ['test']}}
 
     result = run_one(
         p, WorkloadRegistry(), FakeRuntime(), app_dict,

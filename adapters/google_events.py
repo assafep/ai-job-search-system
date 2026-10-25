@@ -9,7 +9,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from html import unescape
 
-from persistence_api.google_auth import access_token_value, token_from_environment
+from application_service.google_auth import access_token_value, token_from_environment
 
 
 SCOPES = {
@@ -41,14 +41,46 @@ def body_text(payload):
     return '\n'.join(plain or html)[:30000]
 
 
+def saved_gmail_access(path=None, opener=None):
+    """Refresh the onboarding Gmail token, or return None."""
+    from pathlib import Path
+    try:
+        from application_service.gmail_grant import access_from_store
+        stored = access_from_store(opener)
+        if stored is not None:
+            return stored
+    except Exception:
+        pass
+    token_path = path or Path(__file__).resolve().parents[1] / '.onboarding' / 'gmail-user.json'
+    if not token_path.is_file():
+        return None
+    try:
+        saved = json.loads(token_path.read_text())
+    except (OSError, ValueError):
+        return None
+    if SCOPES['gmail'] not in (saved.get('scope') or '').split():
+        return None
+    fields = [saved.get('refresh_token'), saved.get('client_id'), saved.get('client_secret')]
+    if not all(fields):
+        return None
+    from application_service.google_auth import GoogleAccessToken
+    return GoogleAccessToken(*fields, opener=opener)
+
+
 class GoogleEventSource:
     def __init__(self, access_token=None, opener=None, now=None):
+        self._explicit_token = access_token is not None
         self.access_token = access_token if access_token is not None else token_from_environment()
         self.opener = opener or urllib.request.urlopen
         self.now = now or datetime.now(timezone.utc)
 
     def _get(self, source, path, params=None):
-        token = access_token_value(self.access_token)
+        token_source = self.access_token
+        if source == 'gmail' and not self._explicit_token:
+            dedicated = saved_gmail_access(opener=self.opener)
+            if dedicated is not None:
+                token_source = dedicated
+        token = access_token_value(token_source)
         if not token:
             raise GoogleEventError(source, reason='missing_credentials')
         base = {'gmail': 'https://gmail.googleapis.com/gmail/v1/users/me',

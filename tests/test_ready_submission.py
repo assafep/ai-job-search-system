@@ -1,6 +1,6 @@
 from services.ready_submission import ReadySubmission
 from services.workload_registry import WorkloadRegistry
-from persistence_api.repository import MemoryRepository
+from application_service.repository import MemoryRepository
 from services.document_generator import generate_application_pdf
 from dataclasses import asdict
 import pytest
@@ -36,6 +36,32 @@ def make_runner(adapter):
     client = Client()
     runner = ReadySubmission(client, WorkloadRegistry(), adapter)
     return client, runner
+
+
+def test_submission_event_records_model_effort_logic_and_obstacles():
+    client, runner = make_runner(lambda ctx: {
+        'status': 'Submitted successfully',
+        'confirmation_text': 'Application received',
+        'attempt': {
+            'model': 'grok-4.7',
+            'effort': 'medium',
+            'logic': ['Asked grok-4.7 at medium effort for extra answers from the applicant profile.'],
+            'obstacles': [],
+            'tackled': ['Filled Personal note from grok-4.7.'],
+        },
+    })
+    runner.run_one(client.id)
+    events = client.repository.list_events(client.id)
+    submitted = [event for event in events if event.event_type == 'application_submitted']
+    assert submitted
+    bullets = submitted[0].data['bullets']
+    text = '\n'.join(bullets)
+    assert 'Model: grok-4.7.' in text
+    assert 'Effort: medium.' in text
+    assert 'Logic tried:' in text
+    assert 'cover letter matches' in text
+    assert 'Obstacles: none' in text
+    assert 'Filled Personal note from grok-4.7.' in text
 
 
 def test_ready_queue_submits_without_approval():

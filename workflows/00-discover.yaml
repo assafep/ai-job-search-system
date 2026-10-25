@@ -1,7 +1,8 @@
 name: discover
 trigger:
-  type: schedule
-  cadence: daily
+  type: polling
+  cadence: minute
+  poll_kind: scheduled
   event_type: job_discovery_schedule
 agent: null
 input_states: []

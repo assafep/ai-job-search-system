@@ -1,0 +1,54 @@
+from provisioning.drive_storage import folder_query, permission_action, project_id_for, resolve_folder, split_drive_path
+from provisioning.state import ProvisioningFailure
+
+
+def test_path_ignores_my_drive_prefix():
+    assert split_drive_path('My Drive/JobSearch/JobSearch2026') == ('JobSearch', 'JobSearch2026')
+
+
+def test_project_id_is_stable():
+    assert project_id_for('folder') == project_id_for('folder')
+    assert project_id_for('folder').startswith('ajss-drive-')
+
+
+def test_folder_query_escapes_quotes():
+    assert "name = 'O\\'Brien'" in folder_query("O'Brien", 'root')
+
+
+def test_permission_keeps_writer_and_upgrades_reader():
+    email = 'drive-writer@ajss.iam.gserviceaccount.com'
+    assert permission_action([{'emailAddress': email, 'role': 'writer', 'id': '1'}], email) == ('keep', '1')
+    assert permission_action([{'emailAddress': email, 'role': 'reader', 'id': '2'}], email) == ('upgrade', '2')
+    assert permission_action([], email) == ('create', None)
+
+
+class Listing:
+    def __init__(self):
+        self.calls = []
+
+    def request(self, method, url, body=None):
+        self.calls.append(url)
+        if 'JobSearch2026' in url or 'JobSearch2026' in (url):
+            return {'files': [{'id': 'child', 'name': 'JobSearch2026'}]}
+        return {'files': [{'id': 'parent', 'name': 'JobSearch'}]}
+
+
+def test_resolve_walks_existing_folders():
+    api = Listing()
+    folder = resolve_folder(api, 'My Drive/JobSearch/JobSearch2026')
+    assert folder['id'] == 'child'
+    assert len(api.calls) == 2
+
+
+def test_missing_folder_stops():
+    class Empty:
+        def request(self, method, url, body=None):
+            return {'files': []}
+
+    try:
+        resolve_folder(Empty(), 'My Drive/JobSearch')
+    except ProvisioningFailure as exc:
+        assert 'does not exist' in str(exc)
+        assert 'Folders here' in str(exc)
+    else:
+        raise AssertionError('missing folder was accepted')

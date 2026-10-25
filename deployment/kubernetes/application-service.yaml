@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: job-search-application-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: job-search-application-service
+  template:
+    metadata:
+      labels:
+        app: job-search-application-service
+    spec:
+      containers:
+        - name: application-service
+          image: YOUR_REGISTRY/job-search-application-service:latest
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: REPOSITORY_BACKEND
+              value: google
+            - name: GOOGLE_ACCESS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: job-search-google
+                  key: access-token
+                  optional: true
+            - name: GOOGLE_REFRESH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: job-search-google
+                  key: refresh-token
+                  optional: true
+            - name: GOOGLE_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: job-search-google
+                  key: client-id
+                  optional: true
+            - name: GOOGLE_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: job-search-google
+                  key: client-secret
+                  optional: true
+            - name: GOOGLE_INTERVIEW_JOURNAL_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: job-search-google
+                  key: interview-journal-url
+            - name: GOOGLE_ARTIFACT_ROOT_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: job-search-google
+                  key: artifact-root-url
+            - name: GOOGLE_APPLICATION_ROOT_PATH
+              valueFrom:
+                configMapKeyRef:
+                  name: job-search-google
+                  key: application-root-path
+                  optional: true
+            - name: APPLICATION_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: job-search-google
+                  key: application-service-token
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: job-search-application-service
+spec:
+  type: ClusterIP
+  selector:
+    app: job-search-application-service
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

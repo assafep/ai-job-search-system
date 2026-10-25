@@ -1,4 +1,4 @@
-from persistence_api.repository import MemoryRepository
+from application_service.repository import MemoryRepository
 from services.event_dispatcher import dispatch
 from services.workload_registry import WorkloadRegistry
 from services.workflow_runtime import WorkflowRuntime

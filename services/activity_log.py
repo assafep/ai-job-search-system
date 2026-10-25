@@ -1,7 +1,7 @@
 """Optional activity lines for transitions and pipeline workers.
 
 Disabled unless runtime configuration or the environment turns it on. Both the
-persistence API and the orchestrator append to the same file.
+Application Service and the orchestrator append to the same file.
 """
 
 import fcntl

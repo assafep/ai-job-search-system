@@ -5,24 +5,24 @@ import urllib.request
 
 import pytest
 
-from persistence_api import main
-from persistence_api.repository import MemoryRepository
+from application_service import main
+from application_service.repository import MemoryRepository
 from services.event_dispatcher import dispatch
-from services.persistence_client import PersistenceApiClient
+from services.application_service_client import ApplicationServiceClient
 from services.workflow_runtime import WorkflowRuntime
 from services.workload_registry import WorkloadRegistry
 
 
 @pytest.mark.skip(reason="persistence api server test needs rewrite for new workflow structure")
-def test_persistence_api_server_round_trip(monkeypatch, candidate_profile):
+def test_application_service_server_round_trip(monkeypatch, candidate_profile):
     monkeypatch.setattr(main, "repository", MemoryRepository())
-    monkeypatch.setenv("PERSISTENCE_API_TOKEN", "integration-token")
+    monkeypatch.setenv("APPLICATION_SERVICE_TOKEN", "integration-token")
     server = main.HTTPServer(("127.0.0.1", 0), main.Handler)
     thread = threading.Thread(target=server.serve_forever)
     thread.daemon = True
     thread.start()
     base_url = "http://127.0.0.1:{}".format(server.server_address[1])
-    client = PersistenceApiClient(base_url, auth_token="integration-token")
+    client = ApplicationServiceClient(base_url, auth_token="integration-token")
     client.save_profile(candidate_profile)
 
     def request(method, path, payload=None):

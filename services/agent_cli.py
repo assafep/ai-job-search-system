@@ -38,8 +38,8 @@ def maybe_attach_profile(context):
     except OnboardingRequired:
         return context
     try:
-        from .persistence_client import PersistenceApiClient
-        client = PersistenceApiClient()
+        from .application_service_client import ApplicationServiceClient
+        client = ApplicationServiceClient()
         profile = client.get_profile()
         if isinstance(profile, dict):
             context["applicant_profile"] = profile
@@ -50,7 +50,7 @@ def maybe_attach_profile(context):
 
 def load_provider(agent_name):
     """Load the appropriate provider for the given agent."""
-    if agent_name in ("read-posting", "score"):
+    if agent_name in ("read-posting", "validate"):
         from .worker_main import load_discovery_provider
         provider = load_discovery_provider()
         if hasattr(provider, "with_reasoning_effort"):
@@ -67,7 +67,7 @@ def main(argv=None):
     parser.add_argument("--url", help="Posting URL (read-posting agent only)")
     parser.add_argument("--context", help="JSON file with agent context")
     parser.add_argument("--profile", action="store_true", default=True,
-                        help="Attach applicant profile from persistence API (default: on)")
+                        help="Attach applicant profile from Application Service (default: on)")
     parser.add_argument("--no-profile", dest="profile", action="store_false",
                         help="Do not fetch applicant profile")
     args = parser.parse_args(argv)

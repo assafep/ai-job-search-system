@@ -7,11 +7,11 @@ from collections import Counter
 from datetime import datetime, timezone
 
 from adapters.llm.codex_provider import provider
-from persistence_api.storage_layout import workload_state_path
+from application_service.storage_layout import workload_state_path
 from .activity_report import publish
 from .application_package import saved_package, promote_saved_package
 from .event_dispatcher import dispatch
-from .persistence_client import PersistenceApiClient
+from .application_service_client import ApplicationServiceClient
 from .report_checkpoint import ReportCheckpoint
 from .runtime_config import load
 from .workflow_runtime import runtime_from_environment
@@ -78,7 +78,7 @@ def main(argv=None):
     parser.add_argument('--migrate-review-holds', action='store_true')
     args = parser.parse_args(argv)
     load(require=True)
-    persistence = PersistenceApiClient()
+    persistence = ApplicationServiceClient()
     registry = registry_from_environment()
     runtime = runtime_from_environment(persistence_client=persistence)
     runtime.registry = registry

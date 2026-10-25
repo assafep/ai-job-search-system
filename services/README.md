@@ -1,10 +1,17 @@
 # Services
 
 Services own deterministic behavior and side-effect boundaries. The existing
-`persistence_api` package is the data-layer API. Onboarding is deliberately
+`application_service` package is the Application Service. Onboarding is deliberately
 small: it records Drive identifiers/URLs locally and never stores credentials.
 
-`event_dispatcher.py` is the pure routing boundary: normalized adapter events
+`polling.py` is the shared scheduling boundary. Workflow blueprints declare
+one-minute polling with queue, external, or scheduled checks. It supplies the common due-time
+clock, state-queue admission, and durable minute-based UTC workload identities used by
+the orchestrator, daemon, and bounded system runner. Maintenance checks run once a minute and include
+reconciliation, terminal journal completion, Gmail grant renewal, and ghosting.
+Live reconciliation leaves active workers alone; recovery is performed at startup.
+
+`event_dispatcher.py` is the pure internal routing boundary: normalized adapter events
 become queued workload envelopes, which are then handled independently by the
 workflow runtime. It can optionally enqueue the envelope into
 `WorkloadRegistry`; without a registry it remains a pure function.
@@ -42,7 +49,7 @@ Operators can inspect and decide requests with
 
 `workload_registry.py` owns scheduler bookkeeping and recovery. It deduplicates
 dispatched events, bounds retries, and requeues interrupted workloads; it does
-not replace the persistence API as the owner of application state. Pass its
+not replace the Application Service as the owner of application state. Pass its
 optional `storage_path` argument to persist registry records as JSON across
 worker restarts; omit it for a process-local registry. Deployments can use
 `registry_from_environment()` with `WORKLOAD_REGISTRY_PATH` and
@@ -52,20 +59,20 @@ worker restarts; omit it for a process-local registry. Deployments can use
 into workflow context, invokes the stateless workload executor, and settles the
 registry record as succeeded or failed. It never receives direct Drive, Gmail,
 Calendar, or browser access. `runtime_from_environment()` wires it to the
-configured persistence API and workload registry for a deployment entrypoint
+configured Application Service and workload registry for a deployment entrypoint
 and requires completed onboarding by default. Unit tests may pass
 `require_configuration=False`.
 Call `WorkflowRuntime.run(..., agent_provider=provider)` when the runtime owns
 agent invocation; the provider is called once per agent required by the
 workflow. Supplying `agent_results` remains useful for replay and deterministic
 test execution. Before provider invocation, the runtime reads profile,
-application, event, and interview-research context through the persistence API
+application, event, and interview-research context through the Application Service
 when those resources are available; only serialized values are passed to the
 agent.
 
 
 Reconciliation workloads first recover interrupted registry records, then may
-record an application-scoped reconciliation result through the persistence API
+record an application-scoped reconciliation result through the Application Service
 when their context supplies `application_id` and `reconciliation_result`.
 They also return the registry's counts and attention records for reporting.
 
@@ -84,10 +91,10 @@ expose `generate(prompt, context)`. Run:
 codex --login
 python3 -m services.worker_main --once
 python3 -m services.worker_main --once --limit 1
-python3 -m services.worker_main --poll-seconds 30
+python3 -m services.worker_main --poll-seconds 60
 ```
 
-The entrypoint loads runtime configuration, persistence API, workload registry,
+The entrypoint loads runtime configuration, Application Service, workload registry,
 and approval registry through the existing environment factories. It does not
 give the provider access to external clients.
 

@@ -1,6 +1,8 @@
 name: submit-prepared
 trigger:
-  type: application_submission_schedule
+  type: polling
+  cadence: minute
+  poll_kind: queue
   event_type: application_submission_schedule
 agent: null
 input_states:

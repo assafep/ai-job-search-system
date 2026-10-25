@@ -2,11 +2,11 @@ import io
 import json
 import urllib.error
 
-from persistence_api import main
-from persistence_api.repository import MemoryRepository
+from application_service import main
+from application_service.repository import MemoryRepository
 
 
-def test_profile_put_and_get_use_persistence_api(monkeypatch):
+def test_profile_put_and_get_use_application_service(monkeypatch):
     monkeypatch.setattr(main, "repository", MemoryRepository())
     profile = {
         "schema_version": 1,
@@ -157,7 +157,7 @@ def test_missing_write_field_is_bad_request_not_not_found(monkeypatch):
 
 
 def test_optional_api_token_protects_state_endpoints(monkeypatch):
-    monkeypatch.setenv("PERSISTENCE_API_TOKEN", "secret")
+    monkeypatch.setenv("APPLICATION_SERVICE_TOKEN", "secret")
     handler = object.__new__(main.Handler)
     handler.path = "/applications"
     handler.headers = {}
@@ -175,7 +175,7 @@ def test_optional_api_token_protects_state_endpoints(monkeypatch):
 def test_unavailable_google_backend_does_not_fall_back_to_memory(monkeypatch):
     monkeypatch.setattr(main, "repository", None)
     monkeypatch.setattr(main, "repository_startup_error", "missing Google credentials")
-    monkeypatch.delenv("PERSISTENCE_API_TOKEN", raising=False)
+    monkeypatch.delenv("APPLICATION_SERVICE_TOKEN", raising=False)
     handler = object.__new__(main.Handler)
     handler.path = "/applications"
     responses = []

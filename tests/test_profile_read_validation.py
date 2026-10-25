@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from persistence_api.google_docs_repository import GoogleDocsRepository
+from application_service.google_docs_repository import GoogleDocsRepository
 
 
 class FakeArtifacts:

@@ -1,9 +1,9 @@
 # Docker deployment
 
-Run the persistence API locally with:
+Run the Application Service locally with:
 
 ```bash
-docker compose up --build persistence-api
+docker compose up --build application-service
 ```
 
 With no `config/runtime.json`, the API uses the in-memory backend. After local

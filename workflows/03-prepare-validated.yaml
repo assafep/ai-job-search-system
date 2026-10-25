@@ -1,6 +1,8 @@
 name: prepare-validated
 trigger:
-  type: queued_application
+  type: polling
+  cadence: minute
+  poll_kind: queue
   event_type: application_package_schedule
 agent: application
 input_states:

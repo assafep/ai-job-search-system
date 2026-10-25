@@ -1,8 +1,8 @@
 import json
 import pytest
 
-from persistence_api.google_auth import GoogleAccessToken, token_from_environment
-from persistence_api.google_docs_repository import repository_from_environment
+from application_service.google_auth import GoogleAccessToken, token_from_environment
+from application_service.google_docs_repository import repository_from_environment
 
 
 class FakeResponse:

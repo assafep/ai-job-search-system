@@ -52,10 +52,14 @@ def promote_saved_package(persistence, application, artifact):
     recorded = any(artifact['reference'] in str(event.get('data', {}).get('bullets', []))
                    for event in events if isinstance(event, dict))
     if not recorded:
+        from .event_attempt import with_attempt
         persistence.append_event(app_id, 'application_package_prepared', {
-            'source': 'application agent', 'bullets': ['Application package created successfully.',
-                                                    'Application package: ' + artifact['reference']],
+            'source': 'application agent', 'bullets': with_attempt([
+                'Application package created successfully.',
+                'Application package: ' + artifact['reference']]),
         }, key + '-event')
+    from .event_attempt import with_attempt
     return persistence.transition(app_id, 'Prepared', {
-        'source': 'application agent', 'bullets': ['Saved application package validated; no human review is required.'],
+        'source': 'application agent', 'bullets': with_attempt([
+            'Saved application package validated; no human review is required.']),
     }, key + '-ready')

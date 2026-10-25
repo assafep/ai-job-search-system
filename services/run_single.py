@@ -1,7 +1,7 @@
-"""Process a single application from a specific queue with real side effects.
+"""Process eligible applications from a specific queue with real side effects.
 
 Usage examples:
-  # Process one item from the Discovered queue:
+  # Process all eligible items from the Discovered queue:
   python3 -m services.run_single Discovered
 
   # Process a specific application from the Bookmarked queue:
@@ -23,29 +23,11 @@ from .workflow_runner import run_all
 
 def run(state, application_id=None, all_items=False, workflow_name=None):
     """Process one or more applications from the given state."""
-    # For a single specific application, use sequential mode
-    if application_id or not all_items:
-        results = run_all(
-            state,
-            workflow_name=workflow_name,
-            workers=1,
-            print_progress=True,
-        )
-        # Filter to the requested application if specified
-        if application_id:
-            results = [r for r in results if r.get("application_id") == application_id]
-            if not results:
-                raise ValueError(
-                    "application {} not found in state {}".format(application_id, state)
-                )
-        return results
-    else:
-        return run_all(
-            state,
-            workflow_name=workflow_name,
-            workers=8,
-            print_progress=True,
-        )
+    return run_all(
+        state, workflow_name=workflow_name,
+        workers=1,
+        print_progress=True, application_id=application_id,
+    )
 
 
 def main(argv=None):
@@ -61,7 +43,7 @@ def main(argv=None):
     parser.add_argument(
         "--all",
         action="store_true",
-        help="Process all applications in the queue (default: one)"
+        help="Process all eligible applications (also the default; retained for compatibility)"
     )
     parser.add_argument(
         "--workflow",

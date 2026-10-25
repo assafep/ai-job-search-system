@@ -1,4 +1,4 @@
-"""Start the persistence API and the pipeline orchestrator in one process."""
+"""Start the Application Service and the pipeline orchestrator in one process."""
 
 import argparse
 import errno
@@ -7,7 +7,7 @@ import sys
 from threading import Thread
 from time import monotonic, sleep
 
-from persistence_api.main import Handler, configure_activity_log, configure_api_log
+from application_service.main import Handler, configure_activity_log, configure_api_log
 from services.activity_log import configure, configure_from_runtime
 from services.orchestrator import parse_worker_overrides, run_pipelines
 from services.runtime_config import load as load_runtime
@@ -54,7 +54,7 @@ def start_api(host, port):
         if error.errno in {errno.EADDRINUSE, errno.EACCES}:
             return None
         raise
-    thread = Thread(target=server.serve_forever, name='persistence-api', daemon=True)
+    thread = Thread(target=server.serve_forever, name='application-service', daemon=True)
     thread.start()
     return server
 
@@ -69,7 +69,7 @@ def wait_for_api(client, timeout=15):
         except Exception as error:
             last_error = error
             sleep(0.05)
-    raise RuntimeError('persistence API did not accept queue reads: {}'.format(last_error))
+    raise RuntimeError('Application Service did not accept queue reads: {}'.format(last_error))
 
 
 def main(argv=None):
@@ -81,14 +81,14 @@ def main(argv=None):
     # and would otherwise turn the flags back off.
     apply_log_flags(args, runtime)
     configure_api_log()
-    os.environ['PERSISTENCE_API_URL'] = 'http://{}:{}'.format(args.host, args.port)
+    os.environ['APPLICATION_SERVICE_URL'] = 'http://{}:{}'.format(args.host, args.port)
     server = start_api(args.host, args.port)
-    from services.persistence_client import PersistenceApiClient
-    client = PersistenceApiClient()
+    from services.application_service_client import ApplicationServiceClient
+    client = ApplicationServiceClient()
     wait_for_api(client)
     if server is None:
         sys.stderr.write(
-            'persistence API is already listening on {}:{}; it keeps the log settings it loaded at startup until restarted\n'.format(
+            'Application Service is already listening on {}:{}; it keeps the log settings it loaded at startup until restarted\n'.format(
                 args.host, args.port))
     overrides = parse_worker_overrides(args.workers)
     try:

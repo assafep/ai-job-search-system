@@ -12,6 +12,11 @@ from .resume_contacts import resume_text, extract_contacts, normalize_phone
 
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "config", "runtime.json")
+BOOKMARK_DISCOVERED = {
+    "coding_agent": "grok",
+    "model": "grok-4.7",
+    "effort": "medium",
+}
 PROFILE_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "config", "applicant_profile.json")
 WEB_URL_RE = re.compile(r"^https?://[^\s]+$", re.IGNORECASE)
 DOC_URL_RE = re.compile(r"^https?://docs\.google\.com/document/(?:u/\d+/)?d/[^/?]+", re.IGNORECASE)
@@ -73,7 +78,7 @@ def application_root_path(value):
     value = value.strip()
     if not value:
         return True
-    from persistence_api.file_paths import normalize_file_path
+    from application_service.file_paths import normalize_file_path
     try:
         normalize_file_path(value)
     except ValueError:
@@ -155,7 +160,7 @@ def sync_profile_to_drive(profile, local_profile_path=None):
     refresh_configured = all(refresh_values)
     if not os.environ.get("GOOGLE_ACCESS_TOKEN") and not refresh_configured:
         return "authentication not configured"
-    from persistence_api.google_docs_repository import repository_from_environment
+    from application_service.google_docs_repository import repository_from_environment
 
     repository = repository_from_environment()
     # Validate the journal schema without parsing every application before
@@ -190,6 +195,39 @@ def sync_profile_to_drive(profile, local_profile_path=None):
     return "created Drive profile"
 
 
+def ensure_bookmark_settings(config):
+    """Fill only missing bookmark-discovered keys. Keep a value the user already set."""
+    section = config.get("bookmark-discovered")
+    if not isinstance(section, dict):
+        config["bookmark-discovered"] = dict(BOOKMARK_DISCOVERED)
+        return True
+    changed = False
+    for key, value in BOOKMARK_DISCOVERED.items():
+        if not str(section.get(key) or "").strip():
+            section[key] = value
+            changed = True
+    return changed
+
+
+def obtain_email_token(email=None):
+    """Save a gmail.readonly refresh token when the desktop OAuth client is present."""
+    from provisioning.gmail_login import ensure_gmail_login
+    from provisioning.state import ProvisioningFailure
+    try:
+        created = ensure_gmail_login(email=email)
+    except ProvisioningFailure as exc:
+        print(str(exc))
+        return False
+    print('Saved the gmail.readonly refresh token.' if created else 'Gmail read-only login already saved.')
+    return True
+
+
+def save_runtime(path, config):
+    with open(path, "w") as handle:
+        json.dump(config, handle, indent=2)
+        handle.write("\n")
+
+
 def main():
     path = os.path.abspath(CONFIG_PATH)
     if os.path.exists(path):
@@ -218,8 +256,16 @@ def main():
                     with open(profile_path, 'w') as handle:
                         json.dump(profile, handle, indent=2)
                         handle.write('\n')
+                if ensure_bookmark_settings(config):
+                    save_runtime(path, config)
+                    print("Added bookmark-discovered model and effort to {}".format(path))
+                obtain_email_token((profile.get('personal') or {}).get('email'))
                 return 0
+        if ensure_bookmark_settings(config):
+            save_runtime(path, config)
+            print("Added bookmark-discovered model and effort to {}".format(path))
         print("Onboarding is already complete: {}".format(path))
+        obtain_email_token()
         return 0
 
     print("Job-search automation onboarding")
@@ -229,7 +275,7 @@ def main():
     journal_url = ask("Interview Journal Google Doc URL: ", google_doc_url)
     artifact_root_url = ask("Google Drive artifact root folder URL: ", drive_folder_url)
     application_parent = ask(
-        "Optional root-relative parent for application folders (blank for direct root): ",
+        "Root-relative parent for application folders (blank for Applications): ",
         application_root_path,
     )
     country_input = ask(
@@ -253,9 +299,10 @@ def main():
             "interview_journal_url": journal_url,
             "artifact_root_url": artifact_root_url,
             "applicant_profile_path": runtime_profile_path(profile_path),
-            **({"application_root_path": application_parent} if application_parent else {}),
+            "application_root_path": application_parent or "Applications",
         },
         "scheduling": {"calendly_url": calendly_url},
+        "bookmark-discovered": dict(BOOKMARK_DISCOVERED),
     }
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as handle:
@@ -263,6 +310,11 @@ def main():
         handle.write("\n")
     print("Saved local runtime configuration to {}".format(path))
     print("Created applicant profile scaffold at {}".format(profile_path))
+    from provisioning.drive_login import file_login_instructions
+    try:
+        print(file_login_instructions((personal or {}).get('email')))
+    except Exception as exc:
+        print(str(exc))
     try:
         print("Drive profile sync: {}".format(sync_profile_to_drive(profile, profile_path)))
     except Exception as exc:
@@ -276,6 +328,7 @@ def main():
             pass
         print("Drive profile sync failed: {}".format(exc), file=sys.stderr)
         return 1
+    obtain_email_token((personal or {}).get('email'))
     return 0
 
 

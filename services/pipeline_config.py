@@ -5,17 +5,17 @@ import os
 import tempfile
 import fcntl
 
-from persistence_api.journal_format import ALL_STATES
-from persistence_api.state_machine import validate_transition
+from application_service.journal_format import ALL_STATES
+from application_service.state_machine import validate_transition
 from .runtime_config import ROOT
 
 DEFAULT_PATH = os.path.join(ROOT, 'config', 'pipelines.json')
 OUTCOMES = {
     'read-posting': {'read', 'read_failure', 'system_error'},
-    'score': {'validated', 'invalidated', 'duplicate', 'system_error'},
+    'validate': {'validated', 'invalidated', 'duplicate', 'system_error'},
     'application': {'prepared', 'failed', 'duplicate', 'system_error'},
     'auto-apply': {'submitted', 'unconfirmed', 'waiting', 'failed', 'system_error'},
-    'correspondence': {'processed', 'interview', 'rejected', 'offered', 'failed', 'system_error'},
+    'correspondence': {'processed', 'confirmed', 'interview', 'rejected', 'offered', 'failed', 'system_error'},
     'interview-prep': {'prepared', 'failed', 'system_error'},
 }
 
@@ -47,6 +47,11 @@ def validate(config):
         event = spec.get('event_type')
         if event not in (None, 'incoming_email', 'calendar_event'):
             raise ValueError('unsupported event_type: ' + name)
+        if 'event_poll_seconds' in spec:
+            value = spec['event_poll_seconds']
+            if (event is None or isinstance(value, bool) or not isinstance(value, (int, float))
+                    or not 0 < value <= 86400):
+                raise ValueError('event_poll_seconds must be between 0 and 86400 seconds for an external-event pipeline: ' + name)
         if spec['agent'] == 'correspondence' and event != 'incoming_email':
             raise ValueError('correspondence requires incoming_email events')
         if spec['agent'] == 'interview-prep' and event != 'calendar_event':
@@ -63,13 +68,24 @@ def validate(config):
         for outcome, target in routes.items():
             if target is not None:
                 for state in states:
+                    # A receipt moves a submission to Applied. Later mail keeps the
+                    # current interview state and is recorded as an event.
+                    if (spec['agent'] == 'correspondence' and outcome == 'confirmed'
+                            and state not in {'Prepared', 'Manual Apply Required'}):
+                        continue
                     validate_transition(state, target)
-            if target == 'Applied' and (spec['agent'] != 'auto-apply' or outcome != 'submitted'):
+            allowed_applied = (
+                (spec['agent'] == 'auto-apply' and outcome == 'submitted')
+                or (spec['agent'] == 'correspondence' and outcome == 'confirmed')
+            )
+            if target == 'Applied' and not allowed_applied:
                 raise ValueError('only a confirmed submission can route to Applied')
         if spec['agent'] == 'application' and (routes['prepared'] != 'Prepared' or routes['failed'] != 'Manual Apply Required' or routes['duplicate'] != 'Duplicate'):
             raise ValueError('preparation routes must follow the application policy')
-        if spec['agent'] == 'score' and routes.get('duplicate') != 'Duplicate':
-            raise ValueError('score duplicates route to Duplicate')
+        if spec['agent'] == 'validate' and routes.get('duplicate') != 'Duplicate':
+            raise ValueError('validate duplicates route to Duplicate')
+        if spec['agent'] == 'validate' and routes.get('invalidated') is not None:
+            raise ValueError('validate declines complete the application instead of moving a journal tab')
         if spec['agent'] == 'auto-apply' and any(routes[key] != 'Manual Apply Required' for key in ('failed', 'unconfirmed')):
             raise ValueError('failed/unconfirmed submissions require manual reconciliation')
         for state in states:

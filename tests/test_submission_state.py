@@ -1,5 +1,5 @@
 from services.workload_executor import plan_persistence_writes
-from persistence_api.repository import MemoryRepository
+from application_service.repository import MemoryRepository
 
 
 def test_application_package_does_not_mark_submitted_by_default():
@@ -69,3 +69,4 @@ def test_transition_recovers_if_failure_happens_after_event_persistence():
         if event.event_type == "status_changed"
     ]
     assert len(status_events) == 1
+    assert status_events[0].data["bullets"][0] == "Bookmarked --> Prepared"

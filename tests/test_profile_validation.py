@@ -1,6 +1,6 @@
 import pytest
 
-from persistence_api.profile import calendly_url, validate_profile
+from application_service.profile import calendly_url, validate_profile
 
 
 def test_profile_calendly_url_supports_current_and_legacy_layouts():

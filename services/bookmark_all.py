@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
 from .event_dispatcher import dispatch
-from .persistence_client import PersistenceApiClient
+from .application_service_client import ApplicationServiceClient
 from .runtime_config import load
 from .workflow_runtime import runtime_from_environment
 from .workload_registry import registry_from_environment
@@ -91,7 +91,7 @@ def run(max_workers=8):
     if event_type is None:
         raise ValueError("bookmark-discovered has no event type")
 
-    persistence = PersistenceApiClient()
+    persistence = ApplicationServiceClient()
     registry = registry_from_environment()
     runtime = runtime_from_environment(persistence_client=persistence)
     runtime.registry = registry

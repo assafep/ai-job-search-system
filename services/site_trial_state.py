@@ -1,4 +1,4 @@
-"""Persist observed browser trial checkpoints through the data-layer boundary.
+"""Persist observed browser trial checkpoints through the Application Service.
 
 Separate from submission receipts: registration and external handoffs must
 never promote an application to Applied. No credentials/cookies belong here.
@@ -8,8 +8,8 @@ import argparse
 import json
 from datetime import datetime, timezone
 
-from persistence_api.storage_layout import workload_state_path
-from .persistence_client import PersistenceApiClient
+from application_service.storage_layout import workload_state_path
+from .application_service_client import ApplicationServiceClient
 from .runtime_config import load
 
 
@@ -52,7 +52,7 @@ def main(argv=None):
     if bool(args.stage) != bool(args.evidence):
         parser.error('--stage and --evidence must be supplied together')
     load(require=True)
-    persistence = PersistenceApiClient()
+    persistence = ApplicationServiceClient()
     if args.stage:
         result = record_checkpoint(persistence, args.site, args.application_id, args.stage, args.evidence)
     else:

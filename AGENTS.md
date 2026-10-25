@@ -1,12 +1,12 @@
 # Job Search Automation
 
-This repository contains four independent, event-driven workflows. Workflow
+This repository contains time-driven polling workflows. Workflow
 agents are stateless decision-makers: they read context, produce structured
 decisions, and do not directly create side effects. Workload instances use the
-data-layer API to read and write state.
+Application Service to read and write state.
 
 The portable persistence-boundary instructions are in
-`skills/persistence-api/SKILL.md`; `openapi.yaml` remains the authoritative
+`skills/application-service/SKILL.md`; `openapi.yaml` remains the authoritative
 request/response contract.
 
 Before running a workflow, ensure `config/runtime.json` exists. If it does not,
@@ -16,7 +16,7 @@ run the onboarding command described in `README.md`.
 
 - Agents may not call Google Drive, Gmail, Calendar, or browser APIs directly.
 - Adapters expose external systems to workflow runtimes.
-- The data-layer API is the only owner of application-state mutations.
+- The Application Service is the only owner of application-state mutations.
 - Every write must be explicit, validated, and idempotent where retries are possible.
 - Prepared queue membership authorizes automatic submission; do not
   pause that queue for human approval. Other actions follow

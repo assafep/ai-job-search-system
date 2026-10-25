@@ -1,4 +1,4 @@
-from persistence_api.journal_format import (
+from application_service.journal_format import (
     STATE_TABS,
     build_event_text,
     event_text,
@@ -6,8 +6,21 @@ from persistence_api.journal_format import (
     normalize_date,
     parse_application_title,
     parse_events,
+    with_transition_first,
 )
-from persistence_api.journal_format import normalize_posting_url
+from application_service.journal_format import normalize_posting_url
+
+
+def test_transition_bullet_is_always_first_and_not_repeated():
+    bullets = with_transition_first(
+        ["Outcome: validated", "Moved from Bookmarked to Validated"],
+        "Bookmarked",
+        "Validated",
+    )
+    assert bullets == [
+        "Bookmarked --> Validated",
+        "Outcome: validated",
+    ]
 
 
 def test_state_tabs_are_canonical():

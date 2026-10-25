@@ -1,4 +1,4 @@
-from persistence_api.google_docs_repository import (
+from application_service.google_docs_repository import (
     GoogleDocsRepository,
     application_tab_title,
     document_id_from_url,
@@ -152,7 +152,7 @@ def test_repository_reads_state_tabs_and_application_journal():
 def test_completed_posting_artifacts_remain_readable_for_duplicate_checks():
     import pytest
     from adapters.job_boards.posting_details import posting_content_bytes, read_posting_artifact
-    from persistence_api.journal_format import STATE_TABS
+    from application_service.journal_format import STATE_TABS
     from services.orchestrator import Orchestrator
     from services.workload_registry import WorkloadRegistry
 

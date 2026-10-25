@@ -45,7 +45,7 @@ def main(argv=None):
     parser.add_argument("--provider", default=None, help="LLM provider as module:attribute")
     parser.add_argument("--once", action="store_true", help="drain current pending workloads and exit")
     parser.add_argument("--limit", type=int, default=None, help="maximum workloads for a one-shot drain")
-    parser.add_argument("--poll-seconds", type=float, default=30.0)
+    parser.add_argument("--poll-seconds", type=float, default=60.0)
     args = parser.parse_args(argv)
     try:
         if args.limit is not None and not args.once:

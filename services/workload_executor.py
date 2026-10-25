@@ -1,4 +1,4 @@
-"""Translate validated agent decisions into persistence API operations.
+"""Translate validated agent decisions into Application Service operations.
 
 This module is deliberately separate from agents. It contains the only
 workflow-side logic that turns an agent result into a state mutation, and it
@@ -10,9 +10,10 @@ import re
 
 from .test_runner import AGENTS, resolve, read_json, validate_output
 from .document_generator import ensure_scheduling_link, generate_application_pdf
-from persistence_api.journal_format import normalize_posting_url
+from application_service.journal_format import normalize_posting_url
 from adapters.job_boards.posting_details import (
     posting_content_bytes, posting_artifact_name, parse_saved_posting)
+from .event_attempt import with_attempt as _with_attempt
 
 
 SCHEDULING_INTENTS = {
@@ -146,7 +147,7 @@ def plan_persistence_writes(workflow_name, context, agent_results):
                 "application_id": application_id,
                 "event_type": "interview_briefing_created",
                 "data": {
-                    "bullets": ["Interview briefing:", result["briefing"]],
+                    "bullets": _with_attempt(["Interview briefing:", result["briefing"]], result.get("attempt")),
                     "source": "interview-prep agent",
                 },
                 "idempotency_key": _idempotency_key(context, "interview-briefing"),
@@ -168,13 +169,6 @@ def plan_persistence_writes(workflow_name, context, agent_results):
                 )
             if draft:
                 bullets.append("Draft response: " + draft)
-            operations.append({
-                "operation": "append_event",
-                "application_id": application_id,
-                "event_type": "correspondence_classified",
-                "data": {"bullets": bullets, "source": "correspondence agent"},
-                "idempotency_key": _idempotency_key(context, "correspondence"),
-            })
             target_by_intent = {
                 "schedule_interview": "Interviewing",
                 "interview_scheduled": "Interviewing",
@@ -187,9 +181,25 @@ def plan_persistence_writes(workflow_name, context, agent_results):
                 "change_time": "Interviewing",
                 "rejection": "Rejected",
                 "rejected": "Rejected",
+                "application_received": "Applied",
+                "application_confirmed": "Applied",
+                "confirmation": "Applied",
+                "applied_confirmation": "Applied",
                 "offer": "Offer",
             }
-            target = target_by_intent.get(result["intent"].strip().lower())
+            target = target_by_intent.get(intent)
+            current = ((context.get('application') or {}).get('status'))
+            from application_service.state_machine import ALLOWED_TRANSITIONS
+            if target and current and current != target and target not in ALLOWED_TRANSITIONS.get(current, ()):
+                target = None
+            operations.append({
+                "operation": "append_event",
+                "application_id": application_id,
+                "event_type": "correspondence_classified",
+                "data": {"bullets": _with_attempt(bullets, result.get("attempt")),
+                    "source": "correspondence agent"},
+                "idempotency_key": _idempotency_key(context, "correspondence"),
+            })
             if target:
                 operations.append({
                     "operation": "transition",
@@ -206,6 +216,8 @@ def plan_persistence_writes(workflow_name, context, agent_results):
             c.upper() for c in (applicant_profile.get("job_search") or {}).get("countries") or []
         ]
         postings = context.get("job_postings", [])
+        if 'max_postings' in context:
+            postings = postings[:max(0, context['max_postings'])]
         for posting in postings:
             company = _normalize_company_name(posting)
             role = posting.get("role", "")
@@ -237,7 +249,7 @@ def plan_persistence_writes(workflow_name, context, agent_results):
             })
     elif workflow_name == "bookmark-discovered":
         # Extract posting content from URL, save as artifact, then transition
-        # to Bookmarked so score can consume it.
+        # to Bookmarked so validate can consume it.
         posting_result = agent_results.get("read-posting")
         if posting_result is not None:
             _validate_agent_result("read-posting", posting_result)
@@ -256,7 +268,7 @@ def plan_persistence_writes(workflow_name, context, agent_results):
                     "operation": "transition",
                     "application_id": application_id,
                     "target": "Dead Letters Queue",
-                    "data": {"source": "read-posting agent", "bullets": [str(exc)]},
+                    "data": {"source": "read-posting agent", "bullets": _with_attempt([str(exc)], getattr(exc, "attempt", None))},
                     "idempotency_key": _idempotency_key(
                         {"workload_id": posting_url}, "read-failure"),
                 })
@@ -266,64 +278,65 @@ def plan_persistence_writes(workflow_name, context, agent_results):
             operations.append({
                 "operation": "store_posting_artifact",
                 "application_id": application_id,
-                "posting_content": posting,
-                "idempotency_key": "posting-" + hashlib.sha256(posting_url.encode("utf-8")).hexdigest()[:24],
+                "posting_content": dict(posting, application_id=application_id),
+                "idempotency_key": "posting-" + hashlib.sha256(
+                    (posting_url + "\n" + posting["description"]).encode("utf-8")).hexdigest()[:24],
             })
+            attempt = agent_results.get("bookmark_attempt")
+            bookmarked = {
+                "source": "read-posting agent",
+                "bullets": _with_attempt(["Bookmarked the posting."], attempt),
+            }
+            if attempt:
+                bookmarked["attempt"] = attempt
             operations.append({
                 "operation": "transition",
                 "application_id": application_id,
                 "target": "Bookmarked",
-                "data": {"source": "read-posting agent"},
+                "data": bookmarked,
                 "idempotency_key": _idempotency_key(
                     {"workload_id": posting_url}, "read-to-bookmarked"),
             })
     elif workflow_name == "validate-bookmarked":
         # Validate saved posting content against applicant profile
-        result = agent_results.get("score")
+        result = agent_results.get("validate")
         if result is not None:
-            _validate_agent_result("score", result)
+            _validate_agent_result("validate", result)
             application_id = context.get("application_id")
             if not application_id:
                 raise ValueError("validate requires application_id")
             if result.get("is_match"):
-                # Validated: append explanation event and transition
                 evidence = result.get("relevance_evidence", [])
-                operations.append({
-                    "operation": "append_event",
-                    "application_id": application_id,
-                    "event_type": "posting_validated",
-                    "data": {
-                        "bullets": ["Validated: strong match for applicant"] + evidence,
-                        "source": "score agent",
-                    },
-                    "idempotency_key": "validate-event-" + application_id,
-                })
                 operations.append({
                     "operation": "transition",
                     "application_id": application_id,
                     "target": "Validated",
-                    "data": {"source": "score agent"},
+                    "data": {
+                        "source": "validate agent",
+                        "bullets": _with_attempt(
+                            ["Validated: strong match for applicant"] + evidence, result.get("attempt")),
+                    },
                     "idempotency_key": "validate-transition-" + application_id,
                 })
             else:
-                # Invalidated: append explanation event and transition
+                # Record the decline, then complete the application. Completion
+                # copies the journal tab and removes it from the main journal.
                 reason = result.get("decline_reason", "Not a strong match")
                 operations.append({
                     "operation": "append_event",
                     "application_id": application_id,
                     "event_type": "posting_invalidated",
                     "data": {
-                        "bullets": ["Invalidated: " + reason],
-                        "source": "score agent",
+                        "bullets": _with_attempt(["Invalidated: " + reason], result.get("attempt")),
+                        "source": "validate agent",
                     },
                     "idempotency_key": "invalidate-event-" + application_id,
                 })
                 operations.append({
-                    "operation": "transition",
+                    "operation": "complete_application",
                     "application_id": application_id,
-                    "target": "Invalidated",
-                    "data": {"source": "score agent"},
-                    "idempotency_key": "invalidate-transition-" + application_id,
+                    "reason": "invalidated",
+                    "idempotency_key": "invalidate-complete-" + application_id,
                 })
     elif workflow_name == "prepare-validated":
         result = agent_results.get("application")
@@ -371,7 +384,8 @@ def plan_persistence_writes(workflow_name, context, agent_results):
                     if not context.get("existing_application_package"):
                         continue
                     raise ValueError("existing application package has no Drive reference")
-                event_bullets = ["Application package created successfully."]
+                event_bullets = _with_attempt(
+                    ["Application package created successfully."], result.get("attempt"))
                 operations.append(dict({
                     "operation": "append_event",
                     **target,
@@ -431,7 +445,7 @@ def plan_persistence_writes(workflow_name, context, agent_results):
                 "operation": "append_event",
                 "application_id": application_id,
                 "event_type": "reconciliation_completed",
-                "data": {"bullets": bullets, "source": "reconciliation workflow"},
+                "data": {"bullets": _with_attempt(bullets, result.get("attempt") if isinstance(result, dict) else None), "source": "reconciliation workflow"},
                 "idempotency_key": _idempotency_key(context, "reconciliation-event"),
             })
             target = result.get("target_status")
@@ -471,6 +485,8 @@ def execute_persistence_writes(operations, persistence_client, dry_run=True):
                 data=operation.get("data"),
                 idempotency_key=operation.get("idempotency_key"),
             )
+            if result is None or (isinstance(result, dict) and result.get('capacity_exhausted')):
+                break
             results.append(result)
             if isinstance(result, dict):
                 application_id = result.get("application_id")
@@ -498,11 +514,19 @@ def execute_persistence_writes(operations, persistence_client, dry_run=True):
             reference = ("https://drive.google.com/file/d/{}/view".format(drive_file_id)
                          if drive_file_id and not str(drive_file_id).startswith("memory://")
                          else "artifact://{}".format(artifact_id))
-            event = persistence_client.append_event(
-                operation["application_id"], "posting_content_saved",
-                {"bullets": ["Posting content: {}".format(reference)], "source": "read-posting agent"},
-                idem_key + "-event")
-            results.append(event)
+            # The bookmark transition is the only journal event. Its date
+            # heading carries the saved-content link with the other bullets.
+            note = "Posting content: {}".format(reference)
+            for later in operations:
+                if later.get("operation") != "transition" or later.get("application_id") != operation["application_id"]:
+                    continue
+                data = later.setdefault("data", {})
+                bullets = [str(item) for item in (data.get("bullets") or []) if str(item).strip()]
+                if note not in bullets:
+                    model_at = next((index for index, line in enumerate(bullets) if line.startswith("Model:")), len(bullets))
+                    bullets.insert(model_at, note)
+                data["bullets"] = bullets
+                break
             continue
         if operation["operation"] == "generate_and_store_artifact":
             resume_pdf = None
@@ -544,6 +568,11 @@ def execute_persistence_writes(operations, persistence_client, dry_run=True):
                 result = application
             results.append(result)
             continue
+        if operation["operation"] == "complete_application":
+            result = persistence_client.complete_application(
+                operation["application_id"], operation["reason"])
+            results.append(result)
+            continue
         if operation["operation"] == "transition":
             result = persistence_client.transition(
                 operation["application_id"],
@@ -578,9 +607,12 @@ def execute_persistence_writes(operations, persistence_client, dry_run=True):
             if not reference:
                 raise ValueError("application package event requires a stored artifact")
             event_data.pop("artifact_reference", None)
-            event_data["bullets"] = list(event_data.get("bullets") or []) + [
-                "Application package: {}".format(reference)
-            ]
+            note = "Application package: {}".format(reference)
+            bullets = list(event_data.get("bullets") or [])
+            model_at = next((index for index, line in enumerate(bullets) if str(line).startswith("Model:")), len(bullets))
+            if note not in bullets:
+                bullets.insert(model_at, note)
+            event_data["bullets"] = bullets
         result = persistence_client.append_event(
             operation["application_id"],
             operation["event_type"],

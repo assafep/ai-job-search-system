@@ -1,10 +1,10 @@
-"""Redraw queue counts in place by polling the persistence API."""
+"""Redraw queue counts in place by polling the Application Service."""
 
 import argparse
 import sys
 from time import sleep
 
-from persistence_api.journal_format import ALL_STATES
+from application_service.journal_format import ALL_STATES
 
 
 def queue_lines(counts, error=None):
@@ -55,8 +55,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.interval <= 0:
         raise ValueError('interval must be positive')
-    from .persistence_client import PersistenceApiClient
-    client = PersistenceApiClient()
+    from .application_service_client import ApplicationServiceClient
+    client = ApplicationServiceClient()
     try:
         watch(client.queue_counts, interval=args.interval)
     except KeyboardInterrupt:

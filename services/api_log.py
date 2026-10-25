@@ -1,4 +1,4 @@
-"""Optional request log for the persistence API.
+"""Optional request log for the Application Service.
 
 Disabled unless runtime configuration or the environment turns it on. Nothing
 from this log is written to the terminal.

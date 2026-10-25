@@ -1,6 +1,8 @@
 name: bookmark-discovered
 trigger:
-  type: queued_application
+  type: polling
+  cadence: minute
+  poll_kind: queue
   event_type: read_posting_schedule
 agent: read-posting
 input_states:

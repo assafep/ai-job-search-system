@@ -4,7 +4,7 @@ import argparse
 import json
 import sys
 
-from .persistence_client import PersistenceApiClient, PersistenceApiError
+from .application_service_client import ApplicationServiceClient, ApplicationServiceError
 
 
 def main(argv=None, client=None):
@@ -20,7 +20,7 @@ def main(argv=None, client=None):
         help="perform the explicit repair; without this flag only report what is missing",
     )
     args = parser.parse_args(argv)
-    client = client or PersistenceApiClient()
+    client = client or ApplicationServiceClient()
     try:
         if args.command == "status":
             result = client.journal_status()
@@ -35,7 +35,7 @@ def main(argv=None, client=None):
                 {"operation": "add_top_level_state_tab", "title": state}
                 for state in result.get("missing_states", [])
             ]
-    except PersistenceApiError as exc:
+    except ApplicationServiceError as exc:
         print(json.dumps({"valid": False, "error": str(exc)}, indent=2))
         return 1
     print(json.dumps(result, indent=2, ensure_ascii=False))

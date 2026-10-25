@@ -49,7 +49,7 @@ def test_validate_match_creates_event_and_transition():
             "workload_id": "validate-1",
             "application_id": "app-1",
         },
-        {"score": {
+        {"validate": {
             "company": "Example",
             "role": "Backend Engineer",
             "posting_url": "https://example.test/job",
@@ -57,11 +57,10 @@ def test_validate_match_creates_event_and_transition():
             "relevance_evidence": ["backend", "senior"],
         }},
     )
-    assert operations[0]["operation"] == "append_event"
-    assert operations[0]["event_type"] == "posting_validated"
+    assert len(operations) == 1
+    assert operations[0]["operation"] == "transition"
+    assert operations[0]["target"] == "Validated"
     assert "Validated: strong match for applicant" in operations[0]["data"]["bullets"]
-    assert operations[1]["operation"] == "transition"
-    assert operations[1]["target"] == "Validated"
 
 
 def test_validate_decline_creates_event_and_transition():
@@ -71,7 +70,7 @@ def test_validate_decline_creates_event_and_transition():
             "workload_id": "validate-1",
             "application_id": "app-1",
         },
-        {"score": {
+        {"validate": {
             "company": "Example",
             "role": "Backend Engineer",
             "posting_url": "https://example.test/job",
@@ -82,8 +81,8 @@ def test_validate_decline_creates_event_and_transition():
     assert operations[0]["operation"] == "append_event"
     assert operations[0]["event_type"] == "posting_invalidated"
     assert "Invalidated: Not enough experience" in operations[0]["data"]["bullets"]
-    assert operations[1]["operation"] == "transition"
-    assert operations[1]["target"] == "Invalidated"
+    assert operations[1]["operation"] == "complete_application"
+    assert operations[1]["reason"] == "invalidated"
 
 
 def test_discovery_filters_by_location_match():

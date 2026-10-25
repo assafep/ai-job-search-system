@@ -16,7 +16,7 @@ import sys
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 AGENTS = {
     "read-posting": "agents/read-posting",
-    "score": "agents/score",
+    "validate": "agents/validate",
     "application": "agents/application",
     "interview-prep": "agents/interview-prep",
     "correspondence": "agents/correspondence",

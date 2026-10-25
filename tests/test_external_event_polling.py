@@ -65,6 +65,9 @@ def test_ambiguous_application_matches_are_not_guessed():
             {'company': 'Example', 'role': 'Frontend', 'application_id': 'two'}]
     assert matching_application('Example interview', apps) is None
     assert matching_application('Example Backend interview', apps)['application_id'] == 'one'
+    assert matching_application('Personetics <jobs@personetics.example>\nThanks for applying', [
+        {'company': 'Personetics', 'role': 'Senior Backend Engineer', 'application_id': 'personetics'},
+    ])['application_id'] == 'personetics'
     assert matching_application('Examples interview', apps) is None
 
 
@@ -73,6 +76,33 @@ class Persistence:
     def list_applications(self):
         return [{'company': 'Example', 'role': 'Backend', 'application_id': 'app', 'status': 'Applied'}]
     def store_file(self, path, content, mime, key): self.saved[path] = json.loads(content)
+
+
+def test_poll_queues_apply_confirmations_and_rejections():
+    seen = {}
+
+    class Source:
+        def gmail(self, companies):
+            seen['companies'] = list(companies)
+            return [
+                {'message_id': 'yes', 'subject': 'We received your application', 'body': 'Example Backend'},
+                {'message_id': 'no', 'subject': 'Example Backend', 'body': 'We regret to inform you that you were not selected'},
+                {'message_id': 'ads', 'subject': 'Example newsletter', 'body': 'Promotion'},
+            ], False
+        def calendar(self):
+            return [], False
+
+    class OpenPersistence(Persistence):
+        def list_applications(self):
+            return [
+                {'company': 'Example', 'role': 'Backend', 'application_id': 'prep', 'status': 'Prepared'},
+                {'company': 'Other', 'role': 'Role', 'application_id': 'done', 'status': 'Rejected'},
+            ]
+
+    result = poll(OpenPersistence(), WorkloadRegistry(), Source())
+    assert seen['companies'] == ['Example']
+    assert result['handle-incoming-email']['queued'] == 2
+    assert result['handle-incoming-email']['unmatched_or_ambiguous'] == 1
 
 
 def test_poll_routes_real_events_and_repoll_is_idempotent():

@@ -1,7 +1,7 @@
 """Deterministic generation of the combined application PDF.
 
 The generator returns bytes and does not write to Drive. A workload must send
-those bytes to the persistence API's artifact endpoint.
+those bytes to the Application Service's artifact endpoint.
 """
 
 import html

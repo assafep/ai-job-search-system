@@ -1,7 +1,7 @@
 import json
 from dataclasses import asdict
 
-from persistence_api.repository import MemoryRepository
+from application_service.repository import MemoryRepository
 from services.event_dispatcher import dispatch
 from services.workload_registry import WorkloadRegistry
 from services import system_run
@@ -49,13 +49,14 @@ def test_system_run_submits_ready_snapshot_and_persists_complete_report(monkeypa
     monkeypatch.setattr(system_run, 'ReadySubmission', Submission)
     monkeypatch.setattr(system_run, 'AutomationDaemon', Daemon)
     monkeypatch.setattr(system_run, 'emit', lambda result: None)
-    monkeypatch.setattr('services.external_event_polling.poll', lambda p, r: {
+    monkeypatch.setattr('services.external_event_polling.poll', lambda p, r, complete=None: {
         'handle-incoming-email': {'status': 'ok'}, 'prepare-interview': {'status': 'ok'}})
     result = system_run.run(Persistence(), registry, Runtime(), lambda p, c: {})
     assert observed_submissions == [initial.application_id]
     assert result['initial_ready_processed'] == 1
     assert result['initial_ready_final_states'][0]['status'] == 'Manual Apply Required'
-    assert set(result['workload_counts']) == {'submit-prepared', 'reconcile', 'discover', 'prepare-validated'}
+    assert set(result['workload_counts']) == {
+        'submit-prepared', 'reconcile', 'discover', 'prepare-validated', 'renew-gmail-grant', 'identify-ghosting', 'complete-journal'}
     saved = json.loads(next(iter(repository.files.values()))['content'])
     assert saved['finished_at']
     assert saved['initial_ready_applications'][0]['application_id'] == initial.application_id

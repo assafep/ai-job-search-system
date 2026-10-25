@@ -1,14 +1,14 @@
 # Job Search Automation
 
-This project scaffolds an automated job-search system around four independent
-workflows. The workflows are autonomous and event-driven, but their agents are
+This project implements an automated job-search system with time-driven polling
+workflows. The workflows are autonomous, and their agents are
 stateless and side-effect free. A workload instance gathers context, asks an
-agent for a structured decision, and applies the decision through the data-layer
-API.
+agent for a structured decision, and applies the decision through the
+Application Service.
 
 ## Overview
 
-The system runs four independent, event-driven workflows:
+The system polls queues and external sources to run these workflow groups:
 
 1. **Job discovery** — scheduled scans of job boards. Matches are saved as `Bookmarked`.
 2. **Preparation** — each bookmarked posting receives a personalized cover letter and resume PDF. Successful packages move to `Prepared`.
@@ -21,13 +21,46 @@ Each application follows this lifecycle:
 Bookmarked → Prepared → Applied → Interviewing → Offer / Rejected
 ```
 
-State changes are recorded in a Google Docs journal. All mutations go through the persistence API — agents never touch external systems directly.
+All application-state mutations go through the Application Service; workflow agents never touch external systems directly. The current persistence implementation records state changes in a Google Docs journal. See [Architecture](#architecture) for the target component model.
+
+Automatic interview preparation polls Calendar once every 24 hours by default
+(`prepare-interview`, `cadence: day`). Other workflows retain minute polling.
+The continuous scheduler checks due work on its shared 60-second clock;
+`poll_kind` distinguishes state queues, external sources, and scheduled checks.
+Set `pipelines.interview.event_poll_seconds` in `config/pipelines.json` to override
+the daily default (86400 seconds). The first poll runs when the scheduler starts;
+its timer resets on scheduler restart. This is an elapsed interval, not a fixed
+local time of day. Explicit CLI and ChatGPT workflow requests still run on demand.
+
+The continuous orchestrator admits work only when a thread is free in its shared pool and a
+workflow has an available configured worker. It never queues tasks behind a
+full pool. Running work is harvested between polls, but newly freed slots wait
+until the next minute. Email, calendar, and maintenance checks use that pool too.
+The legacy daemon's continuous mode delegates to this same orchestrator.
+
+Discovery counts **all tabs in the main journal**, including state and research
+tabs. Its maximum new postings for that poll is `max(0, 100 - tab_count)`. That
+budget is divided among available discovery workers, passed to source queries,
+and checked again before each save. The Application Service enforces the same
+limit under its installation lock, so concurrent discovery cannot exceed the
+remaining capacity. At 100 or more tabs, discovery makes no source requests.
+
+Scheduled checks use minute-based IDs shared across runners and restarts.
+A queued or running check is reused rather than adding a backlog of minute ticks.
+Internal event envelopes carry found work to workers; external messages and
+calendar changes are discovered by polling. Live reconciliation does not reset
+active workers.
+
+Journal completion uses `POST /journal/complete-terminal`; the Application
+Service owns completion and removal of terminal journal tabs. Agents remain
+stateless and application-state writes remain behind that API.
 
 ## First run
 
 1. **Install dependencies** — `python3 -m pip install -r requirements.txt`
 2. **Configure the system** — run `python3 -m services.onboarding` if `config/runtime.json` is missing
-3. **Authenticate** — run `codex --login` for the default LLM provider; set Google OAuth credentials in your environment
+3. **Provision infrastructure** — see [deployment/README.md](deployment/README.md). Drive root: `./deployment/ctl.sh drive` (the folder is `drive_path` in `deployment/defaults.json`)
+4. **Authenticate** — run `codex --login` for the default LLM provider
 
 Once configured, you can:
 
@@ -38,13 +71,27 @@ Once configured, you can:
 
 For detailed operational reference, see [Running the system](#running-the-system) below.
 
+## Connect through MCP
+
+The Application Service exposes **`https://ajss-one.vercel.app/mcp`** over
+Streamable HTTP. Remote MCP clients can connect with OAuth; the owner authorizes
+on the AJSS consent page using the existing service token. The tools mirror the
+OpenAPI domain operations and include reads and writes. Start with the read-only
+`journalQueueCounts` tool. MCP access does not start workflow workers.
+
+`./deployment/ctl.sh chatgpt` verifies the endpoint and generates private
+connection files. `./deployment/ctl.sh codex` registers the local stdio launcher
+in the host's Codex CLI. See the [endpoint reference](application_service/README.md#mcp-endpoint)
+for authentication and tool arguments, and the [deployment guide](deployment/README.md#mcp-connections)
+for connection commands and provisioning behavior.
+
 ## Running the system
 
 ### Queue runners
 
 **Bookmark workflow** — `python3 -m services.run_single Discovered` processes one position from the `Discovered` queue through the bookmark workflow. Add `--all` to process all positions. For a specific application: `--application-id <id>`. To read a posting URL without any workflow: `python3 -m services.agent_cli read-posting --url https://...`.
 
-The bookmark workflow extracts the posting content and saves it as a `Job Posting - Company - Role.json` artifact. Preparation reads that saved artifact through the persistence API; missing or mismatched content stops preparation rather than re-fetching.
+The bookmark workflow extracts the posting content and saves it as a `Job Posting - Company - Role.json` artifact. Preparation reads that saved artifact through the Application Service; missing or mismatched content stops preparation rather than re-fetching.
 
 **Single ready submission** — Process one `Prepared` position:
 ```bash
@@ -61,19 +108,19 @@ python3 -m services.ready_submission --application-id <application_id>
 
 **Duplicates** — Scout and preparation send duplicates of Applied, Interviewing, Rejected, or Offer postings to `Duplicate`. Moving to Applied or Rejected also retires matching items in Discovered, Bookmarked, Ready, or Manual Apply. The journal needs a top-level `Duplicate` tab for these moves.
 
-**Single-process runner** — Start the persistence API and pipelines in one process:
+**Single-process runner** — Start the Application Service and pipelines in one process:
 ```bash
 python3 -m services.run --monitor --log --log-file activity.log --workers scout=2 --workers preparation=4 --workers auto-apply=1
 ```
-`--monitor` redraws queue counts once a second. `--log` toggles the activity log. Flags override `config/runtime.json`. Stop any older `persistence_api.main` first.
+`--monitor` redraws queue counts once a second. `--log` toggles the activity log. Flags override `config/runtime.json`. Stop any older `application_service.main` first.
 
 **Queue monitor** — `python3 -m services.queue_monitor` and `python3 -m services.orchestrator monitor` redraw counts against an already-listening API.
 
 ### Logging
 
-**Activity log** — Off by default. Enable via `activity_log` in `config/runtime.json` (set `enabled` and `path`), or environment variables `ACTIVITY_LOG_ENABLED` and `ACTIVITY_LOG_FILE`. Records every state transition and worker start/finish. The persistence API reads this at startup — restart it after enabling.
+**Activity log** — Off by default. Enable via `activity_log` in `config/runtime.json` (set `enabled` and `path`), or environment variables `ACTIVITY_LOG_ENABLED` and `ACTIVITY_LOG_FILE`. Records every state transition and worker start/finish. The Application Service reads this at startup — restart it after enabling.
 
-**API log** — Separate file, off by default. Configure via `api_log` in `config/runtime.json` or `API_LOG_ENABLED` and `API_LOG_FILE`. Default path is `logs/persistence-api.log`.
+**API log** — Separate file, off by default. Configure via `api_log` in `config/runtime.json` or `API_LOG_ENABLED` and `API_LOG_FILE`. Default path is `logs/application-service.log`.
 
 ### Submission
 
@@ -113,13 +160,13 @@ python3 -m services.run --monitor --log --log-file activity.log --workers scout=
 
 ### A. Job discovery and application
 
-Trigger: scheduled, every few hours or daily.
+Trigger: polling, once a minute when a worker is available.
 
 ```text
 discover jobs
   → normalize postings
   → deduplicate
-  → score against preferences
+  → validate against preferences
   → personalize application
   → generate PDF
   → submit automatically from the ready queue
@@ -154,7 +201,7 @@ match email thread
 
 ### D. Reconciliation and recovery
 
-Trigger: independent daily schedule.
+Trigger: polling, once a minute when a worker is available.
 
 ```text
 recheck missed events
@@ -187,7 +234,10 @@ are not part of this initial documented lifecycle.
 
 ### Persistence representation
 
-The Interview Journal is the canonical application state store:
+In the current Google Docs persistence implementation, the Interview Journal is
+the canonical application state store. The target architecture separates incomplete
+applications in Google Docs from completed applications in PostgreSQL, as shown
+in [Architecture](#architecture). The current journal represents applications as follows:
 
 - top-level tabs are the seven states listed above;
 - each application is a child tab under the state that currently contains it;
@@ -195,15 +245,15 @@ The Interview Journal is the canonical application state store:
 - the tab title is the human-readable company / role label;
 - each event is a date paragraph followed by one or more bullet paragraphs;
 - manual and automated events use the same journal format;
-- URLs written by the persistence API are native Google Docs hyperlinks;
+- URLs written by the Application Service are native Google Docs hyperlinks;
 - nested Research tabs remain children of the application tab and are treated as
   research artifacts, not separate applications;
 - moving an application to another state updates the parent tab and appends a
   dated status-change event;
 - artifact references are appended to the application journal after files are
-  saved under one single-level folder named `Company / Role`. By default it is
-  directly below the configured Drive root; `application_root_path` may place
-  all such folders below a root-relative parent such as `applications/`.
+  saved under one single-level folder named `Company / Role` inside
+  `{Drive root}/Applications`. `application_root_path` can select a different
+  root-relative parent.
   Company and role are not nested folders.
 - posting URLs are canonicalized for deduplication: scheme/host casing,
   trailing slashes, fragments, and common tracking parameters do not create a
@@ -220,25 +270,72 @@ journal event.
 
 ## Architecture
 
+See [workflow execution diagrams](docs/architecture.md) for the current deployment
+and the proposed Vercel/ChatGPT execution split.
+
+The target architecture separates workflow execution and ad hoc AI operations
+from the backend that owns application state:
+
+```mermaid
+flowchart TB
+    subgraph Clients["Execution and interaction"]
+        Runner["AJSS Workflow Runner<br/>Local · ChatGPT · Cloud process/container"]
+        AI["AI Operations Client<br/>ChatGPT or another LLM agent<br/>AJSS skill + API token"]
+    end
+
+    Service["Application Service<br/>Authenticated API · Vercel Functions or container<br/>Validation · State transitions"]
+
+    subgraph Persistence["Persistence"]
+        Postgres[("Completed Applications Store<br/>PostgreSQL")]
+        Docs["Application Drafts Document<br/>Google Docs"]
+    end
+
+    Runner <-->|"Workflow reads and updates"| Service
+    AI <-->|"Ad hoc operations"| Service
+    Service <-->|"Completed applications"| Postgres
+    Service <-->|"Incomplete applications"| Docs
+```
+
+| Component | Responsibility |
+| --- | --- |
+| **AJSS Workflow Runner** | Executes time-driven polling workflows and reads or updates state through the backend API. Runs locally, within ChatGPT, or on a separately selected cloud process/container host. |
+| **AI Operations Client** | Uses an AJSS skill and API token to perform ad hoc operations through the backend API. |
+| **Application Service** | The system of record in front of Google Drive and PostgreSQL. It validates operations, manages state transitions, and is the only component that writes application state. Vercel Functions is the default cloud target. |
+| **Completed Applications Store** | Stores completed applications in PostgreSQL. |
+| **Application Drafts Document** | Stores incomplete applications in Google Docs. |
+
+ChatGPT can host the Workflow Runner and act as an AI Operations Client; these
+are distinct roles that can share an environment. Both roles access application
+state through the Application Service, which owns all application-state mutations.
+Workflow agents remain stateless decision-makers within the runner.
+
+The diagram describes the target architecture. The current implementation uses
+Google Docs for application state, including an optional separate completed
+applications document; the PostgreSQL store is planned. Application artifacts
+remain in Google Drive behind the API.
+
+### Workflow execution flow
+
 ```text
 event source
   → event dispatcher
-    → workflow runtime
-    → stateless agent
-      → structured decision
-        → data-layer API
-          → Google Drive / Docs and other adapters
+    → AJSS Workflow Runner
+      → stateless agent
+        → structured decision
+      → Application Service
+        → Google Drive and PostgreSQL
 ```
 
 The API contract is portable. Skills, prompts, and `AGENTS.md` files explain
 how a particular agent runtime should use it; they are not the source of truth.
-The deployable [`skills/persistence-api/SKILL.md`](skills/persistence-api/SKILL.md)
+The deployable [`skills/application-service/SKILL.md`](skills/application-service/SKILL.md)
 contains the operational boundary and usage rules for runtimes that support
 skills. The OpenAPI contract remains authoritative for request and response
 shapes.
+
 ### Runtime flow
 
-Workflow runtimes should use `services.persistence_client.PersistenceApiClient`
+Workflow runtimes should use `services.application_service_client.ApplicationServiceClient`
 for reads and writes. This keeps the Google Drive implementation behind the
 HTTP persistence boundary and prevents agents from acquiring external-system
 access.
@@ -247,7 +344,7 @@ During discovery and application execution:
 
 - The runtime passes discovery results between stateless agents as serialized
   context.
-- Package writes go through the persistence API.
+- Package writes go through the Application Service.
 - Agents never hold a Drive client.
 
 ### Workload execution
@@ -261,7 +358,7 @@ It also handles workflow-specific artifact preparation:
 
 - When an application context includes `cv_html`, it plans a combined PDF
   artifact operation.
-- Only execution mode sends generated bytes to the persistence API.
+- Only execution mode sends generated bytes to the Application Service.
 - When `calendly_url` is present, the document generator adds that scheduling
   link to the cover letter exactly once.
 
@@ -280,7 +377,7 @@ When a reconciliation workload is claimed:
 - Interrupted workloads return to `queued` until their retry limit is reached.
 - An application reconciliation result can append a dated
   `reconciliation_completed` event and apply an explicitly supplied target
-  status through the persistence API.
+  status through the Application Service.
 - The runtime returns registry counts and queued, failed, or dead-letter
   records requiring attention.
 - When approval persistence is enabled, the result includes pending approval
@@ -288,7 +385,7 @@ When a reconciliation workload is claimed:
 
 ### API, adapter, agent, and skill boundaries
 
-- The persistence API is the stable domain contract in `openapi.yaml`; it owns
+- The Application Service is the stable domain contract in `openapi.yaml`; it owns
   application-state and artifact mutations.
 - An adapter/tool is an integration with an external system such as Google
   Drive, Gmail, Calendar, a job board, or a browser. Adapters normalize inputs
@@ -336,7 +433,7 @@ Equivalent shortcuts are available through `make test`, `make list`,
 Run `make verify` for the complete local contract, compilation, dry-run, and
 Compose configuration check.
 
-Inspect the configured journal through the persistence API with
+Inspect the configured journal through the Application Service with
 `python3 -m services.journal_cli status`. A missing state tab can be created
 only through the explicit `python3 -m services.journal_cli repair --apply`
 command; duplicate tabs are reported for manual review.
@@ -348,7 +445,7 @@ agents would be invoked and which persistence actions are proposed. See
 
 `--execute` is an explicit opt-in for applying persistence operations. It
 requires complete results for every agent in the selected workflow, completed
-onboarding, and a running persistence API; ordinary test
+onboarding, and a running Application Service; ordinary test
 drives remain side-effect free. If execute mode is used before onboarding, the
 runner stops without side effects and prints the onboarding command.
 
@@ -366,7 +463,7 @@ local coding agent named by `CODING_AGENT` or `scout.coding_agent` in
 the model. Set `CODING_AGENT_MODEL` only to override the agent's own default.
 The launcher does not send `XAI_API_KEY`. `DISCOVERY_PROVIDER` can replace it
 with another provider module. Then run
-`python3 -m services.worker_main --poll-seconds 30` (or add `--once` for a
+`python3 -m services.worker_main --poll-seconds 60` (or add `--once` for a
 single drain; `--limit N` bounds a one-shot drain). The provider is injected at the process boundary; it does not
 receive Drive, mail, calendar, browser, or persistence clients.
 
@@ -375,7 +472,7 @@ storage failures route to `Dead Letters Queue`, retaining the failure explanatio
 Ordinary application blockers go to `Manual Apply Required`; an unconfirmed
 submission always needs manual reconciliation. Dead letters are never consumed
 automatically. Restore the appropriate source queue explicitly after fixing the
-cause. For an existing journal, restart the persistence API with the new code and
+cause. For an existing journal, restart the Application Service with the new code and
 run `python3 -m services.journal_cli migrate-application-states --apply` to add the
 dead-letter tab without changing existing positions or history.
 
@@ -385,7 +482,7 @@ worker so queued workloads survive process restarts:
 ```bash
 export WORKLOAD_REGISTRY_PATH="$PWD/config/workloads.json"
 source .env
-python3 -m services.worker_main --poll-seconds 30
+python3 -m services.worker_main --poll-seconds 60
 ```
 
 High-impact external actions are evaluated by `services.approval_service` against
@@ -406,13 +503,13 @@ operator to onboarding. `services.workflow_runtime` is the current one-workload
 entrypoint; it can consume captured agent results or invoke agents through an
 injected provider.
 
-The persistence API can be run locally or with Docker Compose:
+The Application Service can be run locally or with Docker Compose:
 
 ```bash
-docker compose up --build persistence-api
+docker compose up --build application-service
 ```
 
-Set `PERSISTENCE_API_TOKEN` in deployments to require bearer authentication on
+Set `APPLICATION_SERVICE_TOKEN` in deployments to require bearer authentication on
 all state endpoints; `/health` remains the public liveness probe and `/ready`
 is the public persistence-readiness probe. If unset, the API is intentionally
 unauthenticated for local development.
@@ -432,7 +529,12 @@ adapters/     Google, Gmail, Calendar, browser, LLM integrations
 services/     API, onboarding, approvals, generation, dispatch
 templates/    cover-letter, CV, and briefing templates
 schemas/      shared domain schemas
-skills/       portable runtime instructions for the persistence API
+skills/       portable runtime instructions for the Application Service
 tests/        contract and workflow tests
 deployment/   deployment manifests and container materials
 ```
+
+## Run workflows from ChatGPT
+
+See [ChatGPT workflow execution](deployment/chatgpt-workflows.md) for the MCP workflow tools,
+durable background worker, scoped requests, PDF reports, and reconciliation.

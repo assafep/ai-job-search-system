@@ -4,7 +4,7 @@ This is the single entry point for extracting structured posting data from
 agent output. It handles the read-posting agent (flat format).
 """
 
-from persistence_api.journal_format import normalize_posting_url
+from application_service.journal_format import normalize_posting_url
 
 
 MIN_DESCRIPTION = 500
@@ -12,6 +12,16 @@ MIN_DESCRIPTION = 500
 
 class PostingReadFailure(ValueError):
     """The model reported an ordinary failure to read the posting page."""
+
+    def __init__(self, message, attempt=None):
+        super().__init__(message)
+        self.attempt = attempt or {}
+
+
+def bookmark_attempt_lines(attempt):
+    """Same five lines as every other workflow outcome."""
+    from .event_attempt import attempt_lines
+    return attempt_lines(attempt)
 
 
 def posting_from_model(posting_url, company, role, output):

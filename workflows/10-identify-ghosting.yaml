@@ -1,0 +1,16 @@
+name: identify-ghosting
+trigger:
+  type: polling
+  cadence: minute
+  poll_kind: scheduled
+  event_type: ghosting_schedule
+agent: null
+input_states:
+  - Applied
+  - Interviewing
+external_actions: []
+outcomes:
+  ghosted: null
+  expired: null
+  system_error: Dead Letters Queue
+side_effects: through_completion_api

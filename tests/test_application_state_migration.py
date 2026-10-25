@@ -1,8 +1,8 @@
 import pytest
 
-from persistence_api.google_docs_repository import GoogleDocsRepository
-from persistence_api.journal_format import STATE_TABS
-from persistence_api.state_machine import validate_transition
+from application_service.google_docs_repository import GoogleDocsRepository
+from application_service.journal_format import STATE_TABS
+from application_service.state_machine import validate_transition
 from tests.test_google_docs_repository import tab
 
 

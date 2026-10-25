@@ -2,7 +2,7 @@
 
 Initial ready IDs are snapshotted before any discovery/preparation. Ready queue
 membership authorizes submission for initial and newly prepared items.
-Event-driven email/calendar workloads run only when real events are queued.
+Email/calendar polls admit work only when matching messages or events are found.
 """
 
 import argparse
@@ -11,10 +11,10 @@ from collections import Counter
 from datetime import datetime, timezone
 
 from adapters.llm.codex_provider import provider
-from persistence_api.storage_layout import workload_state_path
+from application_service.storage_layout import workload_state_path
 from .automation_daemon import AutomationDaemon
-from .event_dispatcher import dispatch
-from .persistence_client import PersistenceApiClient
+from .polling import enqueue_scheduled, maintenance_names
+from .application_service_client import ApplicationServiceClient
 from .ready_submission import ReadySubmission
 from .report_checkpoint import ReportCheckpoint
 from .runtime_config import load
@@ -51,17 +51,25 @@ def run(persistence, registry, runtime, agent_provider):
         emit(outcomes[-1])
         checkpoint.save()
 
-    reconciliation = dispatch('reconciliation_schedule', {}, 'system-run-' + run_id, registry)
-    # Real recovery tick runs before queued email/calendar/preparation work.
-    outcomes.append(runtime.run(reconciliation['workload_id'], agent_provider=agent_provider))
+    scheduled = enqueue_scheduled(registry, names=maintenance_names())
+    # Recovery precedes new work; minute-bucket identity is shared with the daemon.
+    reconciliation = next(item for item in scheduled if item['workflow'] == 'reconcile')
+    if registry.get(reconciliation['workload_id']).status in {'queued', 'failed'}:
+        outcomes.append(runtime.run(reconciliation['workload_id'], agent_provider=agent_provider))
     from .external_event_polling import poll
-    report['external_event_polling'] = poll(persistence, registry)
+    complete = getattr(persistence, 'complete_application', None)
+    report['external_event_polling'] = poll(persistence, registry, complete=complete)
     emit({'activity': 'external_event_polling', 'sources': report['external_event_polling']})
-    discovery = dispatch('job_discovery_schedule', {'source_names': ['freehire'], 'results_per_page': 20},
-                         'system-run-discovery-' + run_id, registry)
+    enqueue_scheduled(registry, names=['discover'], payloads={
+        'discover': {'source_names': ['freehire'], 'results_per_page': 20}})
+
+    attempted = set()
 
     def drain():
         for record in list(registry.pending()):
+            if record.workload_id in attempted:
+                continue
+            attempted.add(record.workload_id)
             emit({'workflow': record.workflow, 'workload_id': record.workload_id, 'activity': 'starting'})
             try:
                 result = runtime.run(record.workload_id, agent_provider=agent_provider)
@@ -73,8 +81,11 @@ def run(persistence, registry, runtime, agent_provider):
             checkpoint.save()
 
     drain()
-    daemon.enqueue_bookmark_preparation()
-    drain()
+    while True:
+        daemon.enqueue_bookmark_preparation()
+        if not any(record.workload_id not in attempted for record in registry.pending()):
+            break
+        drain()
     daemon.enqueue_ready_submission()
     drain()
     report['finished_at'] = datetime.now(timezone.utc).isoformat()
@@ -101,7 +112,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     args = parser.parse_args(argv)
     load(require=True)
-    persistence = PersistenceApiClient()
+    persistence = ApplicationServiceClient()
     if not persistence.journal_status()['valid']:
         raise ValueError('journal lifecycle migration/validation must succeed before the live run')
     registry = registry_from_environment()

@@ -4,9 +4,18 @@ config/workloads.json
 config/approvals.json
 config/*.tmp
 config/*.lock
+.venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .env
 node_modules/
+.onboarding/
+.vercel/
 config/browser-sessions/
+
+# Workstation state and generated verification artifacts
+.idea/
+logs/
+config/orchestrator-status.json
+deployment/*verification.pdf

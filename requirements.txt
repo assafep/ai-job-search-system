@@ -1,3 +1,5 @@
-reportlab==3.6.13
+reportlab==5.1.0
 pypdf==3.17.4
 phonenumbers==8.13.55
+
+-r requirements-mcp.txt

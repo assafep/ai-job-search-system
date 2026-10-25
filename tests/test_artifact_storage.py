@@ -1,4 +1,4 @@
-from persistence_api.repository import MemoryRepository
+from application_service.repository import MemoryRepository
 
 
 def test_memory_artifact_storage_keeps_bytes_and_metadata():

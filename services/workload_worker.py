@@ -30,7 +30,7 @@ class WorkloadWorker:
                 })
         return results
 
-    def run_forever(self, poll_seconds=30, stop_event=None):
+    def run_forever(self, poll_seconds=60, stop_event=None):
         """Poll until ``stop_event`` is set; suitable for a scheduler process."""
         if not isinstance(poll_seconds, (int, float)) or isinstance(poll_seconds, bool) or poll_seconds < 0:
             raise ValueError("poll_seconds must be a non-negative number")

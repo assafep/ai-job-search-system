@@ -72,7 +72,7 @@ def validate(config):
     if not isinstance(application_root_path, str):
         raise ValueError("google_drive.application_root_path must be a relative path")
     if application_root_path:
-        from persistence_api.file_paths import normalize_file_path
+        from application_service.file_paths import normalize_file_path
         try:
             normalize_file_path(application_root_path)
         except ValueError:
@@ -93,6 +93,16 @@ def validate(config):
     for key in ('coding_agent', 'model'):
         if key in scout and (not isinstance(scout[key], str) or not scout[key].strip()):
             raise ValueError('scout.' + key + ' must be a non-empty string')
+    bookmark = config.get('bookmark-discovered')
+    if bookmark is not None:
+        if not isinstance(bookmark, dict):
+            raise ValueError('bookmark-discovered configuration must be an object')
+        for key in ('coding_agent', 'model'):
+            value = bookmark.get(key)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError('bookmark-discovered.' + key + ' must be a non-empty string')
+        if bookmark.get('effort') not in {'low', 'medium', 'high', 'xhigh'}:
+            raise ValueError('bookmark-discovered.effort must be low, medium, high, or xhigh')
 
 
 def _optional_log(config, name):

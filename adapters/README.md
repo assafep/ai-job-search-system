@@ -12,5 +12,5 @@ They may instead pass the complete normalized object to
 Concrete Gmail, Calendar, job-board, browser, and LLM-provider clients remain
 deployment-specific integrations. They may read from or write to their
 assigned external system, but must not mutate application state directly or
-give credentials or clients to agents. The persistence API remains the only
+give credentials or clients to agents. The Application Service remains the only
 owner of application-state and Drive mutations.

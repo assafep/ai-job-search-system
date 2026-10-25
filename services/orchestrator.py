@@ -14,22 +14,23 @@ from datetime import datetime, timedelta, timezone
 from threading import Event, Thread, RLock
 from time import monotonic
 
-from persistence_api.journal_format import ALL_STATES, normalize_posting_url
-from persistence_api.state_machine import validate_transition
+from application_service.journal_format import ALL_STATES, normalize_posting_url
+from application_service.state_machine import validate_transition
 from services.activity_log import configure_from_runtime, log_worker
 from services.queue_monitor import paint_queues, watch
 from . import pipeline_config
 from .orchestration_lock import runner_lock
-from .persistence_client import PersistenceApiError
+from .application_service_client import ApplicationServiceError
 from .pipeline_agents import PipelineAgents, plain, read_posting
 from .runtime_config import ROOT, load as load_runtime
 from .workload_registry import WorkloadRegistry
+from .polling import PollingSchedule, enqueue_scheduled, maintenance_names, POLL_SECONDS, discovery_capacity, workflow_poll_seconds
 
 PREFIX = 'pipeline-'
 DEFAULT_STATUS = os.path.join(ROOT, 'config', 'orchestrator-status.json')
 HANDLED_STATUSES = {'Applied', 'Interviewing', 'Rejected', 'Offer'}
 RETIRE_STATUSES = {'Discovered', 'Bookmarked', 'Validated', 'Prepared', 'Manual Apply Required'}
-DUPLICATE_AGENTS = {'read-posting', 'score', 'application'}
+DUPLICATE_AGENTS = {'read-posting', 'validate', 'application'}
 BOOKMARK_OUTCOMES = {'accepted', 'read', 'prepared'}
 
 
@@ -179,14 +180,18 @@ class Orchestrator:
         self.config = pipeline_config.load(config_path)
         self._apply_worker_overrides()
         self.config_error = None
-        self.pool = ThreadPoolExecutor(max_workers=64, thread_name_prefix='pipeline')
+        self.pool_size = 64
+        self.pool = ThreadPoolExecutor(max_workers=self.pool_size, thread_name_prefix='pipeline')
         self.inflight = {}
         self.stop = Event()
         self.monitor = False
-        self.last_scan = self.last_event_poll = self.last_discovery = float('-inf')
+        self.last_scan = float('-inf')
+        self.schedule = PollingSchedule()
         self.applications = []
         self.last_error = None
         self.provider_backoff_until = None
+        self._reopened = set()
+        self._discovery_lock = RLock()
         self._description_lock = RLock()
         self._descriptions = {}
         # Recover checkpoints, not side effects. A submission handler reads its
@@ -252,7 +257,7 @@ class Orchestrator:
                 return cached[1]
             try:
                 description = read_posting(self.persistence, application).get('description')
-            except (ValueError, KeyError, TypeError, PersistenceApiError):
+            except (ValueError, KeyError, TypeError, ApplicationServiceError):
                 # A handled posting that can no longer be read, including a 404
                 # after its journal tab moved, must not fail the posting being
                 # checked. Company, role, and URL matching still run.
@@ -376,11 +381,16 @@ class Orchestrator:
             checkpoint['effects_saved'] = True
             self.registry.checkpoint_result(record.workload_id, checkpoint)
             return self._commit(self.registry.get(record.workload_id))
-        bullets = ['Pipeline: ' + payload['pipeline'], 'Agent: ' + spec['agent'],
-                   'Outcome: ' + result['outcome']] + journal_output(spec['agent'], result['output']) + refs
-        # The agent only returns an outcome. This orchestrator writes the single
-        # journal event. A status change is the last bullet of that event.
+        from .event_attempt import with_attempt
+        bullets = with_attempt(
+            ['Pipeline: ' + payload['pipeline'], 'Agent: ' + spec['agent'],
+             'Outcome: ' + result['outcome']] + journal_output(spec['agent'], result['output']) + refs,
+            result.get('attempt') or (result.get('output') or {}).get('attempt'))
+        # The agent only returns an outcome. transition() prints the one
+        # "{source} --> {target}" bullet for this journal event.
         app = plain(self.persistence.get_application(app_id))
+        if result['outcome'] == 'confirmed' and app['status'] not in {'Prepared', 'Manual Apply Required'}:
+            target = None
         if target and app['status'] in spec['states'] and app['status'] != target:
             validate_transition(app['status'], target)
             app = plain(self.persistence.transition(app_id, target, {
@@ -390,6 +400,13 @@ class Orchestrator:
         else:
             self.persistence.append_event(app_id, 'pipeline_result', {
                 'source': spec['agent'] + ' agent', 'bullets': bullets}, record.workload_id + '-output')
+        if (spec['agent'] == 'validate' and result['outcome'] == 'invalidated'
+                and not checkpoint.get('completion_saved')):
+            self.persistence.complete_application(app_id, 'invalidated')
+            checkpoint['completion_saved'] = True
+            completed = plain(self.persistence.get_application(app_id))
+            if completed:
+                app = completed
         self._finish(record, checkpoint, app)
 
     def _remember_worker(self, payload, application):
@@ -438,7 +455,11 @@ class Orchestrator:
                         return
                     outcome = ('read_failure' if isinstance(error, PostingReadFailure)
                                and payload['spec']['agent'] == 'read-posting' else 'system_error')
-                    result = {'outcome': outcome, 'output': {'error': str(error)}}
+                    output = {'error': str(error)}
+                    attempt = getattr(error, 'attempt', None)
+                    if attempt:
+                        output['attempt'] = attempt
+                    result = {'outcome': outcome, 'output': output}
                 self.registry.checkpoint_result(workload_id, {'value': result})
             else:
                 app = plain(self.persistence.get_application(payload['application_id']))
@@ -453,30 +474,50 @@ class Orchestrator:
             if posting:
                 log_worker(posting[0], posting[1], posting[2], posting[3], 'finished')
 
+    def _free_workers(self):
+        return max(0, self.pool_size - len(self.inflight))
+
+    def _launch_background(self, name, callback):
+        if not self._free_workers() or any(item['pipeline'] == name for item in self.inflight.values()):
+            return False
+        future = self.pool.submit(callback)
+        self.inflight[future] = {'application_id': 'poll-' + name, 'pipeline': name,
+                                 'workload_id': 'poll-' + name, 'worker': 1, 'background': True}
+        return True
+
+    def _poll_maintenance(self, name):
+        from .workflow_runtime import WorkflowRuntime
+        enqueue_scheduled(self.registry, names=[name])
+        runtime = WorkflowRuntime(self.registry, self.persistence)
+        for record in self.registry.pending():
+            if record.workflow == name:
+                runtime.run(record.workload_id, agent_results={}, recover_incomplete=False)
+                break
+
     def _maybe_discover(self):
         """Search each configured source once per cycle in the discovery pool."""
-        interval = self.config.get('discovery_seconds')
-        if not interval:
+        if not self.config.get('discovery_seconds'):
             return
-        workers = self.config.get('discovery_workers', 0)
-        if not workers:
+        workers = min(self.config.get('discovery_workers', 0), self._free_workers())
+        if not workers or any(item.get('discovery') for item in self.inflight.values()):
             return
-        if any(item.get('discovery') for item in self.inflight.values()):
+        capacity = discovery_capacity(self.persistence)
+        self.discovery_max_postings = capacity
+        if not capacity:
             return
-        if monotonic() - self.last_discovery < interval:
-            return
-        self.last_discovery = monotonic()
         sources = self.config.get('discovery_sources') or ['freehire', 'jobicy']
-        for index in range(min(workers, len(sources))):
+        workers = min(workers, len(sources), capacity)
+        for index in range(workers):
             slot = index + 1
             batch = sources[index::workers]
-            future = self.pool.submit(self._run_discovery, slot, batch)
+            budget = capacity // workers + (index < capacity % workers)
+            future = self.pool.submit(self._run_discovery, slot, batch, budget)
             self.inflight[future] = {
                 'application_id': 'discovery-' + str(slot), 'pipeline': 'discovery',
                 'workload_id': 'discovery-' + str(slot), 'worker': slot, 'discovery': True,
             }
 
-    def _collect_postings(self, profile, sources=None):
+    def _collect_postings(self, profile, sources=None, max_postings=None):
         from services.workflow_runtime import WorkflowRuntime
         job_search = profile.get('job_search') if isinstance(profile, dict) else None
         job_search = job_search or {}
@@ -493,7 +534,8 @@ class Orchestrator:
                 'search_terms': terms,
                 'countries': job_search.get('countries') or [],
                 'locations': job_search.get('locations') or [],
-                'results_per_page': 20,
+                'results_per_page': min(20, max_postings) if max_postings is not None else 20,
+                'max_postings': max_postings,
             }
             try:
                 # Terms are already resolved, so a source fetch must not call the model again.
@@ -509,6 +551,8 @@ class Orchestrator:
                     continue
                 seen.add(url)
                 merged.append(dict(posting, posting_url=posting.get('posting_url') or url))
+                if max_postings is not None and len(merged) >= max_postings:
+                    return merged
         if errors and not merged:
             raise RuntimeError('; '.join(errors))
         if errors:
@@ -532,16 +576,20 @@ class Orchestrator:
                 return True
         return False
 
-    def _run_discovery(self, slot, sources=None):
+    def _run_discovery(self, slot, sources=None, max_postings=None):
         from services.workload_executor import execute_persistence_writes, plan_persistence_writes
         log_worker(slot, 'discovery', 'job boards', 'search', 'started')
         try:
+            capacity = discovery_capacity(self.persistence)
+            max_postings = min(capacity, max_postings) if max_postings is not None else capacity
+            if not max_postings:
+                return
             profile = plain(self.persistence.get_profile()) or {}
-            postings = self._collect_postings(profile, sources)
+            postings = self._collect_postings(profile, sources, max_postings)
             if not postings:
                 return
             applications = [plain(app) for app in self.persistence.list_applications() or []]
-            for posting in postings:
+            for posting in postings[:max_postings]:
                 posting_url = posting.get('posting_url', '')
                 if not posting_url:
                     continue
@@ -553,7 +601,10 @@ class Orchestrator:
                 try:
                     operations = plan_persistence_writes(
                         'discover', {'job_postings': [posting], 'applicant_profile': profile}, {})
-                    written = execute_persistence_writes(operations, self.persistence, dry_run=False)
+                    with self._discovery_lock:
+                        if not discovery_capacity(self.persistence):
+                            break
+                        written = execute_persistence_writes(operations, self.persistence, dry_run=False)
                 finally:
                     log_worker(slot, 'discovery', company or posting_url, role, 'finished')
                 results = written.get('results') or []
@@ -590,7 +641,7 @@ class Orchestrator:
         app_id, name = payload['application_id'], payload['pipeline']
         if self._quota_blocked(name):
             return False
-        if self._capacity(name) <= 0 or any(value['application_id'] == app_id for value in self.inflight.values()):
+        if not self._free_workers() or self._capacity(name) <= 0 or any(value['application_id'] == app_id for value in self.inflight.values()):
             return False
         slot = self._worker_slot(name)
         payload['worker'] = slot
@@ -611,6 +662,12 @@ class Orchestrator:
                     self.last_error = str(error)
                 del self.inflight[future]
                 self.last_scan = float('-inf')
+        self.schedule.run('workflows', POLL_SECONDS, self._poll_workflows)
+        self.write_status()
+
+    def _poll_workflows(self):
+        if not self._free_workers():
+            return
         records = self.registry.snapshot()
         # Resume a persisted output before considering fresh work for that item.
         pending_ids = set()
@@ -618,27 +675,40 @@ class Orchestrator:
             if not record.workflow.startswith(PREFIX):
                 continue
             payload = record.event['payload']
-            if record.status in {'queued', 'failed', 'running', 'dead_letter', 'awaiting_input'}:
+            if record.status in {'queued', 'failed', 'running', 'awaiting_input'}:
                 pending_ids.add(payload['application_id'])
             if record.status in {'queued', 'failed'} and record.attempts < self.registry.max_attempts:
                 if not self._quota_blocked(payload.get('pipeline')):
                     self._launch(record)
         enabled = {name: spec for name, spec in self.config['pipelines'].items() if spec['workers']}
-        if enabled and monotonic() - self.last_scan >= self.config['scan_seconds']:
+        if enabled and self._free_workers():
             self.applications = [plain(app) for app in self.persistence.list_applications()]
             self.last_scan = monotonic()
-        if self.event_poller and any(spec.get('event_type') for spec in enabled.values()) and monotonic() - self.last_event_poll >= self.config['event_poll_seconds']:
-            self.event_poller(self.persistence, self.registry)
-            self.last_event_poll = monotonic()
-            records = self.registry.snapshot()
+        if self.event_poller:
+            for workflow, event_type in [('handle-incoming-email', 'incoming_email'),
+                                         ('prepare-interview', 'calendar_event')]:
+                sources = [spec for spec in enabled.values() if spec.get('event_type') == event_type]
+                if sources:
+                    interval = min(spec.get('event_poll_seconds', workflow_poll_seconds(workflow))
+                                   for spec in sources)
+                    self.schedule.admit('external-' + workflow, interval,
+                        lambda workflow=workflow: self._launch_background(workflow,
+                            lambda workflow=workflow: self.event_poller(
+                                self.persistence, self.registry, workflows=[workflow])))
         self._maybe_discover()
+        requirements = {'renew-gmail-grant': 'prepare_gmail_grant',
+                        'identify-ghosting': 'bulk_update_items',
+                        'complete-journal': 'bulk_update_items'}
+        for name in maintenance_names():
+            if name not in requirements or hasattr(self.persistence, requirements[name]):
+                self._launch_background(name, lambda name=name: self._poll_maintenance(name))
         by_id = {record.workload_id: record for record in records}
         for name, spec in enabled.items():
             if self._quota_blocked(name):
                 continue
             for app in self.applications:
                 app_id = app['application_id']
-                if self._capacity(name) <= 0:
+                if not self._free_workers() or self._capacity(name) <= 0:
                     break
                 if app['status'] not in spec['states'] or app_id in pending_ids or any(value['application_id'] == app_id for value in self.inflight.values()):
                     continue
@@ -657,6 +727,13 @@ class Orchestrator:
                     admission = source.event['event_id'] if source else version(app)
                     workload_id = PREFIX + digest([name, spec['agent'], app_id, admission])
                     if workload_id in by_id:
+                        existing = by_id[workload_id]
+                        if (existing.status == 'dead_letter' and app['status'] in spec['states']
+                                and workload_id not in self._reopened):
+                            self._reopened.add(workload_id)
+                            existing = self.registry.reopen(workload_id)
+                            if self._launch(existing):
+                                pending_ids.add(app_id)
                         continue
                     payload = {'pipeline': name, 'spec': deepcopy(spec), 'application_id': app_id,
                                'input_version': version(app), 'source_event': source.event if source else None,
@@ -669,7 +746,8 @@ class Orchestrator:
 
     def write_status(self):
         value = {'pid': os.getpid(), 'updated_at': datetime.now(timezone.utc).isoformat(),
-                 'discovery': {'workers': self.config.get('discovery_workers', 0),
+                 'poll_seconds': POLL_SECONDS,
+                 'discovery': {'max_new_postings': getattr(self, 'discovery_max_postings', None), 'workers': self.config.get('discovery_workers', 0),
                                'active': sum(1 for item in self.inflight.values() if item.get('discovery'))},
                  'config_error': self.config_error, 'last_error': self.last_error, 'stopping': self.stop.is_set(),
                  'pipelines': {name: {'workers': spec['workers'], 'agent': spec['agent'], 'states': spec['states'],
@@ -733,7 +811,7 @@ def main(argv=None):
     run.add_argument('--monitor', action='store_true', help='Redraw queue counts on stdout every second')
     run.add_argument('--workers', action='append', default=[], metavar='PIPELINE=COUNT',
                      help='Override one pipeline worker count from the config file. Repeat for each pipeline.')
-    commands.add_parser('monitor', help='Print queue counts from the persistence API every second')
+    commands.add_parser('monitor', help='Print queue counts from the Application Service every second')
     commands.add_parser('status')
     commands.add_parser('validate')
     scaling = commands.add_parser('scale')
@@ -759,9 +837,9 @@ def main(argv=None):
         return 0
     runtime = load_runtime(require=True)
     configure_from_runtime(runtime)
-    from .persistence_client import PersistenceApiClient
+    from .application_service_client import ApplicationServiceClient
     if args.command == 'monitor':
-        persistence = PersistenceApiClient()
+        persistence = ApplicationServiceClient()
         try:
             watch(persistence.queue_counts)
         except KeyboardInterrupt:
@@ -774,12 +852,12 @@ def main(argv=None):
 
 def run_pipelines(config_path=None, status_file=None, worker_overrides=None, monitor=False):
     """Run every pipeline until SIGINT or SIGTERM. The caller owns logging and the API."""
-    from .persistence_client import PersistenceApiClient
+    from .application_service_client import ApplicationServiceClient
     from .worker_main import load_discovery_provider, load_provider
     from .external_event_polling import poll
     config_path = config_path or pipeline_config.DEFAULT_PATH
     with runner_lock():
-        persistence = PersistenceApiClient()
+        persistence = ApplicationServiceClient()
         if not persistence.journal_status()['valid']:
             raise ValueError('journal is invalid')
         registry = WorkloadRegistry(

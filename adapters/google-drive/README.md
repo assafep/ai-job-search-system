@@ -1,6 +1,6 @@
 # Google Drive adapter
 
-Reads and writes Drive/Docs only through the configured data-layer API. The
+Reads and writes Drive/Docs only through the Application Service. The
 Interviews Journal is organized as six top-level state tabs, with application
 tabs nested beneath them. Application tabs contain a human-readable event
 journal: a date paragraph followed by bulleted notes. Research tabs nested under
@@ -21,5 +21,5 @@ loads the journal and artifact-root URLs from `config/runtime.json` created by
 onboarding, unless explicit environment-variable overrides are provided.
 
 The applicant profile is stored at `.ai-job-search-system/applicant_profile.json`
-under the configured root and is accessed through the persistence API's `/profile`
+under the configured root and is accessed through the Application Service's `/profile`
 resource. Previously misnamed files are renamed in place on the next profile write.

@@ -3,7 +3,7 @@
 Architecture: single-consumer with a capped thread pool.
 
 - The main consumer thread is the ONLY code that reads from or writes to the
-  persistence API. It lists applications, enriches context, and executes
+  Application Service. It lists applications, enriches context, and executes
   persistence writes.
 - Worker threads are stateless: they receive pre-enriched context, invoke the
   workflow's agent(s), and return the results. They never touch the persistence
@@ -16,18 +16,52 @@ blocks the rest of the queue.
 """
 
 import json
+import os
 import queue
+import subprocess
+import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from time import monotonic
 
 from .event_dispatcher import dispatch
-from .persistence_client import PersistenceApiClient, PersistenceApiError
+from .application_service_client import ApplicationServiceClient, ApplicationServiceError
 from .test_runner import discover_workflows, parse_workflow
 from .workflow_runtime import runtime_from_environment
 from .workload_executor import execute_persistence_writes, plan_persistence_writes
 from .workload_registry import registry_from_environment
+from .workload_runner import failure_outcome
+
+
+def _run_with_workflow_python(python, application, workflow_name, run_id, root):
+    """Execute this workload in the workflow virtualenv and return its result."""
+    env = dict(os.environ)
+    env["WORKFLOW_VENV_DELEGATED"] = "1"
+    env["PYTHONPATH"] = root + os.pathsep + env.get("PYTHONPATH", "")
+    completed = subprocess.run(
+        [python, "-m", "services.workflow_venv"],
+        input=json.dumps({
+            "application": application,
+            "workflow_name": workflow_name,
+            "run_id": run_id,
+        }),
+        text=True,
+        capture_output=True,
+        cwd=root,
+        env=env,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "workflow virtualenv failed").strip()
+        return {
+            "application_id": application.get("application_id"),
+            "workflow": workflow_name,
+            "initial_state": application.get("status"),
+            "final_state": application.get("status"),
+            "status": "failed",
+            "error": detail,
+        }
+    return json.loads(completed.stdout)
 
 
 def _workflow_for_state(state):
@@ -54,7 +88,7 @@ def _get_provider(workflow_name):
         path for name, path in discover_workflows().items() if name == workflow_name
     ))
     agent = definition.get("agent")
-    if agent in ("read-posting", "score"):
+    if agent in ("read-posting", "validate"):
         from .worker_main import load_discovery_provider
         return load_discovery_provider()
     from .worker_main import load_provider
@@ -64,13 +98,29 @@ def _get_provider(workflow_name):
 def _agent_worker(runtime, workflow_name, enriched_context, agent_provider):
     """Worker function: invoke agent(s) on pre-enriched context.
 
-    This runs in a worker thread. It does NOT touch the persistence API.
+    This runs in a worker thread. It does NOT touch the Application Service.
     """
     try:
         agent_results = runtime.run_agent(workflow_name, enriched_context, agent_provider)
         return {"status": "ok", "agent_results": agent_results}
     except Exception as exc:
-        return {"status": "error", "error": str(exc)}
+        return {"status": "error", "error": exc}
+
+
+def _bookmark_attempt(agent_results):
+    if isinstance(agent_results, dict):
+        return agent_results.get("bookmark_attempt")
+    return None
+
+
+def _with_bookmark_attempt(error, attempt):
+    """Keep the bookmark model record on a later persistence failure."""
+    if attempt and not getattr(error, "attempt", None):
+        try:
+            error.attempt = attempt
+        except Exception:
+            pass
+    return error
 
 
 def run_one(
@@ -88,7 +138,7 @@ def run_one(
     Agent invocation is dispatched to a single worker thread.
 
     Args:
-        persistence: PersistenceApiClient instance.
+        persistence: ApplicationServiceClient instance.
         registry: WorkloadRegistry instance.
         runtime: WorkflowRuntime instance.
         application: Dict with application_id, company, role, status.
@@ -122,6 +172,12 @@ def run_one(
             raise ValueError("unknown workflow: " + workflow_name)
         definition = parse_workflow(workflows[workflow_name])
 
+    if agent_provider is None and os.environ.get("WORKFLOW_VENV_DELEGATED") != "1":
+        from .workflow_venv import ROOT, ensure_workflow_python
+        python = ensure_workflow_python(workflow_name)
+        if python and os.path.realpath(python) != os.path.realpath(sys.executable):
+            return _run_with_workflow_python(python, application, workflow_name, run_id, ROOT)
+
     event_type = definition.get("trigger", {}).get("event_type")
     if event_type is None:
         raise ValueError("workflow {} has no event type".format(workflow_name))
@@ -143,13 +199,14 @@ def run_one(
         payload["role"] = role
 
     started = monotonic()
+    agent_results = {}
 
     # --- Main thread: all persistence reads ---
     # Re-read current state to check for staleness
     try:
         current = persistence.get_application(app_id)
         current_state = current.get("status") if isinstance(current, dict) else current.status
-    except (KeyError, PersistenceApiError) as exc:
+    except (KeyError, ApplicationServiceError) as exc:
         if "404" in str(exc):
             return {
                 "application_id": app_id,
@@ -190,7 +247,8 @@ def run_one(
                 runtime, workflow_name, enriched_context, agent_provider
             )
             if agent_result["status"] == "error":
-                raise RuntimeError(agent_result["error"])
+                error = agent_result["error"]
+                raise error if isinstance(error, BaseException) else RuntimeError(str(error))
             agent_results = agent_result["agent_results"]
         else:
             # No agent (e.g., discover workflow) — agent_results is empty
@@ -200,6 +258,7 @@ def run_one(
         operations = plan_persistence_writes(workflow_name, enriched_context, agent_results)
         execute_persistence_writes(operations, persistence, dry_run=False)
 
+        registry.claim(workload_id)
         registry.complete(workload_id)
         final = persistence.get_application(app_id)
         final_state = final.get("status") if isinstance(final, dict) else final.status
@@ -212,29 +271,40 @@ def run_one(
             "elapsed_seconds": monotonic() - started,
         }
     except Exception as exc:
+        _with_bookmark_attempt(exc, _bookmark_attempt(agent_results))
         try:
             registry.fail(workload_id, str(exc))
         except ValueError:
             # Workload was already completed or not in running state
             pass
         return _handle_failure(
-            persistence, app_id, workflow_name, initial_state, str(exc), started
+            persistence, app_id, workflow_name, initial_state, exc, started
         )
+
+
+def _failure_note(workflow_name, error):
+    outcome, target = failure_outcome(workflow_name, error if isinstance(error, BaseException) else RuntimeError(str(error)))
+    label = "System error" if outcome == "system_error" else outcome
+    return outcome, target, label + ": " + str(error)
 
 
 def _handle_failure(persistence, app_id, workflow_name, initial_state, error, started):
-    """Handle a workflow failure by transitioning to Dead Letters Queue."""
+    """Move the posting to the failure state declared by its blueprint."""
+    _outcome, target, note = _failure_note(workflow_name, error)
+    from .event_attempt import with_attempt
+    bullets = with_attempt([note], getattr(error, "attempt", None))
     try:
         persistence.transition(
             app_id,
-            "Dead Letters Queue",
+            target,
             {
                 "source": workflow_name + " workflow",
-                "bullets": ["System error: " + error],
+                "bullets": bullets,
+                "attempt": getattr(error, "attempt", None) or {},
             },
-            "system-error-" + app_id,
+            "workflow-failure-" + app_id,
         )
-        final_state = "Dead Letters Queue"
+        final_state = target
     except Exception:
         try:
             final = persistence.get_application(app_id)
@@ -259,6 +329,8 @@ def run_all(
     workers=8,
     agent_provider=None,
     print_progress=True,
+    application_id=None,
+    limit=None,
 ):
     """Run all applications in a state through their consuming workflow.
 
@@ -279,11 +351,13 @@ def run_all(
     """
     from .report_checkpoint import ReportCheckpoint
     from .runtime_config import load
-    from persistence_api.storage_layout import workload_state_path
+    from application_service.storage_layout import workload_state_path
 
+    if limit is not None and (type(limit) is not int or limit < 1):
+        raise ValueError("limit must be a positive integer")
     load(require=True)
 
-    persistence = PersistenceApiClient()
+    persistence = ApplicationServiceClient()
     registry = registry_from_environment()
     runtime = runtime_from_environment(persistence_client=persistence)
     runtime.registry = registry
@@ -299,13 +373,17 @@ def run_all(
             raise ValueError("unknown workflow: " + workflow_name)
         definition = parse_workflow(workflows[workflow_name])
 
-    # Resolve agent provider
-    if agent_provider is None:
-        agent = definition.get("agent")
-        agent_provider = _get_provider(workflow_name) if agent else None
-
     # --- Main thread: list applications ---
+    if state not in definition.get("input_states", []):
+        raise ValueError("workflow does not consume requested state")
     applications = persistence.list_applications(status=state)
+    if application_id is not None:
+        applications = [a for a in applications if a["application_id"] == application_id]
+        if not applications:
+            raise ValueError("application not found in requested state")
+    applications = list({a["application_id"]: a for a in applications}.values())
+    if limit is not None:
+        applications = applications[:limit]
     if not applications:
         if print_progress:
             print(
@@ -318,6 +396,11 @@ def run_all(
 
     # Deduplicate by application_id
     applications = list({a["application_id"]: a for a in applications}.values())
+
+    # Resolve agent provider
+    if agent_provider is None:
+        agent = definition.get("agent")
+        agent_provider = _get_provider(workflow_name) if agent else None
 
     run_id = datetime.now(timezone.utc).strftime("wf-%Y%m%dT%H%M%S%fZ")
     report = {
@@ -359,13 +442,15 @@ def run_all(
         company = enriched_context.get("company", "")
         role = enriched_context.get("role", "")
 
+        agent_results = {}
         try:
             if definition.get("agent"):
                 agent_result = _agent_worker(
                     runtime, workflow_name, enriched_context, agent_provider
                 )
                 if agent_result["status"] == "error":
-                    raise RuntimeError(agent_result["error"])
+                    error = agent_result["error"]
+                    raise error if isinstance(error, BaseException) else RuntimeError(str(error))
                 agent_results = agent_result["agent_results"]
             else:
                 agent_results = {}
@@ -379,15 +464,18 @@ def run_all(
                 "initial_state": initial_state,
                 "status": "ok",
                 "operations": operations,
+                "attempt": _bookmark_attempt(agent_results),
             }
         except Exception as exc:
+            _with_bookmark_attempt(exc, _bookmark_attempt(agent_results))
             return {
                 "application_id": app_id,
                 "company": company,
                 "role": role,
                 "initial_state": initial_state,
                 "status": "error",
-                "error": str(exc),
+                "error": exc,
+                "attempt": getattr(exc, "attempt", None),
                 "operations": [],
             }
 
@@ -406,7 +494,7 @@ def run_all(
                 try:
                     current = persistence.get_application(app_id)
                     current_state = current.get("status") if isinstance(current, dict) else current.status
-                except (KeyError, PersistenceApiError) as exc:
+                except (KeyError, ApplicationServiceError) as exc:
                     if "404" in str(exc):
                         emit({
                             "activity": "skipped",
@@ -486,17 +574,21 @@ def run_all(
                 if worker_result["status"] == "error":
                     # --- Main thread: handle failure ---
                     error = worker_result.get("error", "unknown")
+                    _with_bookmark_attempt(error, worker_result.get("attempt"))
+                    _outcome, target, note = _failure_note(workflow_name, error)
+                    from .event_attempt import with_attempt
                     try:
                         persistence.transition(
                             app_id,
-                            "Dead Letters Queue",
+                            target,
                             {
                                 "source": workflow_name + " workflow",
-                                "bullets": ["System error: " + error],
+                                "bullets": with_attempt([note], getattr(error, "attempt", None)),
+                                "attempt": getattr(error, "attempt", None) or {},
                             },
-                            "system-error-" + app_id,
+                            "workflow-failure-" + app_id,
                         )
-                        final_state = "Dead Letters Queue"
+                        final_state = target
                     except Exception:
                         try:
                             final = persistence.get_application(app_id)
@@ -550,13 +642,17 @@ def run_all(
                     })
                 except Exception as exc:
                     # Persistence write failure
+                    _with_bookmark_attempt(exc, worker_result.get("attempt"))
+                    from .event_attempt import with_attempt
                     try:
                         persistence.transition(
                             app_id,
                             "Dead Letters Queue",
                             {
                                 "source": workflow_name + " workflow",
-                                "bullets": ["Persistence error: " + str(exc)],
+                                "bullets": with_attempt(
+                                    ["Persistence error: " + str(exc)], getattr(exc, "attempt", None)),
+                                "attempt": getattr(exc, "attempt", None) or {},
                             },
                             "system-error-" + app_id,
                         )

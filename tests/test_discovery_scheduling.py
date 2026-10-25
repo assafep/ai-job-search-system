@@ -23,18 +23,20 @@ def test_discovery_runs_without_obsolete_scout_pipeline(tmp_path):
     config['discovery_workers'] = 4
     path = tmp_path / 'pipelines.json'
     path.write_text(json.dumps(config))
-    service = Orchestrator(None, WorkloadRegistry(), None, str(path))
+    from application_service.repository import MemoryRepository
+    service = Orchestrator(MemoryRepository(), WorkloadRegistry(), None, str(path))
     service.pool.shutdown()
     service.pool = RecordingPool()
     service._maybe_discover()
     assert 'scout' not in service.config['pipelines']
     batches = min(config['discovery_workers'], len(config['discovery_sources']))
     assert len(service.pool.calls) == batches
-    assigned = [source for _, (_, batch) in service.pool.calls for source in batch]
+    assigned = [source for _, (_, batch, budget) in service.pool.calls for source in batch]
     assert sorted(assigned) == sorted(config['discovery_sources'])
     service._maybe_discover()
     assert len(service.pool.calls) == batches
-    assert service.write_status()['discovery'] == {'workers': 4, 'active': batches}
+    assert service.write_status()['discovery'] == {'workers': 4, 'active': batches,
+                                                  'max_new_postings': 100 - len(service.persistence.journal_tabs())}
 
 
 @pytest.mark.parametrize('workers', [-1, True, 65, '4'])
@@ -54,7 +56,7 @@ def test_total_worker_limit_includes_discovery():
 
 
 def test_duplicate_identity_check_does_not_download_irrelevant_artifacts(tmp_path):
-    from persistence_api.repository import MemoryRepository
+    from application_service.repository import MemoryRepository
     repository = MemoryRepository()
     handled = repository.create_application('Handled', 'Backend', 'https://example.com/handled')
     repository.transition(handled.application_id, 'Prepared')
@@ -87,12 +89,12 @@ def test_saved_description_cache_refreshes_after_application_changes(monkeypatch
 
 
 def test_missing_handled_posting_does_not_fail_the_posting_being_checked(monkeypatch):
-    from services.persistence_client import PersistenceApiError
+    from services.application_service_client import ApplicationServiceError
 
     def read_posting(persistence, app):
         if app['application_id'] == 'missing':
-            raise PersistenceApiError(
-                'persistence API returned 404: {"error": "not found", "field": "\'missing\'"}')
+            raise ApplicationServiceError(
+                'Application Service returned 404: {"error": "not found", "field": "\'missing\'"}')
         return {'description': 'saved posting ' * 40}
 
     monkeypatch.setattr('services.orchestrator.read_posting', read_posting)
@@ -122,7 +124,7 @@ def test_missing_handled_posting_does_not_fail_the_posting_being_checked(monkeyp
 
 
 def test_unreadable_posting_settles_in_manual_queue(tmp_path):
-    from persistence_api.repository import MemoryRepository
+    from application_service.repository import MemoryRepository
     from services.scout_reading import PostingReadFailure
     repository = MemoryRepository()
     app = repository.create_application('Example', 'Backend', 'https://example.com/closed', target_state='Discovered')

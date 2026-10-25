@@ -1,5 +1,5 @@
-from persistence_api.repository import MemoryRepository
-from persistence_api.google_docs_repository import artifact_reference
+from application_service.repository import MemoryRepository
+from application_service.google_docs_repository import artifact_reference
 
 
 def test_memory_artifact_list_and_read_are_application_scoped():

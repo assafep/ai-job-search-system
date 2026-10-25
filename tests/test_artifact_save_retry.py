@@ -2,7 +2,7 @@ import base64
 import json
 from pathlib import Path
 
-from persistence_api.repository import MemoryRepository
+from application_service.repository import MemoryRepository
 from services.orchestrator import Orchestrator
 
 

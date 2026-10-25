@@ -67,7 +67,7 @@ The results file must be an object keyed by agent name, for example
 The agent name must be one of the agents used by the selected workflow.
 
 Live persistence is opt-in and requires completed onboarding plus a running
-persistence API:
+Application Service:
 
 ```bash
 python3 -m services.workload_runner prepare-interview \
@@ -82,10 +82,11 @@ requirements for external actions; `ask` and `deny` never execute in dry-run
 mode.
 
 These commands do not call Google Drive, Gmail, Calendar, browser adapters, or
-the persistence API. They only load fixtures, assemble a contract, and print
+the Application Service. They only load fixtures, assemble a contract, and print
 JSON results.
 
-Run `make verify` for the complete local pass, including the test suite,
+Run `make verify PYTHON=.venv/bin/python` (or use another Python 3.10+ interpreter)
+for the complete local pass, including the test suite,
 compilation, all four workflow dry-runs, and Compose configuration validation.
 
 Live workflow execution must call `services.runtime_config.load()` first; this

@@ -1,15 +1,20 @@
 name: handle-incoming-email
 trigger:
-  type: incoming_email
+  type: polling
+  cadence: minute
+  poll_kind: external
   event_type: incoming_email
 agent: correspondence
 input_states:
+  - Prepared
+  - Manual Apply Required
   - Applied
   - Interviewing
 external_actions:
   - send_recruitment_email
 outcomes:
   processed: null
+  confirmed: Applied
   interview: Interviewing
   rejected: Rejected
   offered: Offer

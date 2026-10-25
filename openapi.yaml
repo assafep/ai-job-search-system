@@ -1,16 +1,178 @@
 openapi: 3.0.3
 info:
-  title: Job Search Persistence API
+  title: AJSS Application Service
   version: 0.1.0
   description: >-
     Stable domain API. Google Drive is an implementation detail. When
-    PERSISTENCE_API_TOKEN is configured, state endpoints require a bearer token;
+    APPLICATION_SERVICE_TOKEN is configured, state endpoints require a bearer token;
     /health and /ready remain public. Validation failures return 400, missing
     resources return 404, upstream Drive/Docs HTTP failures return 502, and
     network/backend availability failures return 503.
 security:
   - BearerAuth: []
 paths:
+  /bulk-updates:
+    post:
+      operationId: bulkUpdateItems
+      description: >-
+        Apply 1–25 explicit typed updates with a required idempotency key per item.
+        Validate the entire request before writes. Execute items independently in order;
+        return ordered per-item results and counts. This is not an atomic transaction
+        across Drive and PostgreSQL. Reuse item keys on retry; changed payloads are
+        rejected. Interrupted or uncertain mutations require manual reconciliation.
+        No arbitrary URLs, API paths, or external message sends are accepted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/BulkUpdateRequest'}
+      responses:
+        '200':
+          description: Ordered per-item outcomes; callers must inspect failures even with HTTP 200
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BulkUpdateResponse'}
+        '400': {description: Invalid batch; no items executed}
+        '401': {description: Authentication required}
+  /journal/terminal-items:
+    get:
+      operationId: listTerminalJournalItems
+      description: Read Rejected, Invalidated and Duplicate items from the main journal only, excluding archived applications.
+      responses:
+        '200':
+          description: Eligible terminal items
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/Application'}
+  /workflows:
+    get:
+      operationId: listWorkflows
+      description: List workflow names, accepted scope, and trigger kinds from deployed blueprints.
+      responses:
+        '200':
+          description: Workflow catalog
+          content:
+            application/json:
+              schema: {type: object}
+  /workflow-runs:
+    post:
+      operationId: startWorkflow
+      description: Enqueue a named workflow in the existing runtime. Omit limit to process all eligible positions. application_id scopes execution to one posting. Prepared submission is automatic. Reuse idempotency_key on retries. Requires a separately configured worker.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [workflow, idempotency_key]
+              properties:
+                workflow: {type: string, minLength: 1}
+                application_id: {type: string, minLength: 1}
+                limit: {type: integer, minimum: 1}
+                idempotency_key: {type: string, minLength: 1, maxLength: 200}
+      responses:
+        '202':
+          description: Durable run with resolved scope; duplicate keys return the existing run
+          content:
+            application/json:
+              schema: {type: object}
+  /workflow-runs/{run_id}:
+    get:
+      operationId: getWorkflowRun
+      description: Read durable run status and resolved scope. A running claim is never automatically retried; old updated_at requires operator investigation.
+      parameters:
+        - {in: path, name: run_id, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Run status
+          content:
+            application/json:
+              schema: {type: object}
+  /workflow-runs/{run_id}/report:
+    get:
+      operationId: getWorkflowRunReport
+      description: Retrieve the readable PDF activity report. Do not present internal JSON checkpoints as reports.
+      parameters:
+        - {in: path, name: run_id, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: PDF bytes encoded as base64 with file metadata
+          content:
+            application/json:
+              schema: {type: object}
+        '409': {description: Report not available yet}
+  /workflow-runs/{run_id}/reconcile:
+    post:
+      operationId: reconcileWorkflowRun
+      x-mcp-expose: false
+      description: Explicit operator action after stopping the original worker and reconciling uncertain submissions. Releases the installation run block without retrying this run.
+      parameters:
+        - {in: path, name: run_id, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [worker_stopped, note]
+              properties:
+                worker_stopped: {type: boolean, enum: [true]}
+                note: {type: string, minLength: 1}
+      responses:
+        '200': {description: Reconciled run, kept failed}
+  /workflow-runs/claim:
+    post:
+      operationId: claimWorkflowRun
+      x-mcp-expose: false
+      description: Internal authenticated worker claim. Serializes all chat runs and blocks on uncertain execution.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [worker_id]
+              properties:
+                worker_id: {type: string, minLength: 1}
+      responses:
+        '200': {description: Claimed run or null}
+  /workflow-runs/{run_id}/worker-update:
+    post:
+      operationId: updateWorkflowRun
+      x-mcp-expose: false
+      description: Internal authenticated worker heartbeat or completion. Requires claim token.
+      parameters:
+        - {in: path, name: run_id, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [claim_token, status]
+              properties:
+                claim_token: {type: string}
+                status: {type: string, enum: [running, succeeded, failed, reconciliation_required]}
+                report: {type: object}
+                code_revision: {type: string}
+                summary: {type: object}
+      responses:
+        '200': {description: Updated run}
+  /journal/complete-terminal:
+    post:
+      operationId: completeTerminalJournal
+      description: Complete Rejected and Invalidated entries and remove Duplicate tabs from the main journal. Safe to repeat; completed entries are no longer in the main journal.
+      responses:
+        '200':
+          description: Completed or removed journal entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {type: object}
   /journal/queues:
     get:
       operationId: journalQueueCounts
@@ -89,6 +251,7 @@ paths:
                 items: {$ref: '#/components/schemas/Application'}
     post:
       operationId: createApplication
+      description: Discovered creation is admitted only while the main journal has fewer than 100 total tabs. The service checks under the installation lock; keyed retries still return their existing application.
       requestBody:
         required: true
         content:
@@ -96,6 +259,15 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateApplication'
       responses:
+        '200':
+          description: Discovery capacity exhausted; no application created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [capacity_exhausted]
+                properties:
+                  capacity_exhausted: {type: boolean, enum: [true]}
         '201':
           description: Created
           content:
@@ -242,7 +414,7 @@ paths:
                 properties:
                   application_id: {type: string}
                   events_repaired: {type: integer}
-  /journal/rollback-ready:
+  /journal/rollback-prepared:
     post:
       operationId: rollbackReadyApplications
       responses:
@@ -354,6 +526,239 @@ components:
       required: true
       schema: {type: string}
   schemas:
+    BulkUpdateRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          minItems: 1
+          maxItems: 25
+          items:
+            oneOf:
+            - type: object
+              additionalProperties: false
+              required:
+              - operation
+              - idempotency_key
+              - application_id
+              - data
+              properties:
+                operation:
+                  type: string
+                  enum:
+                  - update_application
+                idempotency_key: &id002
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                application_id: &id003
+                  type: string
+                  minLength: 1
+                expected_status: &id004
+                  type: string
+                  minLength: 1
+                expected_updated_at: &id005
+                  type: string
+                  minLength: 1
+                data:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    company: &id001
+                      type: string
+                      minLength: 1
+                    role: *id001
+                  required: []
+                  minProperties: 1
+            - type: object
+              additionalProperties: false
+              required:
+              - operation
+              - idempotency_key
+              - application_id
+              - data
+              properties:
+                operation:
+                  type: string
+                  enum:
+                  - transition_application
+                idempotency_key: *id002
+                application_id: *id003
+                expected_status: *id004
+                expected_updated_at: *id005
+                data:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    target: *id001
+                    data:
+                      type: object
+                  required:
+                  - target
+            - type: object
+              additionalProperties: false
+              required:
+              - operation
+              - idempotency_key
+              - application_id
+              - data
+              properties:
+                operation:
+                  type: string
+                  enum:
+                  - append_event
+                idempotency_key: *id002
+                application_id: *id003
+                expected_status: *id004
+                expected_updated_at: *id005
+                data:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    event_type: *id001
+                    data:
+                      type: object
+                  required:
+                  - event_type
+            - type: object
+              additionalProperties: false
+              required:
+              - operation
+              - idempotency_key
+              - application_id
+              - data
+              properties:
+                operation:
+                  type: string
+                  enum:
+                  - complete_application
+                idempotency_key: *id002
+                application_id: *id003
+                expected_status: *id004
+                expected_updated_at: *id005
+                data:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    reason:
+                      type: string
+                      enum:
+                      - rejected
+                      - invalidated
+                      - filled
+                      - withdrawn
+                      - ghosted
+                      - expired
+                    inactive_before: *id001
+                  required:
+                  - reason
+            - type: object
+              additionalProperties: false
+              required:
+              - operation
+              - idempotency_key
+              - application_id
+              properties:
+                operation:
+                  type: string
+                  enum:
+                  - remove_duplicate
+                idempotency_key: *id002
+                application_id: *id003
+                expected_status: *id004
+                expected_updated_at: *id005
+            - type: object
+              additionalProperties: false
+              required:
+              - operation
+              - idempotency_key
+              - data
+              properties:
+                operation:
+                  type: string
+                  enum:
+                  - install_gmail_grant
+                idempotency_key: *id002
+                data:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    client_id: *id001
+                    client_secret: *id001
+                    refresh_token: *id001
+                    notice_email: *id001
+                    scope: *id001
+                    expires_in:
+                      type: integer
+                      minimum: 1
+                  required:
+                  - client_id
+                  - client_secret
+                  - refresh_token
+            - type: object
+              additionalProperties: false
+              required:
+              - operation
+              - idempotency_key
+              - data
+              properties:
+                operation:
+                  type: string
+                  enum:
+                  - acknowledge_gmail_notice
+                idempotency_key: *id002
+                data:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    refresh_expires_at:
+                      type: integer
+                      minimum: 1
+                  required:
+                  - refresh_expires_at
+      required:
+      - items
+    BulkUpdateResponse:
+      type: object
+      required:
+      - results
+      - succeeded
+      - failed
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            required:
+            - index
+            - operation
+            - status
+            properties:
+              index:
+                type: integer
+              operation:
+                type: string
+              application_id:
+                type: string
+              status:
+                type: string
+                enum:
+                - succeeded
+                - failed
+                - reconciliation_required
+              result: {}
+              error:
+                type: object
+                properties:
+                  code:
+                    type: string
+                  message:
+                    type: string
+        succeeded:
+          type: integer
+        failed:
+          type: integer
     Error:
       type: object
       required: [error]

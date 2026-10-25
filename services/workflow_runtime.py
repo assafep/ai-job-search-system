@@ -4,15 +4,16 @@ import argparse
 import json
 import os
 import sys
-from dataclasses import asdict
+from dataclasses import asdict, is_dataclass
 
 from .agent_runner import run as run_agent
 from .approval_service import evaluate
 from .approval_registry import approval_registry_from_environment
 from .runtime_config import calendly_url as configured_calendly_url
-from .workload_runner import _get_agents, execute
+from .workload_runner import _get_agents, execute, failure_outcome
 from .workload_registry import registry_from_environment
-from persistence_api.profile import calendly_url as profile_calendly_url
+from application_service.profile import calendly_url as profile_calendly_url
+from application_service.state_machine import ALLOWED_TRANSITIONS
 
 
 class WorkflowRuntime:
@@ -20,7 +21,7 @@ class WorkflowRuntime:
 
     Agent results are supplied by the caller after the stateless agent has run.
     This class owns only workload bookkeeping; application mutations still go
-    through the persistence API client passed to ``run``.
+    through the Application Service client passed to ``run``.
     """
 
     def __init__(self, registry, persistence_client, approval_registry=None, runtime_context=None):
@@ -36,23 +37,27 @@ class WorkflowRuntime:
         application_id = (record.event.get('payload') or {}).get('application_id')
         if not application_id:
             return
-        from .persistence_client import PersistenceApiError
+        from .application_service_client import ApplicationServiceError
         try:
             application = self.persistence_client.get_application(application_id)
         except KeyError:
             return  # A deleted posting must not be recreated by failure handling.
-        except PersistenceApiError as exc:
+        except ApplicationServiceError as exc:
             if 'returned 404:' in str(exc):
                 return
             raise
         if application is None:
             return
         state = application.get('status') if isinstance(application, dict) else application.status
-        if state not in {'Validated', 'Prepared', 'Dead Letters Queue'}:
+        outcome, target = failure_outcome(record.workflow, error)
+        if state != target and target not in ALLOWED_TRANSITIONS.get(state, set()):
             return  # Never regress a submitted or closed application.
-        self.persistence_client.transition(application_id, 'Dead Letters Queue', {
+        from .event_attempt import with_attempt
+        self.persistence_client.transition(application_id, target, {
             'source': 'application package preparation agent',
-            'bullets': ['Application package preparation failed: ' + str(error)],
+            'bullets': with_attempt(
+                ['Application package preparation {}: {}'.format(outcome, error)],
+                getattr(error, 'attempt', None)),
         }, 'preparation-failed-' + record.workload_id)
 
     def _fail_workload(self, record, error):
@@ -60,13 +65,14 @@ class WorkflowRuntime:
         try:
             self._record_preparation_failure(record, error)
         except Exception as routing_error:
-            raise RuntimeError('Preparation failed: {}. Recording Dead Letters Queue also failed: {}'.format(
-                error, routing_error)) from routing_error
+            _outcome, target = failure_outcome(record.workflow, error)
+            raise RuntimeError('Preparation failed: {}. Recording {} also failed: {}'.format(
+                error, target, routing_error)) from routing_error
 
     def prepare_context(self, workflow, context, agent_provider=None):
         """Read all persistence data needed for a workflow and return enriched context.
 
-        This is the ONLY method that reads from the persistence API for workflow
+        This is the ONLY method that reads from the Application Service for workflow
         execution. It must be called by the main consumer thread before dispatching
         to worker threads.
         """
@@ -77,6 +83,13 @@ class WorkflowRuntime:
             enriched["applicant_profile"] = profile
             if not enriched.get("calendly_url"):
                 enriched["calendly_url"] = profile_calendly_url(profile)
+        if workflow == 'discover':
+            from .polling import discovery_capacity
+            enriched['max_postings'] = discovery_capacity(self.persistence_client)
+            if not enriched['max_postings']:
+                enriched['job_postings'] = []
+                return enriched
+            enriched['results_per_page'] = min(enriched.get('results_per_page', 20), enriched['max_postings'])
         if workflow in ("discover", "validate-bookmarked"):
             self._enrich_discovery_context(enriched, profile, agent_provider)
         if workflow == "prepare-validated":
@@ -88,7 +101,8 @@ class WorkflowRuntime:
         if not application_id:
             return enriched
         if hasattr(self.persistence_client, "get_application"):
-            enriched["application"] = self.persistence_client.get_application(application_id)
+            application = self.persistence_client.get_application(application_id)
+            enriched["application"] = asdict(application) if is_dataclass(application) else application
         if workflow == "prepare-validated":
             from adapters.job_boards.posting_details import read_posting_artifact
             from pypdf import PdfReader
@@ -125,21 +139,18 @@ class WorkflowRuntime:
             # handles SPA shells and ATS-specific public data endpoints and
             # guarantees that the saved artifact does not depend on the
             # coding agent having browser/network access.
-            from adapters.job_boards.posting_details import fetch_posting_details
+            from .bookmark_read import read_discovered_posting
             posting_url = (enriched_context.get("posting_url") or
                            enriched_context.get("read_posting_url"))
             if not posting_url:
                 raise ValueError("bookmark-discovered requires posting_url")
-            details = fetch_posting_details(posting_url)
-            enriched_context["retrieved_posting"] = details
-            return {"read-posting": {
-                "company": enriched_context.get("company"),
-                "role": enriched_context.get("role"),
-                "posting_url": posting_url,
-                "resolved_url": details.get("source_url") or posting_url,
-                "description": details["description"],
-                "read_failure": "",
-            }}
+            output, attempt = read_discovered_posting(
+                posting_url, enriched_context.get("company"), enriched_context.get("role"))
+            enriched_context["retrieved_posting"] = output
+            result = {"read-posting": output}
+            if attempt:
+                result["bookmark_attempt"] = attempt
+            return result
         agent_results = {}
         for agent_name in _get_agents(workflow):
             agent_context = dict(enriched_context)
@@ -280,12 +291,28 @@ class WorkflowRuntime:
             results_per_page=int(context.get("results_per_page", 20)),
         )
 
-    def run(self, workload_id, agent_results=None, agent_provider=None):
+    def run(self, workload_id, agent_results=None, agent_provider=None, recover_incomplete=True):
         # A reconciliation tick is the recovery boundary for interrupted
         # workloads. Reset recoverable running records before claiming the
         # reconciliation workload itself; application mutations remain under
-        # the persistence API.
+        # the Application Service.
         record = self.registry.get(workload_id)
+        if record.workflow in {'identify-ghosting', 'renew-gmail-grant', 'complete-journal'}:
+            from .ghosting_workflow import execute as execute_ghosting
+            from .gmail_grant_workflow import execute as execute_grant
+            from .completion_workflow import execute as execute_completion
+            handlers = {'identify-ghosting': execute_ghosting,
+                        'renew-gmail-grant': execute_grant,
+                        'complete-journal': execute_completion}
+            self.registry.claim(workload_id)
+            try:
+                results = handlers[record.workflow](self.persistence_client)
+            except Exception as exc:
+                self.registry.fail(workload_id, str(exc))
+                raise
+            self.registry.complete(workload_id)
+            return {'workload_id': workload_id, 'workflow': record.workflow,
+                    'status': 'succeeded', 'results': results}
         previous_error = record.error
         if record.workflow == 'prepare-validated' and agent_results is None and hasattr(self.persistence_client, 'list_artifacts'):
             from .application_package import saved_package, promote_saved_package
@@ -295,7 +322,8 @@ class WorkflowRuntime:
                 if app is not None and not isinstance(app, dict):
                     app = asdict(app)
                 if app['status'] != 'Validated':
-                    if app['status'] == 'Dead Letters Queue' and previous_error:
+                    _outcome, target = failure_outcome(record.workflow, previous_error or RuntimeError('preparation failed'))
+                    if app['status'] == target and previous_error:
                         self._record_preparation_failure(record, previous_error)
                     self.registry.complete(workload_id)
                     return {'workflow': record.workflow, 'workload_id': workload_id, 'status': 'succeeded',
@@ -334,7 +362,8 @@ class WorkflowRuntime:
         registry_report = None
         approval_report = None
         if record.workflow == "reconcile":
-            self.registry.recover_incomplete()
+            if recover_incomplete:
+                self.registry.recover_incomplete()
             registry_report = self.registry.report()
             if self.approval_registry is not None:
                 approval_report = self.approval_registry.report()
@@ -413,8 +442,8 @@ def runtime_from_environment(persistence_client=None, require_configuration=True
         from .runtime_config import load
         runtime = load(require=True)
     if persistence_client is None:
-        from .persistence_client import PersistenceApiClient
-        persistence_client = PersistenceApiClient()
+        from .application_service_client import ApplicationServiceClient
+        persistence_client = ApplicationServiceClient()
     return WorkflowRuntime(
         registry_from_environment(),
         persistence_client,

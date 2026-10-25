@@ -9,6 +9,7 @@ import json
 import os
 import subprocess
 import tempfile
+from copy import copy
 from pathlib import Path
 from .codex_provider import strict_schema
 
@@ -19,7 +20,13 @@ class CodingAgentProvider:
     def __init__(self, executable=None, model=None, timeout=None):
         self.executable = executable
         self.model = model
+        self.reasoning_effort = None
         self.timeout = int(timeout or os.environ.get("CODING_AGENT_TIMEOUT_SECONDS") or os.environ.get("GROK_TIMEOUT_SECONDS") or "300")
+
+    def with_reasoning_effort(self, effort):
+        configured = copy(self)
+        configured.reasoning_effort = effort
+        return configured
 
     def generate(self, prompt, context):
         raise RuntimeError("CodingAgentProvider requires the agent schema through generate_with_schema")
@@ -44,7 +51,9 @@ class CodingAgentProvider:
         with tempfile.TemporaryDirectory(prefix="job-search-agent-") as directory:
             directory = Path(directory)
             if kind == "grok":
-                completed = _run_grok(executable, model, request_text, schema, directory, read_url, env, self.timeout)
+                completed = _run_grok(
+                    executable, model, request_text, schema, directory, read_url, env, self.timeout,
+                    self.reasoning_effort)
                 output_path = None
             else:
                 completed, output_path = _run_codex(executable, model, request_text, schema, directory, env, self.timeout)
@@ -84,7 +93,7 @@ def _kind(executable):
         "No CLI profile for coding agent {!r}. Set DISCOVERY_PROVIDER to a provider module. Scout does not choose a model.".format(name))
 
 
-def _run_grok(executable, model, request_text, schema, directory, read_url, env, timeout):
+def _run_grok(executable, model, request_text, schema, directory, read_url, env, timeout, reasoning_effort=None):
     prompt_path = directory / "prompt.txt"
     prompt_path.write_text(request_text, encoding="utf-8")
     command = [executable]
@@ -92,8 +101,9 @@ def _run_grok(executable, model, request_text, schema, directory, read_url, env,
         command.extend(["--model", model])
     if read_url:
         # A page read should stay a short turn. The agent's high default spends
-        # most of its time rewriting the posting. CODING_AGENT_REASONING overrides this.
-        effort = str(env.get("CODING_AGENT_REASONING") or "low").strip()
+        # most of its time rewriting the posting. The bookmark workflow effort
+        # overrides this, then CODING_AGENT_REASONING, then low.
+        effort = str(reasoning_effort or env.get("CODING_AGENT_REASONING") or "low").strip()
         command.extend(["--tools", "web_search,web_fetch", "--always-approve", "--reasoning-effort", effort])
     else:
         command.append("--disable-web-search")

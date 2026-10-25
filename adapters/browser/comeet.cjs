@@ -44,6 +44,9 @@ async function submit(input) {
       outcome.blockers = ['Human verification blocks form preparation; manual application is required.'];
       return outcome;
     }
+    const answers = new Map((input.answers || [])
+      .filter(item => item && item.label && item.value)
+      .map(item => [String(item.label).trim().toLowerCase(), String(item.value)]));
     const personal = profile.personal || {};
     const fullName = personal.name || personal.full_name || '';
     const parts = fullName.trim().split(/\s+/);
@@ -79,7 +82,10 @@ async function submit(input) {
       outcome.fields.push({ label: id === 'cv' ? 'Resume' : 'Cover Letter', required: id === 'cv', value: input.package_name, source: 'supplied package PDF', state: 'prepared' });
     }
     for (const [id, label] of [['portfolio', 'Portfolio'], ['inputNote', 'Personal note']]) {
-      if (await frame.locator('#' + id).count()) outcome.fields.push({ label, required: false, value: null, source: null, state: 'blank' });
+      if (!await frame.locator('#' + id).count()) continue;
+      const value = answers.get(label.toLowerCase()) || null;
+      if (value) await frame.locator('#' + id).fill(value);
+      outcome.fields.push({ label, required: false, value, source: value ? 'grok-4.7' : null, state: value ? 'prepared' : 'blank' });
     }
     const unknownRequired = await frame.locator('input[required],select[required],textarea[required]').evaluateAll(elements =>
       elements.filter(e => !['inputFirstName', 'inputLastName', 'inputEmail', 'inputTel', 'cv'].includes(e.id)).map(e => e.name || e.id || 'Unknown required field'));

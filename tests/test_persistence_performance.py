@@ -8,16 +8,16 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
-from persistence_api.google_docs_repository import GoogleDocsClient, GoogleDocsRepository
-from persistence_api.google_drive_artifacts import GoogleDriveArtifactStore
-from services.persistence_client import PersistenceApiClient, PersistenceApiError
+from application_service.google_docs_repository import GoogleDocsClient, GoogleDocsRepository
+from application_service.google_drive_artifacts import GoogleDriveArtifactStore
+from services.application_service_client import ApplicationServiceClient, ApplicationServiceError
 from services.report_checkpoint import ReportCheckpoint
 from tests.test_google_docs_repository import tab
 
 
 def test_repeated_journal_reads_share_one_fetch_until_expiry(monkeypatch):
     clock = [0]
-    monkeypatch.setattr('persistence_api.google_docs_repository.monotonic', lambda: clock[0])
+    monkeypatch.setattr('application_service.google_docs_repository.monotonic', lambda: clock[0])
     client = GoogleDocsClient('token', 'doc')
     client.cache_seconds = 5
     calls = []
@@ -66,7 +66,7 @@ def test_revision_conflict_does_not_replay_old_text_offsets():
 
 def test_checkpoints_reuse_folder_and_file_ids_without_caching_content(monkeypatch):
     clock = [0]
-    monkeypatch.setattr('persistence_api.google_drive_artifacts.monotonic', lambda: clock[0])
+    monkeypatch.setattr('application_service.google_drive_artifacts.monotonic', lambda: clock[0])
     store = GoogleDriveArtifactStore('token', 'root')
     store.metadata_cache_seconds = 60
     calls = []
@@ -130,8 +130,8 @@ def test_client_timeout_is_bounded_and_counted(monkeypatch):
         assert kwargs['timeout'] == 2
         raise TimeoutError('timed out')
     monkeypatch.setattr('urllib.request.urlopen', timeout)
-    client = PersistenceApiClient(timeout=2)
-    with pytest.raises(PersistenceApiError, match='timed out'):
+    client = ApplicationServiceClient(timeout=2)
+    with pytest.raises(ApplicationServiceError, match='timed out'):
         client.get_application('app')
     assert client.storage_statistics()['active_requests'] == 0
     assert client.storage_statistics()['operations']['GET /applications/{id}']['errors'] == 1

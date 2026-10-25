@@ -18,13 +18,19 @@ def _safe_error_detail(detail, secret):
 class XAIProvider:
     """Stateless Grok client. It receives prompt text and context only."""
 
-    def __init__(self, api_key=None, model=None, endpoint=None, timeout=None, opener=None):
+    def __init__(self, api_key=None, model=None, endpoint=None, timeout=None, opener=None, reasoning_effort=None):
         self.api_key = api_key or os.environ.get("XAI_API_KEY")
         self.model = model or os.environ.get("XAI_MODEL", "grok-4.7")
         self.endpoint = endpoint or os.environ.get("XAI_RESPONSES_URL", "https://api.x.ai/v1/responses")
         self.timeout = int(timeout or os.environ.get("XAI_TIMEOUT_SECONDS", "300"))
         self.opener = opener or urllib.request.urlopen
         self.tools = None
+        self.reasoning_effort = reasoning_effort
+
+    def with_reasoning_effort(self, effort):
+        configured = copy(self)
+        configured.reasoning_effort = effort
+        return configured
 
     def with_tools(self, tools):
         """Return a call-local provider that may browse while reading a posting."""
@@ -58,6 +64,8 @@ class XAIProvider:
                 prompt, json.dumps(context, ensure_ascii=False, sort_keys=True)),
             "text": {"format": text_format},
         }
+        if self.reasoning_effort:
+            payload["reasoning"] = {"effort": self.reasoning_effort}
         if self.tools:
             payload["tools"] = self.tools
         request = urllib.request.Request(

@@ -10,11 +10,10 @@ from dataclasses import asdict, is_dataclass
 
 from pypdf import PdfReader
 from adapters.job_boards.posting_details import (
-    fetch_posting_details, posting_artifact_name, posting_content_bytes,
+    posting_artifact_name, posting_content_bytes,
     read_posting_artifact)
-from .scout_reading import PostingReadFailure, posting_from_model
-from persistence_api.journal_format import normalize_posting_url
-from persistence_api.profile import calendly_url
+from application_service.journal_format import normalize_posting_url
+from application_service.profile import calendly_url
 from .agent_runner import run as run_agent
 from .application_package import saved_package
 from .document_generator import generate_application_pdf
@@ -49,7 +48,7 @@ class PipelineAgents:
         self.submission = ReadySubmission(persistence, registry, submission_adapter, manage_state=False)
 
     def invoke(self, name, context, workflow):
-        if name in ("read-posting", "score"):
+        if name in ("read-posting", "validate"):
             from .worker_main import load_discovery_provider
             provider = load_discovery_provider()
         else:
@@ -82,48 +81,22 @@ class PipelineAgents:
             context['application'] = application
             context['application_id'] = application['application_id']
         if name == 'read-posting':
-            context['read_posting_url'] = application['posting_url']
-            context['company'] = application['company']
-            context['role'] = application['role']
-            # A coding-agent failure, including "max turns reached", means the
-            # model produced no posting. The exact-URL adapter still gets a try
-            # before this is reported as a read failure.
-            try:
-                output = self.invoke(name, context, 'read-posting')
-                reader_error = None
-            except Exception as error:
-                output = None
-                reader_error = error
-            try:
-                if reader_error is not None:
-                    raise PostingReadFailure(str(reader_error))
-                posting = posting_from_model(
-                    application['posting_url'], application['company'], application['role'], output)
-            except PostingReadFailure as model_failure:
-                # Some ATS pages are exact and public but are difficult for a
-                # model-only reader to render. The deterministic adapter knows
-                # how to resolve those URLs without changing the URL identity.
-                try:
-                    posting = fetch_posting_details(application['posting_url'])
-                except Exception as adapter_failure:
-                    raise PostingReadFailure(
-                        'model reader: {}; exact URL adapter: {}'.format(model_failure, adapter_failure))
-                output = {
-                    'company': application['company'],
-                    'role': application['role'],
-                    'posting_url': application['posting_url'],
-                    'resolved_url': posting.get('source_url'),
-                    'description': posting['description'],
-                    'read_failure': '',
-                }
-            if posting is None:
-                return {'outcome': 'read_failure', 'output': output}
-            return {'outcome': 'read', 'output': output, 'artifacts': [artifact(
+            from .bookmark_read import read_discovered_posting
+            output, attempt = read_discovered_posting(
+                application['posting_url'], application['company'], application['role'])
+            result = {'outcome': 'read', 'output': output, 'artifacts': [artifact(
                 posting_artifact_name(application['company'], application['role'], application['posting_url']),
-                posting_content_bytes(posting), 'application/json', 'Posting content')]}
-        if name == 'score':
+                posting_content_bytes({
+                    'posting_url': output['posting_url'],
+                    'source_url': output.get('resolved_url'),
+                    'description': output['description'],
+                }), 'application/json', 'Posting content')]}
+            if attempt:
+                result['attempt'] = attempt
+            return result
+        if name == 'validate':
             context['posting_content'] = read_posting(self.persistence, application)
-            output = self.invoke(name, context, 'score')
+            output = self.invoke(name, context, 'validate-bookmarked')
             if output.get('is_match'):
                 return {'outcome': 'validated', 'output': output}
             else:
@@ -164,6 +137,9 @@ class PipelineAgents:
             output['draft'] = ensure_scheduling_link(output.get('draft') or 'Please choose a convenient time.', context['calendly_url'])
         outcome = ('interview' if intent in SCHEDULING_INTENTS else
                    'rejected' if intent in {'rejection', 'rejected'} else
+                   'confirmed' if intent in {
+                       'application_received', 'application_confirmed', 'confirmation', 'applied_confirmation',
+                   } else
                    'offered' if intent == 'offer' else 'processed')
         # A correspondence result proposes a draft. Sending remains a separate
         # approved external action, never an implicit effect of classification.

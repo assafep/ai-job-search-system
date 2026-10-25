@@ -64,7 +64,7 @@ def test_preparation_keeps_its_own_provider():
 
 
 def test_empty_search_terms_are_derived_once(monkeypatch, tmp_path):
-    from persistence_api.repository import MemoryRepository
+    from application_service.repository import MemoryRepository
     from services.orchestrator import Orchestrator
     from services.workload_registry import WorkloadRegistry
     from tests.test_orchestrator import pipeline_file

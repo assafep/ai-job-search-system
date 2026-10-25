@@ -1,4 +1,4 @@
-from persistence_api.google_drive_artifacts import GoogleDriveArtifactStore, safe_folder_name, FOLDER_MIME
+from application_service.google_drive_artifacts import GoogleDriveArtifactStore, safe_folder_name, FOLDER_MIME
 from services.ready_submission import ReadySubmission
 
 

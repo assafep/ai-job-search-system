@@ -15,9 +15,9 @@ from .approval_service import evaluate
 from .workload_executor import plan_persistence_writes
 from .workload_executor import execute_persistence_writes
 from .runtime_config import OnboardingRequired
-from persistence_api.profile import calendly_url as profile_calendly_url
-from persistence_api.journal_format import ALL_STATES
-from persistence_api.state_machine import ALLOWED_TRANSITIONS
+from application_service.profile import calendly_url as profile_calendly_url
+from application_service.journal_format import ALL_STATES
+from application_service.state_machine import ALLOWED_TRANSITIONS
 
 
 def _get_agents(workflow_name):
@@ -33,6 +33,34 @@ def _get_external_actions(workflow_name):
     """Return the list of external actions for a workflow from its blueprint."""
     definition = parse_workflow(WORKFLOWS[workflow_name])
     return definition.get("external_actions", [])
+
+
+def failure_outcome(workflow_name, error):
+    """Pick the blueprint outcome for a runner exception.
+
+    Transport and persistence failures use ``system_error``. Any other
+    exception uses the workflow's ordinary failure outcome, ``failed`` or
+    ``read_failure``, when the blueprint declares one.
+    """
+    from urllib import error as urllib_error
+    from .application_service_client import ApplicationServiceError
+    from .scout_reading import PostingReadFailure
+    definition = parse_workflow(WORKFLOWS[workflow_name]) if workflow_name in WORKFLOWS else {}
+    outcomes = definition.get('outcomes') or {}
+    system = isinstance(error, (
+        urllib_error.URLError, TimeoutError, ConnectionError, OSError, ApplicationServiceError))
+    if not system and isinstance(error, PostingReadFailure) and outcomes.get('read_failure'):
+        key = 'read_failure'
+    elif not system and outcomes.get('failed'):
+        key = 'failed'
+    elif not system and outcomes.get('read_failure'):
+        key = 'read_failure'
+    else:
+        key = 'system_error'
+    target = outcomes.get(key) or outcomes.get('system_error') or 'Dead Letters Queue'
+    if key != 'system_error' and not outcomes.get(key):
+        key = 'system_error'
+    return key, target
 
 
 def validate_workflow_outcomes(workflow_name, definition):
@@ -57,6 +85,11 @@ def validate_workflow_outcomes(workflow_name, definition):
     for state in input_states:
         for outcome, target in outcomes.items():
             if target is None:
+                continue
+            # A receipt only advances submissions. Later receipts preserve the
+            # existing Applied/Interviewing state (see correspondence writes).
+            if (workflow_name == 'handle-incoming-email' and outcome == 'confirmed'
+                    and state not in {'Prepared', 'Manual Apply Required'}):
                 continue
             # Same-state transition is a safe no-op (matches state_machine.validate_transition)
             if target == state:
@@ -159,8 +192,8 @@ def main(argv=None):
                 raise ValueError(
                     "--execute is missing agent results: " + ", ".join(sorted(missing_agents)))
             require_runtime_configuration()
-            from .persistence_client import PersistenceApiClient
-            result = execute(args.workflow, context, agent_results, PersistenceApiClient())
+            from .application_service_client import ApplicationServiceClient
+            result = execute(args.workflow, context, agent_results, ApplicationServiceClient())
         else:
             result = run(args.workflow, context, agent_results)
     except OnboardingRequired as exc:

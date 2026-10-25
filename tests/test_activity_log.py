@@ -2,9 +2,9 @@ import threading
 
 import pytest
 
-from persistence_api.journal_format import ALL_STATES
-from persistence_api.journal_format import ALL_STATES
-from persistence_api.repository import MemoryRepository
+from application_service.journal_format import ALL_STATES
+from application_service.journal_format import ALL_STATES
+from application_service.repository import MemoryRepository
 from services.activity_log import configure, configure_from_runtime, posting_label
 from services.orchestrator import Orchestrator, format_queue_counts
 from services.pipeline_agents import PipelineAgents
@@ -120,7 +120,7 @@ def test_monitor_flag_prints_queue_counts(capsys, tmp_path):
 
 
 def test_journal_queues_endpoint(monkeypatch):
-    from persistence_api import main
+    from application_service import main
     repository = MemoryRepository()
     repository.create_application("Example", "Backend", "https://example.test/http")
     monkeypatch.setattr(main, "repository", repository)
@@ -138,14 +138,14 @@ def test_api_log_is_off_by_default_and_stays_off_the_terminal(tmp_path, capsys, 
     from http.server import HTTPServer
     from threading import Thread
     from urllib.request import urlopen
-    from persistence_api import main
-    from persistence_api.repository import MemoryRepository
+    from application_service import main
+    from application_service.repository import MemoryRepository
     from services.api_log import configure, configure_from_runtime, log_server
-    path = tmp_path / "persistence-api.log"
+    path = tmp_path / "application-service.log"
     monkeypatch.delenv("API_LOG_ENABLED", raising=False)
     monkeypatch.delenv("API_LOG_FILE", raising=False)
     configure_from_runtime({})
-    log_server("persistence API listening on http://127.0.0.1:8080")
+    log_server("Application Service listening on http://127.0.0.1:8080")
     assert not path.exists()
     captured = capsys.readouterr()
     assert captured.out == "" and captured.err == ""

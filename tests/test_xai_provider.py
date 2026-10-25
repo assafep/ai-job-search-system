@@ -44,6 +44,21 @@ def test_xai_provider_sends_a_strict_schema_to_grok():
     assert payload["text"]["format"]["strict"] is True
     assert payload["text"]["format"]["schema"]["additionalProperties"] is False
     assert "Ada" in payload["input"]
+    assert "reasoning" not in payload
+
+
+def test_xai_provider_sends_medium_reasoning_effort():
+    requests = []
+
+    def opener(request, timeout):
+        requests.append(request)
+        return FakeResponse({"output_text": '{"answers":[]}'})
+
+    provider = XAIProvider(api_key="secret", model="grok-4.7", opener=opener).with_reasoning_effort("medium")
+    provider.generate_with_schema("Answer.", {}, {"type": "object", "properties": {"answers": {"type": "array"}}})
+    payload = json.loads(requests[0].data.decode("utf-8"))
+    assert payload["model"] == "grok-4.7"
+    assert payload["reasoning"] == {"effort": "medium"}
 
 
 def test_xai_provider_can_browse_while_reading_a_posting():

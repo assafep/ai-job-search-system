@@ -1,14 +1,16 @@
 name: validate-bookmarked
 trigger:
-  type: queued_application
+  type: polling
+  cadence: minute
+  poll_kind: queue
   event_type: validate_schedule
-agent: score
+agent: validate
 input_states:
   - Bookmarked
 external_actions: []
 outcomes:
   validated: Validated
-  invalidated: Invalidated
+  invalidated: null
   duplicate: Duplicate
   system_error: Dead Letters Queue
 side_effects: through_data_layer

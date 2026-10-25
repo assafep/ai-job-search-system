@@ -8,8 +8,8 @@ import pytest
 # for the new bookmark workflow structure.
 
 from adapters.job_boards.posting_details import posting_content_bytes
-from persistence_api.models import Application
-from persistence_api.repository import MemoryRepository
+from application_service.models import Application
+from application_service.repository import MemoryRepository
 from services.orchestrator import Orchestrator
 from services.pipeline_agents import PipelineAgents
 from services.pipeline_config import scale, validate
@@ -152,8 +152,7 @@ def test_failed_replay_read_is_recorded_once_with_the_move_last(monkeypatch, tmp
         assert len(events) == 1
         bullets = events[0].data["bullets"]
         assert sum("could not read the posting page" in bullet for bullet in bullets) == 1
-        assert bullets[-1] == "Moved from Discovered to Manual Apply Required"
-        assert not bullets[0].startswith("Moved from")
+        assert bullets[0] == "Discovered --> Manual Apply Required"
     finally:
         orchestrator.close()
 
@@ -224,7 +223,7 @@ def test_artifact_save_failure_routes_to_dead_letters_without_another_scout(monk
                   if event.event_type != "application_created"]
         assert len(events) == 1
         assert "disk full" in str(events[0].data["bullets"])
-        assert events[0].data["bullets"][-1] == "Moved from Discovered to Dead Letters Queue"
+        assert events[0].data["bullets"][0] == "Discovered --> Dead Letters Queue"
     finally:
         orchestrator.close()
 
@@ -347,7 +346,7 @@ def test_scout_does_not_bookmark_a_posting_already_in_any_status(monkeypatch, tm
         events = repository.list_events(discovered.application_id)
         assert len(events) == 1
         assert "already handled (Applied; matched by posting URL)" in str(events[0].data["bullets"])
-        assert events[0].data["bullets"][-1] == "Moved from Discovered to Duplicate"
+        assert events[0].data["bullets"][0] == "Discovered --> Duplicate"
     finally:
         orchestrator.close()
 

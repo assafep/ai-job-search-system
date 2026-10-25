@@ -1,7 +1,8 @@
 """Tests for workflow outcome validation against the state machine."""
 
 import pytest
-from services.workload_runner import validate_workflow_outcomes
+from services.scout_reading import PostingReadFailure
+from services.workload_runner import failure_outcome, validate_workflow_outcomes
 
 
 def test_valid_discover():
@@ -33,7 +34,7 @@ def test_valid_validate():
         "input_states": ["Bookmarked"],
         "outcomes": {
             "validated": "Validated",
-            "invalidated": "Invalidated",
+            "invalidated": None,
             "duplicate": "Duplicate",
             "system_error": "Dead Letters Queue",
         },
@@ -165,6 +166,34 @@ def test_multiple_input_states_all_validated():
         },
     }
     validate_workflow_outcomes("multi-state", definition)
+
+
+def test_runner_failure_uses_the_declared_outcome():
+    assert failure_outcome('prepare-validated', RuntimeError('package failed')) == (
+        'failed', 'Manual Apply Required')
+    assert failure_outcome('bookmark-discovered', PostingReadFailure('unreadable')) == (
+        'read_failure', 'Manual Apply Required')
+    assert failure_outcome('validate-bookmarked', RuntimeError('validator crashed')) == (
+        'system_error', 'Dead Letters Queue')
+    assert failure_outcome('prepare-validated', TimeoutError('database timeout')) == (
+        'system_error', 'Dead Letters Queue')
+
+
+def test_bookmark_failure_lines_name_the_model_effort_and_obstacle():
+    from services.scout_reading import bookmark_attempt_lines
+    lines = bookmark_attempt_lines(PostingReadFailure("HTTP 403", {
+        "model": "not called",
+        "effort": "not used",
+        "logic": ["Fetched the exact posting URL. Bookmark did not call a language model."],
+        "obstacles": ["HTTP 403"],
+    }).attempt)
+    assert lines == [
+        "Model: not called.",
+        "Effort: not used.",
+        "Logic tried: Fetched the exact posting URL. Bookmark did not call a language model.",
+        "Obstacles: HTTP 403",
+        "Tackled: none",
+    ]
 
 
 def test_multiple_input_states_one_invalid_raises():
