@@ -100,8 +100,8 @@ class GoogleDriveArtifactStore:
         return self._request('PATCH', 'https://www.googleapis.com/drive/v3/files/{}?{}'.format(file_id, query), b'{}')
 
     def migrate_profile(self):
-        from .storage_layout import SYSTEM_DIRECTORY
-        folder = self._ensure_folder(self.root_folder_id, SYSTEM_DIRECTORY)
+        from .storage_layout import APPLICANT_DIRECTORY, SYSTEM_DIRECTORY
+        folder = self._ensure_folder(self.root_folder_id, APPLICANT_DIRECTORY)
         canonical = self._find_child(folder['id'], 'applicant_profile.json')
         if canonical is None:
             for name in ('applicant_profile.json', 'application_profile.json'):
@@ -111,7 +111,15 @@ class GoogleDriveArtifactStore:
                     if name != 'applicant_profile.json':
                         self._rename(existing['id'], 'applicant_profile.json')
                     return existing['id']
-        return canonical['id'] if canonical else None
+        if canonical:
+            return canonical['id']
+        legacy_folder = self._find_child(self.root_folder_id, SYSTEM_DIRECTORY, FOLDER_MIME)
+        if legacy_folder:
+            existing = self._find_child(legacy_folder['id'], 'applicant_profile.json')
+            if existing:
+                self._move(existing['id'], legacy_folder['id'], folder['id'])
+                return existing['id']
+        return None
 
     def migrate_internal_storage(self):
         from .storage_layout import SYSTEM_DIRECTORY

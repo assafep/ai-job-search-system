@@ -98,7 +98,7 @@ create company and role as nested folders, and do not write artifact files
 directly with a Drive client. Record an artifact reference through the API only
 after the upload operation is accepted.
 
-Applicant profile data belongs at `.ai-job-search-system/applicant_profile.json`
+Applicant profile data belongs at `Applicant/applicant_profile.json`
 and remains accessible through `/profile`. Store workload-owned internal files
 under `.ai-job-search-system/workloads-internal-state/<workflow>/` using `/files`.
 Use `application_service.storage_layout.workload_state_path` to construct those paths.

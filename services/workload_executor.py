@@ -5,6 +5,7 @@ workflow-side logic that turns an agent result into a state mutation, and it
 can be run in dry-run mode for test drives.
 """
 
+import base64
 import hashlib
 import re
 
@@ -369,6 +370,7 @@ def plan_persistence_writes(workflow_name, context, agent_results):
                         "cover_letter": package["cover_letter"],
                         "cv_html": context.get("cv_html"),
                         "source_resume_path": context.get("source_resume_path"),
+                        "source_resume_base64": context.get("source_resume_base64"),
                         "applicant_profile": context.get("applicant_profile"),
                         "application": context.get("application"),
                         "calendly_url": context.get("calendly_url"),
@@ -530,7 +532,9 @@ def execute_persistence_writes(operations, persistence_client, dry_run=True):
             continue
         if operation["operation"] == "generate_and_store_artifact":
             resume_pdf = None
-            if operation.get("source_resume_path"):
+            if operation.get("source_resume_base64"):
+                resume_pdf = base64.b64decode(operation["source_resume_base64"], validate=True)
+            elif operation.get("source_resume_path"):
                 with open(operation["source_resume_path"], "rb") as source:
                     resume_pdf = source.read()
             content = generate_application_pdf(

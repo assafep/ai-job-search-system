@@ -1,7 +1,9 @@
 """Drive paths for private application data and workflow-owned state."""
 
 SYSTEM_DIRECTORY = '.ai-job-search-system'
-PROFILE_PATH = SYSTEM_DIRECTORY + '/applicant_profile.json'
+APPLICANT_DIRECTORY = 'Applicant'
+PROFILE_PATH = APPLICANT_DIRECTORY + '/applicant_profile.json'
+LEGACY_PROFILE_PATH = SYSTEM_DIRECTORY + '/applicant_profile.json'
 WORKLOAD_STATE_DIRECTORY = SYSTEM_DIRECTORY + '/workloads-internal-state'
 
 

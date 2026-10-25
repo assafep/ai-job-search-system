@@ -223,16 +223,48 @@ def obtain_email_token(email=None):
 
 
 def save_runtime(path, config):
-    with open(path, "w") as handle:
+    temporary = str(path) + ".tmp"
+    with open(temporary, "w") as handle:
         json.dump(config, handle, indent=2)
         handle.write("\n")
+    os.replace(temporary, path)
 
 
-def main():
+def main(argv=None):
+    import argparse
+    parser = argparse.ArgumentParser(description="Configure Drive, upload a résumé and extract an applicant profile")
+    parser.add_argument('--applicant', action='store_true', help='Run Drive/applicant stages for an existing installation')
+    args = parser.parse_args(argv or [])
     path = os.path.abspath(CONFIG_PATH)
     if os.path.exists(path):
         with open(path) as handle:
             config = json.load(handle)
+        if args.applicant:
+            from .drive_applicant import connect, prepare_applicant
+            drive = config['google_drive']
+            configured = drive.get('applicant_profile_path') or PROFILE_PATH
+            profile_path = os.path.expanduser(configured)
+            if not os.path.isabs(profile_path):
+                profile_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), profile_path)
+            try:
+                storage = connect(drive['artifact_root_url'])
+                previous = {}
+                if os.path.isfile(profile_path):
+                    with open(profile_path) as handle:
+                        previous = json.load(handle)
+                prepare_applicant(storage, profile_path,
+                    countries=(previous.get('job_search') or {}).get('countries'),
+                    calendly_url=(config.get('scheduling') or {}).get('calendly_url'))
+                drive['application_root_path'] = 'Applications'
+                drive['applicant_directory'] = 'Applicant'
+                drive['applicant_profile_path'] = runtime_profile_path(profile_path)
+                save_runtime(path, config)
+                return 0
+            except (KeyboardInterrupt, EOFError):
+                return 130
+            except (OSError, ValueError, RuntimeError) as exc:
+                print('Applicant onboarding stopped: {}'.format(exc), file=sys.stderr)
+                return 1
         configured_profile = config.get('google_drive', {}).get('applicant_profile_path')
         if configured_profile:
             project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -270,67 +302,46 @@ def main():
 
     print("Job-search automation onboarding")
     print("No local runtime configuration was found.")
-    print("Credentials are not stored by this wizard; configure them in the runtime environment.")
     connection = ask("Google Drive connection/profile name: ")
     journal_url = ask("Interview Journal Google Doc URL: ", google_doc_url)
-    artifact_root_url = ask("Google Drive artifact root folder URL: ", drive_folder_url)
-    application_parent = ask(
-        "Root-relative parent for application folders (blank for Applications): ",
-        application_root_path,
-    )
-    country_input = ask(
-        "Target countries (ISO codes, comma-separated; e.g. IL,US): ",
-        country_codes,
-    )
+    countries = parse_country_codes(ask("Target countries (ISO codes, comma-separated; e.g. IL,US): ", country_codes))
     calendly_url = ask("Calendly scheduling URL: ", web_url)
-    resume_path = ask("Resume file path: ", existing_path)
-    countries = parse_country_codes(country_input)
-    personal = extract_resume_contacts(resume_path, countries)
-    personal['phone'] = confirm_phone(personal.get('phone'), countries)
-
-    profile_path = os.path.abspath(PROFILE_PATH)
-    profile = create_applicant_profile(
-        resume_path, profile_path, calendly_url, countries, personal=personal
-    )
-
-    config = {
-        "google_drive": {
-            "connection": connection,
-            "interview_journal_url": journal_url,
-            "artifact_root_url": artifact_root_url,
-            "applicant_profile_path": runtime_profile_path(profile_path),
-            "application_root_path": application_parent or "Applications",
-        },
-        "scheduling": {"calendly_url": calendly_url},
-        "bookmark-discovered": dict(BOOKMARK_DISCOVERED),
-    }
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as handle:
-        json.dump(config, handle, indent=2)
-        handle.write("\n")
-    print("Saved local runtime configuration to {}".format(path))
-    print("Created applicant profile scaffold at {}".format(profile_path))
-    from provisioning.drive_login import file_login_instructions
+    folder = ask("Existing Google Drive folder URL or My Drive folder path: ", lambda value: bool(value))
+    from .drive_applicant import connect, prepare_applicant
+    from provisioning.state import ProvisioningFailure
     try:
-        print(file_login_instructions((personal or {}).get('email')))
-    except Exception as exc:
-        print(str(exc))
-    try:
-        print("Drive profile sync: {}".format(sync_profile_to_drive(profile, profile_path)))
-    except Exception as exc:
-        # The runtime file was created by this invocation. Do not leave a
-        # configuration that looks complete when authenticated journal
-        # validation failed; the user can correct the Drive setup and rerun
-        # onboarding without manually deleting it.
-        try:
-            os.unlink(path)
-        except OSError:
-            pass
-        print("Drive profile sync failed: {}".format(exc), file=sys.stderr)
+        storage = connect(folder)
+        profile_path = os.path.abspath(PROFILE_PATH)
+        profile = prepare_applicant(storage, profile_path, countries, calendly_url)
+        config = {
+            "google_drive": {
+                "connection": connection,
+                "interview_journal_url": journal_url,
+                "artifact_root_url": "https://drive.google.com/drive/folders/" + storage.owner.root_folder_id,
+                "applicant_profile_path": runtime_profile_path(profile_path),
+                "application_root_path": "Applications",
+                "applicant_directory": "Applicant",
+            },
+            "scheduling": {"calendly_url": calendly_url},
+            "bookmark-discovered": dict(BOOKMARK_DISCOVERED),
+        }
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        temporary = path + '.tmp'
+        with open(temporary, 'w') as handle:
+            json.dump(config, handle, indent=2)
+            handle.write('\n')
+        os.replace(temporary, path)
+    except (KeyboardInterrupt, EOFError):
+        print("Onboarding cancelled; runtime configuration was not created.")
+        return 130
+    except (OSError, ValueError, RuntimeError, ProvisioningFailure) as exc:
+        print("Onboarding stopped: {}".format(exc), file=sys.stderr)
         return 1
-    obtain_email_token((personal or {}).get('email'))
+    print("Saved runtime configuration to {}".format(path))
+    print("Saved extracted profile to Applicant/applicant_profile.json in Drive.")
+    obtain_email_token((profile.get('personal') or {}).get('email'))
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))

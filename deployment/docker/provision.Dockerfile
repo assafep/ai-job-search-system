@@ -38,7 +38,8 @@ RUN apt-get update \
 
 # Schema initialization imports psycopg. The repo is not copied into this image.
 RUN pip install --no-cache-dir 'psycopg[binary]==3.2.12' \
-    'mcp==1.26.0' 'PyYAML==6.0.3' 'jsonschema==4.26.0'
+    'mcp==1.26.0' 'PyYAML==6.0.3' 'jsonschema==4.26.0' \
+    'pypdf==3.17.4' 'phonenumbers==8.13.55'
 
 ENV PATH="/opt/google-cloud-sdk/bin:${PATH}" \
     CLOUDSDK_CORE_DISABLE_PROMPTS=1 \

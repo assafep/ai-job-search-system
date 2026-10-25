@@ -133,3 +133,11 @@ Keep Google credentials and `APPLICATION_SERVICE_TOKEN` in the host's secret man
 
 See [ChatGPT workflow execution](chatgpt-workflows.md) for the MCP workflow tools,
 durable background worker, scoped requests, PDF reports, and reconciliation.
+
+## Applicant onboarding dependency
+
+Immediately after `provision_drive`, `up` runs `prepare_applicant`. It ensures
+`Applications` and `Applicant`, waits for a readable résumé PDF in Applicant,
+extracts the profile and verifies `Applicant/applicant_profile.json` before
+deploying. For an existing installation, run
+`python3 -m services.onboarding --applicant`. See [the stage diagram and setup](../docs/onboarding.md).

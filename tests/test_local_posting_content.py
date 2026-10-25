@@ -25,11 +25,18 @@ def test_read_posting_saves_posting_artifact(monkeypatch):
     assert artifacts[0].name.startswith('Job Posting - ')
 
 
-def test_preparation_uses_the_exact_scout_content_without_network(monkeypatch, candidate_profile):
+@pytest.mark.parametrize("portable", [False, True])
+def test_preparation_uses_the_exact_scout_content_without_network(monkeypatch, candidate_profile, portable):
     from services.workflow_runtime import WorkflowRuntime
     from services.workload_registry import WorkloadRegistry
     from services.event_dispatcher import dispatch
     repository = MemoryRepository()
+    if portable:
+        import hashlib
+        from pathlib import Path
+        content = Path(candidate_profile['source_resume']['path']).read_bytes()
+        repository.store_file('Applicant/resume.pdf', content, 'application/pdf')
+        candidate_profile['source_resume'] = {'path': 'Applicant/resume.pdf', 'sha256': hashlib.sha256(content).hexdigest()}
     repository.save_profile(candidate_profile)
 
     class Client:
@@ -75,6 +82,7 @@ def test_preparation_uses_the_exact_scout_content_without_network(monkeypatch, c
 
     def provider(prompt, context):
         assert context['job_posting']['description'].strip() == source['description'].strip()
+        assert 'source_resume_base64' not in context
         return {'cover_letter': 'Dear Acme Hiring Team,\n\nI build reliable backends.', 'proposed_action': 'Proceed'}
 
     outcome = WorkflowRuntime(registry, client).run(envelope['workload_id'], agent_provider=provider)

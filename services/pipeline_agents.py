@@ -109,12 +109,13 @@ class PipelineAgents:
             path = (profile.get('source_resume') or {}).get('path')
             if not path:
                 raise ValueError('original onboarding resume PDF is required')
-            context['resume_text'] = '\n'.join(page.extract_text() or '' for page in PdfReader(path).pages)
+            from io import BytesIO
+            from .source_resume import read_source_resume
+            resume = read_source_resume(self.persistence, profile)
+            context['resume_text'] = '\n'.join(page.extract_text() or '' for page in PdfReader(BytesIO(resume)).pages)
             output = self.invoke(name, context, 'prepare-validated')
             if not str(output.get('cover_letter') or '').strip():
                 return {'outcome': 'failed', 'output': output}
-            with open(path, 'rb') as handle:
-                resume = handle.read()
             content = generate_application_pdf(output['cover_letter'], calendly_url=context['calendly_url'],
                                                resume_pdf=resume, applicant_profile=profile, application=application)
             personal = profile.get('personal') or {}

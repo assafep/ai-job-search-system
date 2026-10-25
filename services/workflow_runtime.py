@@ -106,11 +106,16 @@ class WorkflowRuntime:
         if workflow == "prepare-validated":
             from adapters.job_boards.posting_details import read_posting_artifact
             from pypdf import PdfReader
+            from io import BytesIO
+            import base64
+            from .source_resume import read_source_resume
             application = enriched.get("application") or {}
             enriched["job_posting"] = read_posting_artifact(
                 self.persistence_client, application_id, application.get('posting_url', ''))
+            resume = read_source_resume(self.persistence_client, profile)
+            enriched["source_resume_base64"] = base64.b64encode(resume).decode("ascii")
             enriched["resume_text"] = '\n'.join(
-                page.extract_text() or '' for page in PdfReader(enriched["source_resume_path"]).pages)
+                page.extract_text() or '' for page in PdfReader(BytesIO(resume)).pages)
         if workflow == "bookmark-discovered":
             application = enriched.get("application") or {}
             if not enriched.get("posting_url") and not enriched.get("read_posting_url"):
@@ -153,7 +158,8 @@ class WorkflowRuntime:
             return result
         agent_results = {}
         for agent_name in _get_agents(workflow):
-            agent_context = dict(enriched_context)
+            agent_context = {key: value for key, value in enriched_context.items()
+                             if key != "source_resume_base64"}
             if hasattr(agent_provider, "with_reasoning_effort"):
                 from .workload_effort import effort_for_workflow
                 agent_context["reasoning_effort"] = effort_for_workflow(workflow)
@@ -391,7 +397,8 @@ class WorkflowRuntime:
                                                      application_snapshot=app if preclaimed else None)
                 agent_results = {}
                 for agent_name in _get_agents(record.workflow):
-                    agent_context = dict(context)
+                    agent_context = {key: value for key, value in context.items()
+                                     if key != "source_resume_base64"}
                     agent_results[agent_name] = run_agent(agent_name, agent_context, agent_provider)
             requested_actions = context.get("approval_actions") or []
             if not isinstance(requested_actions, list):

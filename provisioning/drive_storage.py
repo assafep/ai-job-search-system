@@ -112,6 +112,16 @@ def _list_files(api, query):
 
 
 def resolve_folder(api, path):
+    if str(path).startswith('https://drive.google.com/'):
+        from application_service.google_drive_artifacts import folder_id_from_url
+        folder_id = folder_id_from_url(path)
+        if folder_id == path:
+            raise ProvisioningFailure('Enter a Google Drive folder URL, not a file URL.')
+        folder = api.request('GET', 'https://www.googleapis.com/drive/v3/files/' + folder_id
+                             + '?fields=id,name,mimeType&supportsAllDrives=true')
+        if folder.get('mimeType') != 'application/vnd.google-apps.folder':
+            raise ProvisioningFailure('The selected Drive resource is not a folder.')
+        return folder
     parent = 'root'
     folder = None
     for name in split_drive_path(path):
@@ -228,12 +238,16 @@ def service_account_token(key, opener=None):
     return token
 
 
-def verify_writer(key, folder_id, opener=None):
+def verify_writer(key, folder_id, opener=None, owner_api=None):
     api = Api(service_account_token(key, opener), opener)
-    created = api.request('POST', 'https://www.googleapis.com/drive/v3/files?fields=id', {
+    # Service accounts have no My Drive storage quota. Create the probe as
+    # the owner, then verify service-account read/update access to that file.
+    created = (owner_api or api).request('POST', 'https://www.googleapis.com/drive/v3/files?fields=id', {
         'name': '.ajss-write-probe', 'mimeType': 'text/plain', 'parents': [folder_id],
     })
     file_id = created['id']
+    api.request('GET', 'https://www.googleapis.com/drive/v3/files/' + file_id + '?fields=id,name')
+    api.request('PATCH', 'https://www.googleapis.com/drive/v3/files/' + file_id, {'name': '.ajss-write-probe-verified'})
     api.request('PATCH', 'https://www.googleapis.com/drive/v3/files/' + file_id, {'trashed': True})
     return file_id
 
@@ -325,13 +339,13 @@ def bind(path, state_dir=None, opener=None, login=None):
     folder = resolve_folder(api, path)
     project_id = project_id_for(folder['id'])
     _, project_created = ensure_project(api, project_id)
-    services_enabled = any(ensure_service(api, project_id, name) for name in (
-        'iam.googleapis.com', 'drive.googleapis.com'))
+    services_enabled = any([ensure_service(api, project_id, name) for name in (
+        'iam.googleapis.com', 'drive.googleapis.com')])
     email, account_created = ensure_service_account(api, project_id)
     key_created = ensure_key(api, project_id, email, key_path)
     granted = ensure_permission(api, folder['id'], email)
     key = json.loads(key_path.read_text())
-    probe = verify_writer(key, folder['id'], opener)
+    probe = verify_writer(key, folder['id'], opener, owner_api=api)
     _save(record_path, {
         'path': list(split_drive_path(path)), 'folder_id': folder['id'],
         'project_id': project_id, 'service_account': email,

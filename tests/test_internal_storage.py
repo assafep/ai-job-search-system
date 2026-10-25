@@ -14,8 +14,8 @@ def test_profile_migration_preserves_file_id_and_is_repeatable():
             self.parent = 'root'
             self.moves = []
         def _ensure_folder(self, parent, name):
-            assert name == '.ai-job-search-system'
-            return {'id': 'system'}
+            assert name == 'Applicant'
+            return {'id': 'applicant'}
         def _find_child(self, parent, name, *args):
             return {'id': 'profile'} if parent == self.parent and name == 'applicant_profile.json' else None
         def _move(self, id, old, new):
@@ -24,7 +24,7 @@ def test_profile_migration_preserves_file_id_and_is_repeatable():
     store = Store()
     assert store.migrate_profile() == 'profile'
     assert store.migrate_profile() == 'profile'
-    assert store.moves == [('profile', 'root', 'system')]
+    assert store.moves == [('profile', 'root', 'applicant')]
 
 
 def test_generic_state_writes_update_existing_file_instead_of_duplicating():

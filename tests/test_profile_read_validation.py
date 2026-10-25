@@ -63,4 +63,4 @@ def test_profile_write_renames_legacy_file_in_place():
     result = repository.save_profile(profile)
     assert result['id'] == 'existing-profile-id'
     assert calls[0] == ('migrate',)
-    assert calls[1] == ('save', '.ai-job-search-system/applicant_profile.json', profile)
+    assert calls[1] == ('save', 'Applicant/applicant_profile.json', profile)

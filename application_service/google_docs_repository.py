@@ -1556,12 +1556,13 @@ class GoogleDocsRepository(Repository):
     def get_profile(self):
         if not self.artifacts:
             raise RuntimeError("artifact root is not configured")
-        from .storage_layout import PROFILE_PATH
-        try:
-            result = self.artifacts.read_path(PROFILE_PATH)
-            return validate_profile(json.loads(result['content'].decode('utf-8')))
-        except KeyError:
-            pass
+        from .storage_layout import PROFILE_PATH, LEGACY_PROFILE_PATH
+        for path in (PROFILE_PATH, LEGACY_PROFILE_PATH):
+            try:
+                result = self.artifacts.read_path(path)
+                return validate_profile(json.loads(result['content'].decode('utf-8')))
+            except KeyError:
+                pass
         for filename in PROFILE_FILENAMES:
             raw = self.artifacts.read_root(filename)
             if raw is not None:

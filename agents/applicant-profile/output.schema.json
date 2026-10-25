@@ -1,0 +1,133 @@
+{
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "enum": [
+        1
+      ]
+    },
+    "personal": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "phone": {
+          "type": "string"
+        },
+        "linkedin_url": {
+          "type": "string"
+        },
+        "location": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "professional": {
+      "type": "object",
+      "properties": {
+        "headline": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "skills": {
+      "type": "object",
+      "properties": {
+        "technical": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "other": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "employment": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "company": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "dates": {
+            "type": "string"
+          },
+          "accomplishments": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "education": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "institution": {
+            "type": "string"
+          },
+          "qualification": {
+            "type": "string"
+          },
+          "dates": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "certifications": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "languages_listed_in_resume": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "usage_notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "personal",
+    "professional",
+    "employment",
+    "skills",
+    "education",
+    "certifications",
+    "languages_listed_in_resume"
+  ]
+}

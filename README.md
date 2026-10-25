@@ -10,15 +10,16 @@ Application Service.
 
 The system polls queues and external sources to run these workflow groups:
 
-1. **Job discovery** — scheduled scans of job boards. Matches are saved as `Bookmarked`.
-2. **Preparation** — each bookmarked posting receives a personalized cover letter and resume PDF. Successful packages move to `Prepared`.
-3. **Auto-apply** — items in the ready queue are submitted automatically. Confirmed submissions become `Applied`; failures go to `Manual Apply Required` or `Dead Letters Queue`.
-4. **Recruitment correspondence** — incoming emails are matched to applications and classified. Rejections, offers, and interview invitations update the application state.
+1. **Job discovery and bookmarking** — scheduled scans save postings as `Discovered`. The bookmark workflow reads and saves their role descriptions, moving them to `Bookmarked`.
+2. **Validation** — compare each bookmarked role description with the candidate’s experience to confirm a strong match. Matching postings move to `Validated` before preparation.
+3. **Preparation** — each validated posting receives a personalized cover letter and resume PDF. Successful packages move to `Prepared`.
+4. **Auto-apply** — items in the ready queue are submitted automatically. Confirmed submissions become `Applied`; failures go to `Manual Apply Required` or `Dead Letters Queue`.
+5. **Recruitment correspondence** — incoming emails are matched to applications and classified. Rejections, offers, and interview invitations update the application state.
 
 Each application follows this lifecycle:
 
 ```text
-Bookmarked → Prepared → Applied → Interviewing → Offer / Rejected
+Discovered → Bookmarked → Validated → Prepared → Applied → Interviewing → Offer / Rejected
 ```
 
 All application-state mutations go through the Application Service; workflow agents never touch external systems directly. The current persistence implementation records state changes in a Google Docs journal. See [Architecture](#architecture) for the target component model.
@@ -57,10 +58,10 @@ stateless and application-state writes remain behind that API.
 
 ## First run
 
-1. **Install dependencies** — `python3 -m pip install -r requirements.txt`
-2. **Configure the system** — run `python3 -m services.onboarding` if `config/runtime.json` is missing
+1. **Install dependencies and authenticate the agent provider** — `python3 -m pip install -r requirements.txt`; run `codex --login` for the default provider.
+2. **Configure the system** — run `python3 -m services.onboarding` if `config/runtime.json` is missing. Have `gcloud`, OpenSSL and an authenticated agent provider available. The wizard grants a service account Editor access to your chosen Drive folder, creates `Applications` and `Applicant`, waits for your résumé PDF in `Applicant`, then extracts and verifies `Applicant/applicant_profile.json`. It cannot complete without a readable résumé and a saved profile.
 3. **Provision infrastructure** — see [deployment/README.md](deployment/README.md). Drive root: `./deployment/ctl.sh drive` (the folder is `drive_path` in `deployment/defaults.json`)
-4. **Authenticate** — run `codex --login` for the default LLM provider
+4. **Start the configured runtime** — use the commands below.
 
 Once configured, you can:
 
@@ -134,7 +135,7 @@ python3 -m services.run --monitor --log --log-file activity.log --workers scout=
 
 **Performance** — Journal reads share a five-second snapshot. Drive folder/file identities cached for 60 seconds. Report checkpoints upload after 10 postings or 60 seconds. Tune cache, checkpoint, and HTTP timeout values in `.env.example`; restart the API after changes.
 
-**Profile storage** — Profile is at `.ai-job-search-system/applicant_profile.json` in Drive. Internal workload files use `.ai-job-search-system/workloads-internal-state/<workflow>/`. Migration endpoint: `POST /storage/migrate-internal`.
+**Profile storage** — Profile is at `Applicant/applicant_profile.json` in Drive. Internal workload files use `.ai-job-search-system/workloads-internal-state/<workflow>/`. Migration endpoint: `POST /storage/migrate-internal`.
 
 **Artifacts** — Upload via `POST /applications/{application_id}/artifacts` with filename, MIME type, and base64 content. Use `idempotency_key` for retryable uploads. List with `GET`, read as base64 by artifact ID. Generic root-relative endpoints (`POST /files`, `GET /files?path=...`) for non-application artifacts.
 
@@ -142,7 +143,7 @@ python3 -m services.run --monitor --log --log-file activity.log --workers scout=
 
 ### Configuration
 
-**Onboarding** — `python3 -m services.onboarding` walks through Drive setup, journal URL, root folder, optional parent directory, Calendly URL, target countries, and resume path. It confirms your phone number and creates `config/applicant_profile.json`. Rerun to fill missing steps.
+**Onboarding** — `python3 -m services.onboarding` collects journal, scheduling and country settings, then sets up service-account access to an existing Drive folder you choose. Immediately afterward it creates `Applications` and `Applicant`, prints the Applicant folder link and blocks until you upload a readable résumé PDF. The stateless profile-extraction agent runs only after that gate, then you confirm your phone. The canonical result is `Applicant/applicant_profile.json`; `config/applicant_profile.json` is a local cache. Credentials remain under ignored `.onboarding/`, never in runtime.json. Use `python3 -m services.onboarding --applicant` to apply these stages to an existing installation or update its résumé. The same résumé hash reuses the extracted profile; multiple PDFs require explicit selection. Cancelling or failing leaves onboarding incomplete. See [the onboarding stages](docs/onboarding.md).
 
 **Authentication** — Default provider is Codex CLI (`codex --login`). Google Drive requires OAuth: `GOOGLE_ACCESS_TOKEN` or `GOOGLE_REFRESH_TOKEN` with `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
 
@@ -219,14 +220,17 @@ Google Drive is a persistence implementation, not an agent-facing API.
 
 ### Job-posting/application states
 
-The supported lifecycle states are:
+The main lifecycle and manual-submission path are:
 
 ```text
-Bookmarked → Prepared → Applied → Interviewing → Offer
-                    ↓
-          Manual Apply Required → Applied (after verified manual submission)
-                         └──────────────────────→ Rejected
+Discovered → Bookmarked → Validated → Prepared → Applied → Interviewing → Offer / Rejected
+
+Prepared → Manual Apply Required → Applied (after verified manual submission)
 ```
+
+Validation confirms a strong match between the role description and the candidate’s
+experience before a posting enters `Validated`. See the [complete state-machine
+diagrams](docs/state-machines.md) for invalidation, duplicates, errors and recovery.
 
 `Rejected` and `Offer` are terminal for the current application attempt. The
 implementation may later add explicit `Withdrawn` or `Skipped` states, but they
@@ -239,7 +243,7 @@ the canonical application state store. The target architecture separates incompl
 applications in Google Docs from completed applications in PostgreSQL, as shown
 in [Architecture](#architecture). The current journal represents applications as follows:
 
-- top-level tabs are the seven states listed above;
+- top-level tabs represent the supported lifecycle states;
 - each application is a child tab under the state that currently contains it;
 - an application tab is identified by its Google Docs tab ID;
 - the tab title is the human-readable company / role label;
@@ -259,7 +263,7 @@ in [Architecture](#architecture). The current journal represents applications as
   trailing slashes, fragments, and common tracking parameters do not create a
   second application.
 
-Use `GET /journal/status` to validate the seven required state containers. A
+Use `GET /journal/status` to validate the required state containers. A
 missing container is reported rather than silently treated as an empty state;
 repair is an explicit `POST /journal/repair` operation through the API.
 

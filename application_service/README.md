@@ -37,10 +37,10 @@ single `Company / Role` folder and referenced from the application journal. By
 default that folder is `{Drive root}/Applications`. Set
 `google_drive.application_root_path` or `GOOGLE_APPLICATION_ROOT_PATH` only to
 choose a different root-relative parent. The profile is independent of that
-setting and lives in `.ai-job-search-system` under the Drive root.
+setting and lives in `Applicant` under the Drive root.
 
 Applicant profile operations use `GET /profile` and `PUT /profile`; the Google
-backend maps them to `.ai-job-search-system/applicant_profile.json` and migrates
+backend maps them to `Applicant/applicant_profile.json` and migrates
 previously misnamed files in place during profile writes. Workflow runtimes
 read the canonical `application_defaults.calendly_url` and fall back to the
 legacy `personal.calendly_url` field when present.

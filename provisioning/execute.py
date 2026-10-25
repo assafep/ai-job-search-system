@@ -62,6 +62,26 @@ def drive_up(path):
     ))
 
 
+def prepare_applicant_up():
+    from services.onboarding.drive_applicant import prepare_applicant, storage_from_checkpoint
+    runtime_path = REPO / 'config' / 'runtime.json'
+    config = json.loads(runtime_path.read_text())
+    drive = config['google_drive']
+    profile_path = Path(drive['applicant_profile_path']).expanduser()
+    if not profile_path.is_absolute():
+        profile_path = REPO / profile_path
+    local = json.loads(profile_path.read_text()) if profile_path.exists() else {}
+    profile = prepare_applicant(storage_from_checkpoint(), profile_path,
+        countries=(local.get('job_search') or {}).get('countries'),
+        calendly_url=(config.get('scheduling') or {}).get('calendly_url'))
+    drive['application_root_path'] = 'Applications'
+    drive['applicant_directory'] = 'Applicant'
+    from services.onboarding.main import save_runtime
+    save_runtime(str(runtime_path), config)
+    return _result(Outcome.CHANGED, ('Applicant résumé verified in Drive',
+        'Extracted profile saved at Applicant/applicant_profile.json',))
+
+
 def blocked(name, resume):
     return _result(Outcome.BLOCKED, (name + ' has no registered live adapter',), resume)
 
@@ -71,6 +91,7 @@ def up_steps(drive_path):
     return (
         ('provision_application_host', bootstrap_up),
         ('provision_drive', lambda: drive_up(drive_path)),
+        ('prepare_applicant', prepare_applicant_up),
         ('deploy_application', deploy_application_release),
         ('prepare_chatgpt_connection', prepare_chatgpt_connection),
         ('provision_runner_host', lambda: blocked(
@@ -118,7 +139,7 @@ def run_up(drive_path=None, completed=()):
         for name, action in pending:
             try:
                 result = action()
-            except (ProvisioningFailure, OSError, subprocess.SubprocessError) as exc:
+            except (ProvisioningFailure, OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
                 result = _result(Outcome.FAILED, (name + ': ' + str(exc),), 'Fix the reported condition and rerun.')
             results.append((name, result))
             if result.outcome not in (Outcome.CHANGED, Outcome.UNCHANGED):

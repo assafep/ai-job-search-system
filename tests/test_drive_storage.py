@@ -52,3 +52,23 @@ def test_missing_folder_stops():
         assert 'Folders here' in str(exc)
     else:
         raise AssertionError('missing folder was accepted')
+
+
+def test_my_drive_write_probe_is_created_as_owner_then_verified_as_service_account(monkeypatch):
+    from provisioning import drive_storage
+    calls = []
+    class Owner:
+        def request(self, method, url, body=None):
+            calls.append(('owner', method, body))
+            return {'id': 'probe'}
+    class Service:
+        def __init__(self, token, opener): pass
+        def request(self, method, url, body=None):
+            calls.append(('service', method, body))
+            return {'id': 'probe'}
+    monkeypatch.setattr(drive_storage, 'service_account_token', lambda key, opener: 'token')
+    monkeypatch.setattr(drive_storage, 'Api', Service)
+    assert drive_storage.verify_writer({}, 'chosen-root', owner_api=Owner()) == 'probe'
+    assert [item[:2] for item in calls] == [('owner', 'POST'), ('service', 'GET'), ('service', 'PATCH'), ('service', 'PATCH')]
+    assert calls[0][2]['parents'] == ['chosen-root']
+    assert calls[-1][2] == {'trashed': True}
