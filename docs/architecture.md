@@ -104,7 +104,7 @@ does not activate a continuous automatic scheduler.
 ## Proposed execution split
 
 This is a proposed redesign, not the current deployment. Nine workflows would
-execute in Vercel, and ChatGPT would own bookmark and auto-submit workflow
+execute in Vercel, and ChatGPT would own validation and auto-submit workflow
 sessions. Hosting those nine runtimes in Vercel and implementing the ChatGPT
 execution boundary require additional work. MCP supplies tools; it does not
 move Python execution into a chat session automatically.
@@ -114,10 +114,10 @@ flowchart TB
     USER[User] --> CHAT
 
     subgraph CHAT["ChatGPT-controlled workflow sessions — proposed"]
-        BOOKMARK["1. Bookmark discovered positions<br/>Read postings and produce bookmark decisions"]
+        VALIDATE["2. Validate bookmarked positions<br/>Evaluate saved postings against the applicant profile"]
         SUBMIT["4. Auto-submit Prepared applications<br/>Coordinate submission and evaluate evidence"]
         TOOLS[Context and execution tool calls]
-        BOOKMARK --> TOOLS
+        VALIDATE --> TOOLS
         SUBMIT --> TOOLS
     end
 
@@ -126,7 +126,7 @@ flowchart TB
         DISPATCH["Durable dispatcher<br/>Route by workflow ownership<br/>Exclusive claims and idempotency"]
         SCHEDULE[Scheduled / polling entry points]
         DISCOVER[0. Discover positions]
-        VALIDATE[2. Validate bookmarked positions]
+        BOOKMARK[1. Bookmark discovered positions]
         PREPARE[3. Prepare application packages]
         MAIL[5. Handle incoming email]
         INTERVIEW[6. Prepare interviews — daily default]
@@ -141,16 +141,16 @@ flowchart TB
         MCP --> DISPATCH
         MCP --> BOUNDARY
         DISPATCH --> SCHEDULE
-        SCHEDULE --> DISCOVER & VALIDATE & PREPARE & MAIL & INTERVIEW
+        SCHEDULE --> DISCOVER & BOOKMARK & PREPARE & MAIL & INTERVIEW
         SCHEDULE --> RECONCILE & COMPLETE & GRANT & GHOST
-        DISCOVER & VALIDATE & PREPARE & MAIL & INTERVIEW --> RUNTIME
+        DISCOVER & BOOKMARK & PREPARE & MAIL & INTERVIEW --> RUNTIME
         RECONCILE & COMPLETE & GRANT & GHOST --> RUNTIME
         RUNTIME --> API
         BOUNDARY --> API
     end
 
     TOOLS <-->|MCP requests and results| MCP
-    DISPATCH -.->|Bookmark work| BOOKMARK
+    DISPATCH -.->|Bookmarked work| VALIDATE
     DISPATCH -.->|Prepared work authorizes submission| SUBMIT
 
     DB[("PostgreSQL<br/>Workflow requests, claims, idempotency<br/>Checkpoints, receipts and PDF reports")]
@@ -171,9 +171,9 @@ In that proposed split, the main pipeline crosses execution environments:
 ```mermaid
 flowchart LR
     DISCOVER[Discover — Vercel] --> Q1[(Discovered)]
-    Q1 --> BOOKMARK[Bookmark — ChatGPT]
+    Q1 --> BOOKMARK[Bookmark — Vercel]
     BOOKMARK --> Q2[(Bookmarked)]
-    Q2 --> VALIDATE[Validate — Vercel]
+    Q2 --> VALIDATE[Validate — ChatGPT]
     VALIDATE --> Q3[(Validated)]
     Q3 --> PREPARE[Prepare package — Vercel]
     PREPARE --> Q4[(Prepared)]
@@ -184,3 +184,37 @@ flowchart LR
 Browser actions still need an execution adapter, and persistent writes still
 pass through the Application Service. ChatGPT owns the two workflow sessions;
 MCP connects those sessions to the execution capabilities.
+
+## Execution migration prerequisites
+
+The requested ownership is: **ChatGPT: validate-bookmarked and submit-prepared;
+Vercel: the other nine workflows**. This supersedes the earlier proposal that
+placed bookmarking in ChatGPT. Publishing the API does not activate this split.
+
+The production API/MCP endpoint is deployed. Its existing worker still runs
+Python workflows on the workstation. Before changing execution ownership:
+
+- Replace local Codex/Grok CLI providers with an API-backed provider for hosted
+  agent workflows. No model API credential was configured in the Vercel
+  production environment at the migration inspection. Configure credentials
+  directly in Vercel, never in committed files or chat.
+- Implement bounded hosted execution, persistent workload/approval registries,
+  exclusive claims across hosts, and durable continuation beyond a function's
+  deadline. The existing workstation worker must not be moved unchanged into
+  an HTTP function. Configure Vercel scheduling separately from deploying MCP;
+  preserve the daily prepare-interview default.
+- Provide a portable original résumé through the Application Service. The
+  current profile's source_resume.path refers to an absolute workstation file.
+  Keep private runtime configuration and applicant data out of deployment source.
+- Implement ChatGPT execution-session tools that provide serialized context and
+  the deployed agent contract, validate returned decisions, check current state,
+  and apply the same workflow logic. Existing startWorkflow only enqueues work
+  for the workstation worker; it does not execute decisions in ChatGPT.
+- Connect a hosted browser adapter for submissions. The default adapter uses
+  local Node/Playwright/Chrome. ChatGPT orchestration still needs a runtime-owned
+  execution adapter; preserve durable pre-submission receipts and never retry
+  an uncertain attempt automatically.
+
+Until those changes are implemented and verified, the current-implementation
+diagram above describes execution. The split diagram describes the requested
+target, not a completed migration.
