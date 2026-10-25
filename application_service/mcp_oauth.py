@@ -108,6 +108,17 @@ class Provider:
         pending = self.store.get('pending', nonce)
         if not pending:
             return HTMLResponse('Authorization request expired. Connect again.', status_code=400, headers=headers)
+        # Chrome checks form-action against redirects as well as the POST URL.
+        # Allow only this OAuth request's already validated callback origin.
+        callback = urlsplit(str(AnyHttpUrl(pending['params']['redirect_uri'])))
+        host = callback.hostname
+        if ':' in host:
+            host = '[' + host + ']'
+        callback_origin = callback.scheme + '://' + host
+        if callback.port is not None:
+            callback_origin += ':' + str(callback.port)
+        headers['Content-Security-Policy'] = (
+            "default-src 'none'; form-action 'self' " + callback_origin + "; frame-ancestors 'none'")
         if request.method == 'GET':
             client = await self.get_client(pending['client_id'])
             label = escape(client.client_name or 'MCP client') if client else 'MCP client'

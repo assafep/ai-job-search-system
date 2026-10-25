@@ -79,6 +79,8 @@ def authorize(client, base):
     assert page.status_code == 200 and 'Test client' in page.text
     # no-referrer makes browsers send Origin: null on this form's POST.
     assert page.headers['referrer-policy'] == 'same-origin'
+    assert page.headers['content-security-policy'] == (
+        "default-src 'none'; form-action 'self' https://client.example.test; frame-ancestors 'none'")
     assert 'owner-test-token' not in page.text
     assert client.post(consent, data={'token': 'wrong'}).status_code == 403
     assert client.post(consent, data={'token': 'owner-test-token'}, headers={'Origin': 'https://attacker.test'}).status_code == 403
