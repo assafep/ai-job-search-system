@@ -3,13 +3,15 @@
 The Application Service stores the grant and builds the renewal links.
 This workflow sends the notice. It does not publish environment variables.
 """
+import os
+
 from application_service.gmail_grant import send_notice
 
 
 def execute(client, opener=None):
     from .bulk_updates import item, require_success
     prepared = client.prepare_gmail_grant()
-    if prepared.get('status') == 'missing':
+    if prepared.get('status') == 'missing' and not os.environ.get('VERCEL'):
         from provisioning.gmail_login import load_gmail_token
         local = load_gmail_token()
         if local and local.get('refresh_token'):

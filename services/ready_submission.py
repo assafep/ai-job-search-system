@@ -154,30 +154,60 @@ class ReadySubmission:
         app = self.persistence.get_application(application_id)
         if app is None:
             raise KeyError(application_id)
-        receipt = self._receipt(application_id)
+        receipt = self.reusable_receipt(application_id)
         if receipt:
             if receipt['status'] in {'Submitted successfully', 'Already submitted'}:
                 self._record_confirmed(application_id, receipt)
-                return dict(receipt, replayed=True)
-            if receipt['status'] == 'Submission unconfirmed':
-                blockers = receipt.get('blockers') or [
-                    'Previous submission is unconfirmed; verify its outcome before attempting another submission.']
-                return dict(receipt, blockers=blockers, replayed=True)
-            # Old runs may have left a pending approval receipt. Ready for
-            # Auto-Apply now authorizes submission, so discard that stale
-            # checkpoint and continue through package validation.
-            if receipt.get('approval_pending') or (
-                    receipt.get('pre_submission_failure') is True
-                    and receipt.get('status') == 'Blocked'
-                    and receipt.get('failure_kind') == 'system_error'
-                    and not receipt.get('package_sha256')):
-                receipt = None
-            elif any(needle in str(item) for item in (receipt.get('blockers') or []) for needle in (
-                    'No verified employer application destination',
-                    'XAI_API_KEY is not configured')):
-                receipt = None
-            else:
-                return dict(receipt, replayed=True)
+            return dict(receipt, replayed=True)
+        context = self.prepared_context(application_id)
+        artifact = context['package']
+        digest = context['package_sha256']
+        effort = context['reasoning_effort']
+        prior_logic = ['Checked that one combined PDF exists, every page has text, and the cover letter matches the employer and role.']
+        # Durably mark the attempt before transmission. An interrupted adapter
+        # must never cause an automatic duplicate application.
+        pending = {'status': 'Submission unconfirmed', 'application_id': application_id,
+                   'package_sha256': digest, 'blockers': ['Submission attempt started; no receipt observed yet.']}
+        self.persistence.store_file(self.receipt_path(application_id), json.dumps(pending).encode(), 'application/json')
+        result = self.adapter(context)
+        if not isinstance(result, dict) or result.get('status') not in OUTCOMES:
+            raise ValueError('submission adapter returned an invalid outcome; attempt remains unconfirmed')
+        if result['status'] in {'Submitted successfully', 'Already submitted'}:
+            if result.get('requires_human_verification'):
+                raise ValueError('successful submission cannot also require human verification')
+            if not (result.get('confirmation_text') or result.get('application_reference')):
+                raise ValueError('submission adapter supplied no confirmation; attempt remains unconfirmed')
+        receipt = dict(result, application_id=application_id, package_sha256=digest,
+                       package_name=artifact['name'], original_posting_url=app['posting_url'])
+        receipt["attempt"] = describe_attempt(receipt, effort, prior_logic)
+        self.persistence.store_file(self.receipt_path(application_id), json.dumps(receipt).encode(), 'application/json')
+        if result['status'] in {'Submitted successfully', 'Already submitted'}:
+            self._record_confirmed(application_id, receipt)
+        return receipt
+
+    def reusable_receipt(self, application_id):
+        """Return a definitive/uncertain prior outcome; never restart uncertainty."""
+        receipt = self._receipt(application_id)
+        if not receipt:
+            return None
+        if receipt['status'] in {'Submitted successfully', 'Already submitted'}:
+            return receipt
+        if receipt['status'] == 'Submission unconfirmed':
+            return dict(receipt, blockers=receipt.get('blockers') or [
+                'Previous submission is unconfirmed; verify its outcome before attempting another submission.'])
+        if receipt.get('approval_pending') or (
+                receipt.get('pre_submission_failure') is True and receipt.get('status') == 'Blocked'
+                and receipt.get('failure_kind') == 'system_error' and not receipt.get('package_sha256')):
+            return None
+        if any(needle in str(item) for item in (receipt.get('blockers') or []) for needle in (
+                'No verified employer application destination', 'XAI_API_KEY is not configured')):
+            return None
+        return receipt
+
+    def prepared_context(self, application_id):
+        app = self.persistence.get_application(application_id)
+        if app is None:
+            raise KeyError(application_id)
         if app['status'] != 'Prepared':
             raise ValueError('submission requires Prepared; found ' + app['status'])
         artifacts = self.persistence.list_artifacts(application_id) or []
@@ -201,32 +231,12 @@ class ReadySubmission:
         prior_logic = [
             "Checked that one combined PDF exists, every page has text, and the cover letter matches the employer and role.",
         ]
-        context = {
+        return {
             'application': app, 'applicant_profile': self.persistence.get_profile(),
             'package': artifact, 'package_bytes': content, 'package_sha256': digest,
             'reasoning_effort': effort,
             'submission_authorized_by_queue': True,
         }
-        # Durably mark the attempt before transmission. An interrupted adapter
-        # must never cause an automatic duplicate application.
-        pending = {'status': 'Submission unconfirmed', 'application_id': application_id,
-                   'package_sha256': digest, 'blockers': ['Submission attempt started; no receipt observed yet.']}
-        self.persistence.store_file(self.receipt_path(application_id), json.dumps(pending).encode(), 'application/json')
-        result = self.adapter(context)
-        if not isinstance(result, dict) or result.get('status') not in OUTCOMES:
-            raise ValueError('submission adapter returned an invalid outcome; attempt remains unconfirmed')
-        if result['status'] in {'Submitted successfully', 'Already submitted'}:
-            if result.get('requires_human_verification'):
-                raise ValueError('successful submission cannot also require human verification')
-            if not (result.get('confirmation_text') or result.get('application_reference')):
-                raise ValueError('submission adapter supplied no confirmation; attempt remains unconfirmed')
-        receipt = dict(result, application_id=application_id, package_sha256=digest,
-                       package_name=artifact['name'], original_posting_url=app['posting_url'])
-        receipt["attempt"] = describe_attempt(receipt, effort, prior_logic)
-        self.persistence.store_file(self.receipt_path(application_id), json.dumps(receipt).encode(), 'application/json')
-        if result['status'] in {'Submitted successfully', 'Already submitted'}:
-            self._record_confirmed(application_id, receipt)
-        return receipt
 
     def run_one(self, application_id):
         envelope = dispatch('application_submission_schedule', {'application_id': application_id},
@@ -252,17 +262,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description='Consume Prepared with confirmed-result tracking')
     parser.add_argument('--application-id', help='Run exactly this application')
     parser.add_argument('--limit', type=int, default=1)
-    args = parser.parse_args(argv)
-    if args.limit < 1:
-        parser.error('--limit must be positive')
-    load(require=True)
-    persistence = ApplicationServiceClient()
-    runner = ReadySubmission(persistence, registry_from_environment())
-    ids = [args.application_id] if args.application_id else [a['application_id'] for a in
-           persistence.list_applications(status='Prepared')[:args.limit]]
-    results = [runner.run_one(application_id) for application_id in ids]
-    print(json.dumps(results, indent=2, ensure_ascii=False))
-    return 0 if all(r['status'] in {'Submitted successfully', 'Already submitted'} for r in results) else 2
+    parser.parse_args(argv)
+    parser.error('Use the submit-prepared MCP workflow task tools in ChatGPT native browser; this CLI cannot substitute for it')
 
 
 if __name__ == '__main__':

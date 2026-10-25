@@ -14,7 +14,13 @@ run the onboarding command described in `README.md`.
 
 ## Boundaries
 
-- Agents may not call Google Drive, Gmail, Calendar, or browser APIs directly.
+- Stateless decision agents may not call Google Drive, Gmail, Calendar, or browser APIs directly.
+- For `validate-bookmarked` and `submit-prepared`, the ChatGPT workflow orchestrator
+  uses ChatGPT native Browser/Computer Use. MCP supplies context and accepts structured
+  observations/results; the Application Service validates and persists them. Never
+  substitute a local CLI, Playwright, API model, or hosted browser for these website
+  interactions. Pause for specific CAPTCHA, sign-in or upload interaction when the
+  host requires it. Native-browser availability and CAPTCHA success are not guaranteed.
 - Adapters expose external systems to workflow runtimes.
 - The Application Service is the only owner of application-state mutations.
 - Every write must be explicit, validated, and idempotent where retries are possible.
@@ -48,9 +54,11 @@ run the onboarding command described in `README.md`.
 - User-facing activity reports must be readable PDFs, not JSON. Machine-readable
   checkpoints may remain JSON under workload-owned internal state.
 - Concurrent queue runs must share a synchronized persistence client and locked
-  workload/approval registries. Use `services.concurrent_queues` for an eight-thread
-  Bookmarked/Prepared pass; never assign the same posting to two
-  workers or run a separate registry-writing process alongside it.
+  workload/approval registries. Native ChatGPT tasks use durable per-item claims for Bookmarked/Prepared;
+  never assign the same posting to two executors. `services.concurrent_queues`
+  remains an isolated legacy/test utility, not the live entry point for these
+  native-browser workflows. Never run a separate registry writer alongside
+  an installation’s active workflow executor.
 
 ## Testing
 

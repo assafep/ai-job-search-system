@@ -150,7 +150,8 @@ class WorkflowRuntime:
             if not posting_url:
                 raise ValueError("bookmark-discovered requires posting_url")
             output, attempt = read_discovered_posting(
-                posting_url, enriched_context.get("company"), enriched_context.get("role"))
+                posting_url, enriched_context.get("company"), enriched_context.get("role"),
+                provider=agent_provider)
             enriched_context["retrieved_posting"] = output
             result = {"read-posting": output}
             if attempt:
@@ -229,6 +230,11 @@ class WorkflowRuntime:
                 from adapters.job_boards.smartrecruiters import SmartRecruitersJobBoard
                 board_class = SmartRecruitersJobBoard
                 boards = source_boards(source)
+            if context.get('discovery_board'):
+                token = context['discovery_board']
+                if token not in boards:
+                    raise ValueError('Discovery board is not in the configured source catalog')
+                boards = {token: boards[token]}
             postings, errors = fetch_employer_boards(board_class, boards)
             context['job_postings'] = select_live_postings(
                 postings, profile, preferred_countries)

@@ -210,3 +210,18 @@ the main journal, excluding archived applications. The existing single-item
 and terminal-cleanup endpoints remain available. MCP exposes `bulkUpdateItems`
 in the domain tool profile; the workflow-only profile continues to exclude
 direct state mutation tools.
+
+## Native ChatGPT browser execution
+
+`validate-bookmarked` and `submit-prepared` use ChatGPT native Browser/Computer
+Use. MCP provides task context, deployed contracts and saved packages; its result
+tools validate and persist observations. The service never launches a replacement
+browser or model for those tasks. `beginChatGPTSubmission` writes the submission
+intent before the final click, and replay does not authorize another click.
+See [the tool protocol and interruption rules](../deployment/chatgpt-workflows.md).
+
+New Drive files can use the existing app-scoped owner login for creation and
+placement, while the service account reads/updates them through the shared
+directory. The hybrid backend durably allocates file IDs before creating them,
+preventing duplicate files after a lost create response. This does not request
+broader OAuth scopes. Existing files retain their IDs on replacement.

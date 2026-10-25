@@ -1,220 +1,143 @@
 # Workflow execution architecture
 
-See [state machines](state-machines.md) for lifecycle transitions and execution tracking.
+See [state machines](state-machines.md) for lifecycle transitions and execution
+tracking, and [the ChatGPT workflow guide](../deployment/chatgpt-workflows.md)
+for tools, setup and interruption handling. `listWorkflows` reports the active
+execution host; `getWorkflowExecutionReadiness` reports activation prerequisites.
+A deployed API does not prove that a ChatGPT browser session is available.
 
-## Current implementation
+## Native ChatGPT browser and Vercel execution
 
-ChatGPT starts and monitors workflows through MCP. Python workflow execution
-runs on the configured workstation worker. The same runtime can also be hosted
-on a cloud process/container host. A CLI or continuous scheduler is another
-entry point; choose one registry-writing runner for an installation.
-
-```mermaid
-flowchart TB
-    USER[User] --> CHAT[ChatGPT]
-    CHAT --> MCP["Application Service MCP endpoint<br/>OAuth or bearer authentication<br/>Workflow tools and related reads"]
-
-    subgraph VERCEL["Vercel — Application Service"]
-        MCP --> RUNAPI["Workflow request API<br/>Validate scope and idempotency<br/>Snapshot eligible application IDs"]
-        REST["Authenticated REST API<br/>OpenAPI validation"]
-        CLAIM["Worker claims, heartbeats and completion<br/>Uncertain runs require reconciliation"]
-        DOMAIN["Application operations<br/>Validated lifecycle transitions<br/>Events, artifacts and file storage"]
-        BULK["Bulk update API<br/>Up to 25 typed items per request<br/>Independent results and durable retry receipts"]
-        REPORT["Run status and readable PDF retrieval"]
-        REST --> CLAIM
-        REST --> DOMAIN
-        REST --> BULK
-        BULK --> DOMAIN
-        REPORT --> MCP
-    end
-
-    subgraph SQL[PostgreSQL]
-        REQUESTS[("Durable workflow-request queue<br/>Queued / running / completed / uncertain")]
-        TRACKING[("Run tracking and idempotency<br/>OAuth records<br/>Completed application snapshots")]
-        FILES[("Workflow-owned files<br/>Checkpoints and submission receipts<br/>Bulk mutation receipts and PDF reports")]
-    end
-
-    RUNAPI --> REQUESTS
-    RUNAPI --> TRACKING
-    CLAIM <--> REQUESTS
-    CLAIM --> TRACKING
-    DOMAIN <--> TRACKING
-    DOMAIN <--> FILES
-    REPORT --> TRACKING
-    REPORT --> FILES
-
-    subgraph HOST["Selected Python execution host — workstation or cloud"]
-        WORKER["Supervised ChatGPT request worker<br/>Consumes explicit workflow requests"]
-        CLI[CLI / automatic scheduler]
-        LOCK["Exclusive runner lock<br/>Shared persistent workload and approval registries"]
-        RUNTIME["Existing Python workflow runtime<br/>Queue, scheduled and external-event workflows"]
-        POOL["Up to eight posting workers<br/>Synchronized Application Service client"]
-        CONTEXT[Gather serialized application context]
-        AGENTS["Stateless agents<br/>Structured decisions"]
-        VALIDATE["Validate decisions and enforce policy<br/>Prepared membership authorizes auto-submit"]
-        ADAPTERS["Runtime-owned adapters<br/>Posting retrieval / browser submission<br/>Email / Calendar"]
-        WORKER --> LOCK
-        CLI --> LOCK
-        LOCK --> RUNTIME
-        RUNTIME --> POOL
-        POOL --> CONTEXT --> AGENTS --> VALIDATE
-        VALIDATE --> ADAPTERS
-    end
-
-    WORKER <-->|Claim and report over HTTPS| REST
-    CONTEXT -->|Read context| REST
-    VALIDATE -->|Explicit state writes| REST
-    RUNTIME -->|Workflows 8, 9 and 10 item writes| BULK
-
-    subgraph DRIVE[Google Drive / Google Docs]
-        JOURNAL[("Application journal and lifecycle queues<br/>Discovered / Bookmarked / Validated / Prepared<br/>Applied / Interviewing / terminal and manual states")]
-        ARTIFACTS[("Applicant profile and application packages<br/>Resume / cover letter / research")]
-        LEGACY[(Legacy workflow files remain readable)]
-    end
-
-    DOMAIN <--> JOURNAL
-    DOMAIN <--> ARTIFACTS
-    DOMAIN --> LEGACY
-    ADAPTERS <--> EXTERNAL[Job boards / employer sites / Gmail / Calendar]
-```
-
-The workflow-request queue in PostgreSQL holds requests to execute work. The
-application queues in the journal describe posting lifecycle states. The host's
-workload and approval registries track execution bookkeeping. These are distinct
-responsibilities.
-
-The workflow-only MCP profile exposes execution requests and relevant reads.
-The domain profile additionally exposes direct domain operations, including
-`bulkUpdateItems`. Internal claim and worker-update endpoints are excluded from
-MCP. Agents receive serialized context and return decisions; runtimes own tool
-calls and adapter execution. Application state changes belong to the Application
-Service.
-
-Bulk updates validate the whole request schema and return per-item outcomes;
-they are not a distributed all-or-nothing transaction. Durable intents prevent
-blind retries of uncertain mutations. Workflows 8 and 10 batch completion and
-removal operations; workflow 9 uses bulk grant installation and acknowledgement.
-
-Automatic `prepare-interview` polling defaults to 86400 seconds, configurable
-through `pipelines.interview.event_poll_seconds`. It polls at scheduler startup
-and every 24 hours afterward; restarting the scheduler resets that timer.
-Explicit CLI and ChatGPT requests remain on demand. The request worker itself
-does not activate a continuous automatic scheduler.
-
-## Proposed execution split
-
-This is a proposed redesign, not the current deployment. Nine workflows would
-execute in Vercel, and ChatGPT would own validation and auto-submit workflow
-sessions. Hosting those nine runtimes in Vercel and implementing the ChatGPT
-execution boundary require additional work. MCP supplies tools; it does not
-move Python execution into a chat session automatically.
+The implemented split assigns website reading/match validation and form submission
+to ChatGPT's **own native browser**. MCP supplies context and records structured
+results; it does not launch a separate browser. The other nine workflows have a
+Vercel Queues execution path. Cloud activation is explicit; until enabled and
+configured, those nine retain their workstation compatibility host. The two
+native-browser workflows are never claimed by that workstation worker.
 
 ```mermaid
 flowchart TB
     USER[User] --> CHAT
+    subgraph CHAT["ChatGPT conversation with native Browser / Computer Use"]
+        VALIDATE["2. validate-bookmarked<br/>Open the website and extract the role description<br/>Check a strong match against candidate experience"]
+        SUBMIT["4. submit-prepared<br/>Fill the employer form with the saved package<br/>Submit once and observe confirmation"]
+        BROWSER["ChatGPT native browser<br/>User interaction when the host requires it"]
+        VALIDATE --> BROWSER
+        SUBMIT --> BROWSER
+    end
+    BROWSER <-->|Read pages / fill forms / observed receipt| SITES[Employer websites / ATS]
+    VALIDATE & SUBMIT <-->|Context, contracts, package and results| MCP
 
-    subgraph CHAT["ChatGPT-controlled workflow sessions — proposed"]
-        VALIDATE["2. Validate bookmarked positions<br/>Evaluate saved postings against the applicant profile"]
-        SUBMIT["4. Auto-submit Prepared applications<br/>Coordinate submission and evaluate evidence"]
-        TOOLS[Context and execution tool calls]
-        VALIDATE --> TOOLS
-        SUBMIT --> TOOLS
+    subgraph VERCEL["Vercel — Application Service and managed workflow functions"]
+        MCP["Authenticated MCP endpoint /mcp<br/>Workflow-specific tools generated from OpenAPI"]
+        ADMIT["Run admission<br/>Validate scope and idempotency<br/>Snapshot all eligible IDs unless explicitly limited"]
+        TASKS["ChatGPT task protocol<br/>Claims and context versions<br/>Validate observed posting and structured decisions<br/>Persist submission intent before the final click"]
+        CRON["Authenticated daily Cron<br/>Nine cloud workflows only<br/>Inactive until cloud execution is enabled"]
+        QUEUE["Vercel Queues<br/>Independent work units<br/>Managed delivery and retries"]
+        CLOUD["Managed Python subscriber<br/>Nine workflows; never validation or submission<br/>Durable intent prevents uncertain re-execution"]
+        RUNTIME["Existing workflow runtime<br/>Stateless agents and runtime-owned adapters"]
+        API["Application Service API<br/>Only owner of application-state mutations<br/>Validated transitions and explicit writes"]
+        BULK["Bulk item updates<br/>Workflows 8, 9 and 10<br/>Per-item outcomes and idempotent receipts"]
+        REPORT["Readable PDF activity reports<br/>Run status and progress"]
+        MCP --> ADMIT
+        MCP --> TASKS
+        ADMIT -->|Vercel-owned requests| QUEUE
+        CRON --> ADMIT
+        QUEUE --> CLOUD --> RUNTIME --> API
+        TASKS --> API
+        RUNTIME --> BULK --> API
+        API --> REPORT --> MCP
     end
 
-    subgraph VERCEL["Vercel — proposed runtime split"]
-        MCP[Authenticated MCP endpoint]
-        DISPATCH["Durable dispatcher<br/>Route by workflow ownership<br/>Exclusive claims and idempotency"]
-        SCHEDULE[Scheduled / polling entry points]
-        DISCOVER[0. Discover positions]
-        BOOKMARK[1. Bookmark discovered positions]
-        PREPARE[3. Prepare application packages]
-        MAIL[5. Handle incoming email]
-        INTERVIEW[6. Prepare interviews — daily default]
-        RECONCILE[7. Reconcile]
-        COMPLETE[8. Complete journal]
-        GRANT[9. Renew Gmail grant]
-        GHOST[10. Identify ghosting]
-        RUNTIME["Shared Python workflow runtime<br/>Stateless agents and validated decisions"]
-        BOUNDARY["ChatGPT execution boundary<br/>Validate current state and decisions<br/>Invoke runtime-owned adapters"]
-        API["Application Service API<br/>Single and bulk domain operations<br/>Status and PDF reports"]
-
-        MCP --> DISPATCH
-        MCP --> BOUNDARY
-        DISPATCH --> SCHEDULE
-        SCHEDULE --> DISCOVER & BOOKMARK & PREPARE & MAIL & INTERVIEW
-        SCHEDULE --> RECONCILE & COMPLETE & GRANT & GHOST
-        DISCOVER & BOOKMARK & PREPARE & MAIL & INTERVIEW --> RUNTIME
-        RECONCILE & COMPLETE & GRANT & GHOST --> RUNTIME
-        RUNTIME --> API
-        BOUNDARY --> API
-    end
-
-    TOOLS <-->|MCP requests and results| MCP
-    DISPATCH -.->|Bookmarked work| VALIDATE
-    DISPATCH -.->|Prepared work authorizes submission| SUBMIT
-
-    DB[("PostgreSQL<br/>Workflow requests, claims, idempotency<br/>Checkpoints, receipts and PDF reports")]
-    DRIVE[("Google Drive / Docs<br/>Application lifecycle queues<br/>Profile, packages and research")]
-    ADAPTERS["Runtime-owned external adapters<br/>Browser / posting retrieval / email / Calendar"]
-    EXTERNAL[Job boards / employer sites / Gmail / Calendar]
-
-    DISPATCH <--> DB
+    DB[("Neon PostgreSQL<br/>Durable request queue, task claims and execution intents<br/>Hosted workload / approval registries<br/>Idempotency, submission receipts and PDF reports")]
+    DRIVE[("Google Drive / Docs<br/>Application journal and lifecycle queues<br/>Applications: posting artifacts, packages and research<br/>Applicant: original resume and applicant_profile.json")]
+    EXTERNAL["Job-board feeds / Gmail / Calendar"]
+    MODELS["Configured API model<br/>Hosted agent workflows only"]
+    ADMIT & TASKS & CLOUD <--> DB
     API <--> DB
     API <--> DRIVE
-    BOUNDARY --> ADAPTERS
-    RUNTIME --> ADAPTERS
-    ADAPTERS <--> EXTERNAL
+    RUNTIME <--> EXTERNAL
+    RUNTIME --> MODELS
 ```
 
-In that proposed split, the main pipeline crosses execution environments:
+The browser-to-website arrows are inside the ChatGPT execution path. Vercel checks
+contracts, current state, package hashes and retry semantics; it does not itself
+observe those webpages. ChatGPT reports what its native browser observed. No
+workstation browser, remote browser, Playwright process or API model substitutes
+for either of those two website workflows.
+
+Bookmarking on Vercel only moves discovered links into Bookmarked. It does not
+need to read a potentially blocked employer site before ChatGPT can inspect it.
+ChatGPT validation saves the complete posting artifact and applies the existing
+validation/completion planner. Preparation subsequently reads that saved artifact
+and the original résumé through the Application Service.
+
+The PostgreSQL request queue represents requests to run workflows. The journal's
+state queues represent application lifecycle stages. Vercel Queues delivers
+independent execution units. These are separate responsibilities.
+
+## Main pipeline across hosts
 
 ```mermaid
 flowchart LR
     DISCOVER[Discover — Vercel] --> Q1[(Discovered)]
-    Q1 --> BOOKMARK[Bookmark — Vercel]
+    Q1 --> BOOKMARK[Bookmark link — Vercel]
     BOOKMARK --> Q2[(Bookmarked)]
-    Q2 --> VALIDATE[Validate — ChatGPT]
+    Q2 --> VALIDATE[Read website and validate — ChatGPT native browser]
     VALIDATE --> Q3[(Validated)]
     Q3 --> PREPARE[Prepare package — Vercel]
     PREPARE --> Q4[(Prepared)]
-    Q4 --> SUBMIT[Auto-submit — ChatGPT]
+    Q4 --> SUBMIT[Fill and submit — ChatGPT native browser]
     SUBMIT --> Q5[(Applied)]
 ```
 
-Browser actions still need an execution adapter, and persistent writes still
-pass through the Application Service. ChatGPT owns the two workflow sessions;
-MCP connects those sessions to the execution capabilities.
+## Workflow ownership
 
-## Execution migration prerequisites
+| Host | Workflows |
+| --- | --- |
+| ChatGPT native browser | 2 validate-bookmarked; 4 submit-prepared |
+| Vercel when activated | 0 discover; 1 bookmark-discovered; 3 prepare-validated; 5 handle-incoming-email; 6 prepare-interview; 7 reconcile; 8 complete-journal; 9 renew-gmail-grant; 10 identify-ghosting |
 
-The requested ownership is: **ChatGPT: validate-bookmarked and submit-prepared;
-Vercel: the other nine workflows**. This supersedes the earlier proposal that
-placed bookmarking in ChatGPT. Publishing the API does not activate this split.
+Cloud execution needs its configured model credentials for agent work, a portable
+résumé from applicant onboarding, working artifact creation, and explicit
+`workflow_execution.vercel_enabled` activation. The supplied Vercel Cron is daily
+at 05:00 UTC and preserves daily interview preparation. Hobby does not provide
+minute Cron; preserving minute polling requires a suitable plan and Cron change.
+A native ChatGPT session remains on demand. Check live readiness instead of
+assuming that shipping this source activates every dependency.
 
-The production API/MCP endpoint is deployed. Its existing worker still runs
-Python workflows on the workstation. Before changing execution ownership:
+## Legacy workstation compatibility
 
-- Replace local Codex/Grok CLI providers with an API-backed provider for hosted
-  agent workflows. No model API credential was configured in the Vercel
-  production environment at the migration inspection. Configure credentials
-  directly in Vercel, never in committed files or chat.
-- Implement bounded hosted execution, persistent workload/approval registries,
-  exclusive claims across hosts, and durable continuation beyond a function's
-  deadline. The existing workstation worker must not be moved unchanged into
-  an HTTP function. Configure Vercel scheduling separately from deploying MCP;
-  preserve the daily prepare-interview default.
-- Provide a portable original résumé through the Application Service. The
-  current profile's source_resume.path refers to an absolute workstation file.
-  Keep private runtime configuration and applicant data out of deployment source.
-- Implement ChatGPT execution-session tools that provide serialized context and
-  the deployed agent contract, validate returned decisions, check current state,
-  and apply the same workflow logic. Existing startWorkflow only enqueues work
-  for the workstation worker; it does not execute decisions in ChatGPT.
-- Connect a hosted browser adapter for submissions. The default adapter uses
-  local Node/Playwright/Chrome. ChatGPT orchestration still needs a runtime-owned
-  execution adapter; preserve durable pre-submission receipts and never retry
-  an uncertain attempt automatically.
+This earlier architecture remains available for the other nine workflows while
+cloud execution is disabled. It is not how native ChatGPT browser tasks execute.
+Only one registry-writing runner should be used for an installation.
 
-Until those changes are implemented and verified, the current-implementation
-diagram above describes execution. The split diagram describes the requested
-target, not a completed migration.
+```mermaid
+flowchart TB
+    CHAT[ChatGPT control request] --> MCP[Application Service MCP — Vercel]
+    MCP --> API[Authenticated Application Service API]
+    API <--> DB[(PostgreSQL request queue / claims / reports)]
+    WORKER["Workstation worker<br/>Remaining workflows only<br/>No native-browser task claims"] <-->|Claim / status / report| API
+    WORKER --> RUNTIME[Existing Python runtime and stateless agents]
+    RUNTIME --> ADAPTERS[Runtime-owned external adapters]
+    RUNTIME -->|Explicit state writes| API
+    API <--> DRIVE[(Google Drive journal / Applicant / Applications)]
+    ADAPTERS <--> SYSTEMS[Job boards / Gmail / Calendar]
+```
+
+All persistence paths retain the Application Service boundary. Bulk changes are
+ordered independent operations with per-item results, not one distributed
+transaction. A durable intent or submission with an unknown outcome is never
+blindly retried. Native-browser pauses preserve the task for specific CAPTCHA,
+sign-in, upload or host-capability interaction; they do not add a Prepared queue
+approval gate or promise successful CAPTCHA handling on every website.
+
+## Drive file creation
+
+The service account reads and edits the selected Drive directory. For new My
+Drive files/folders, the existing `drive.file` owner grant creates app-owned
+items and moves them into that directory; inherited sharing then permits
+service-account reads and updates. PostgreSQL allocates file IDs before create,
+so retries use the same ID even after a lost response. No broader Drive scope
+is requested. Live temporary probes verified folder/file creation, read/write
+and stable IDs on replacement; probe items were trashed afterward.

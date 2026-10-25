@@ -15,4 +15,4 @@ outcomes:
   unconfirmed: Manual Apply Required
   waiting: null
   system_error: Dead Letters Queue
-side_effects: through_data_layer_and_submission_adapter
+side_effects: through_data_layer_and_chatgpt_native_browser

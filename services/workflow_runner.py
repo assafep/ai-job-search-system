@@ -349,6 +349,9 @@ def run_all(
     Returns:
         List of result dicts, one per application.
     """
+    from application_service.workflow_execution import CHATGPT_WORKFLOWS
+    if agent_provider is None and (state in {'Bookmarked', 'Prepared'} or workflow_name in CHATGPT_WORKFLOWS):
+        raise ValueError('Validation and submission require ChatGPT native browser execution through MCP workflow task tools')
     from .report_checkpoint import ReportCheckpoint
     from .runtime_config import load
     from application_service.storage_layout import workload_state_path

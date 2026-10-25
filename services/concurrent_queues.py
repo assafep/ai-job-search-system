@@ -205,23 +205,8 @@ def run(persistence, registry, runtime, agent_provider, workers=8, *, workflows=
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    args = parser.parse_args(argv)
-    load(require=True)
-    # Prevent two copies of this runner from clobbering the same operational
-    # JSON files or executing the same posting. Threads share one registry.
-    path = os.path.join(ROOT, 'config', 'concurrent-queues.lock')
-    with open(path, 'a') as process_lock:
-        try:
-            fcntl.flock(process_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise RuntimeError('Another concurrent queue run is already active')
-        persistence = ApplicationServiceClient()
-        if not persistence.journal_status()['valid']:
-            raise ValueError('journal validation failed; refusing to start queue workers')
-        registry = registry_from_environment()
-        runtime = runtime_from_environment(persistence_client=persistence)
-        runtime.registry = registry
-        run(persistence, registry, runtime, provider)
+    parser.parse_args(argv)
+    parser.error('Use the ChatGPT native-browser MCP task tools for Bookmarked and Prepared; this CLI cannot execute those workflows')
 
 
 if __name__ == '__main__':

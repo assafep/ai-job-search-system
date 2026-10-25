@@ -53,11 +53,11 @@ def bundle_files(repo=REPO):
         if '__pycache__' in path.parts:
             continue
         files[str(path.relative_to(repo))] = path.read_bytes()
-    for directory in ('services', 'workflows', 'agents', 'schemas'):
+    for directory in ('services', 'workflows', 'agents', 'schemas', 'adapters'):
         for path in sorted((repo / directory).rglob('*')):
             if path.is_file() and path.suffix in {'.py', '.yaml', '.json', '.md'} and '__pycache__' not in path.parts:
                 files[str(path.relative_to(repo))] = path.read_bytes()
-    for relative in ('config/pipelines.json', 'config/automation-policy.yaml', 'openapi.yaml', 'requirements-mcp.txt'):
+    for relative in ('config/pipelines.json', 'config/discovery-sources.json', 'config/automation-policy.yaml', 'openapi.yaml', 'requirements-mcp.txt'):
         path = repo / relative
         if path.is_file():
             files[relative] = path.read_bytes()
@@ -70,6 +70,7 @@ def public_settings(runtime):
     for key, source in PUBLIC_SETTINGS:
         settings[key] = source if isinstance(source, str) else drive.get(source[1]) or ''
     chat = runtime.get('chat_workflows') or {}
+    settings['AJSS_VERCEL_WORKFLOWS_ENABLED'] = '1' if (runtime.get('workflow_execution') or {}).get('vercel_enabled') is True else '0'
     settings['AJSS_WORKFLOW_RUNS_ENABLED'] = '1' if chat.get('enabled') is True else '0'
     settings['AJSS_MCP_TOOL_PROFILE'] = chat.get('mcp_tool_profile', 'domain')
     settings['AJSS_WORKLOAD_FILE_BACKEND'] = chat.get('internal_file_backend', 'drive')
@@ -216,6 +217,19 @@ def ensure_user_drive(client, host, credentials):
         }, team=host['team_id'])
         changed = True
     return changed
+
+
+def ensure_cron_secret(client, host):
+    """Create one private schedule credential. Never return or log its value."""
+    import secrets
+    environment = client.request('GET', '/v9/projects/' + host['project_id'] + '/env', team=host['team_id'])
+    if any(item.get('key') == 'CRON_SECRET' and 'production' in item.get('target', [])
+           for item in environment.get('envs', [])):
+        return False
+    client.request('POST', '/v10/projects/' + host['project_id'] + '/env', {
+        'key': 'CRON_SECRET', 'value': secrets.token_urlsafe(32), 'type': 'sensitive', 'target': ['production'],
+    }, team=host['team_id'])
+    return True
 
 
 def ensure_service_account(client, host, info):
@@ -414,7 +428,8 @@ def deploy(repo=REPO, sibling=SIBLING, client=None, opener=None, wait=wait_ready
                                                           if key != 'GOOGLE_SERVICE_ACCOUNT_CLIENT'})
         account_changed = ensure_service_account(client, host, account)
         user_changed = ensure_user_drive(client, host, user_drive_credentials(repo))
-        existing = None if settings_changed or account_changed or user_changed else matching_release(client, host, digest)
+        cron_changed = ensure_cron_secret(client, host) if json.loads(files.get('vercel.json', b'{}')).get('crons') else False
+        existing = None if settings_changed or account_changed or user_changed or cron_changed else matching_release(client, host, digest)
         if existing:
             url = production_url(client, host, existing)
             verify(url, opener)

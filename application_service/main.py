@@ -218,6 +218,21 @@ class Handler(BaseHTTPRequestHandler):
             return self._mcp()
         path = urlparse(self.path)
         parts = [x for x in path.path.split("/") if x]
+        if parts == ['internal', 'workflow-schedule']:
+            expected = os.environ.get('CRON_SECRET')
+            if not expected or not hmac.compare_digest(self.headers.get('Authorization', ''), 'Bearer ' + expected):
+                return self.unauthorized()
+            if os.environ.get('AJSS_VERCEL_WORKFLOWS_ENABLED') != '1':
+                return self.send_json(200, {'status': 'disabled', 'runs': []})
+            if repository is None and os.environ.get('REPOSITORY_BACKEND') == 'hybrid':
+                initialize_backend()
+            if repository is None:
+                return self.backend_unavailable()
+            try:
+                from .vercel_workflows import schedule
+                return self.send_json(200, schedule(repository))
+            except Exception as exc:
+                return self.send_exception(exc)
         if parts[:1] == ['gmail'] and parts[1:2] != ['grant']:
             return self._gmail_public(parts)
         if parts not in (["health"], ["ready"]) and not self.authorized():
@@ -294,7 +309,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             data = body(self)
             if parts[:1] == ["workflow-runs"]:
-                if parts == ["workflow-runs"] and repository is None:
+                if (parts == ["workflow-runs"] or (len(parts) >= 3 and parts[2] == 'chatgpt')) and repository is None:
                     if os.environ.get('REPOSITORY_BACKEND') == 'hybrid':
                         initialize_backend()
                     if repository is None:

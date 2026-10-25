@@ -25,11 +25,16 @@ MAX_BYTES = 4 * 1024 * 1024
 INSTRUCTIONS = (
     'Use the Application Service for job-search state. Read current state before writing. '
     'Mutations must be explicit and retry-safe; reuse the same idempotency_key on retries. '
-    'Never access Drive, Gmail, Calendar or browsers directly. Workflow agents remain '
+    'Never access Drive, Gmail or Calendar directly. For validate-bookmarked and submit-prepared, '
+    'ChatGPT itself must use its native browser; never delegate their website actions to a worker or browser adapter. '
+    'Use nextChatGPTWorkflowTask, the supplied agent contracts and the workflow result tools. '
+    'Call beginChatGPTSubmission before the final submit click, then record observed confirmation. '
+    'Pause for a specific CAPTCHA, login, upload or unavailable native-browser capability. '
+    'Do not claim CAPTCHA bypass. Workflow decision agents remain '
     'stateless; workflow runtimes own execution. Prepared membership authorizes automatic '
     'submission by the runtime; do not add approval gates. Unconfirmed submissions need '
     'manual reconciliation. Migrations, repairs, rollback and deletion require an explicit '
-    'operator request. Use startWorkflow to enqueue execution in the existing runtime; '
+    'operator request. Use startWorkflow to admit the requested scope; listWorkflows reports its execution host. '
     'poll getWorkflowRun and retrieve getWorkflowRunReport. Omitted limits mean all eligible '
     'postings. Reuse the request key. Never assemble workflows with state mutation tools.'
 )
@@ -74,6 +79,8 @@ class Catalog:
                     'listWorkflows', 'listWorkflowRuns', 'startWorkflow', 'getWorkflowRun', 'getWorkflowRunReport',
                     'journalQueueCounts', 'listApplications', 'getApplication',
                     'listApplicationEvents', 'getJournalStatus',
+                    'getWorkflowExecutionReadiness', 'nextChatGPTWorkflowTask', 'completeChatGPTValidation', 'beginChatGPTSubmission',
+                    'completeChatGPTSubmission', 'pauseChatGPTWorkflowTask', 'getChatGPTSubmissionPackage',
                 }:
                     continue
                 properties, required, parameters = {}, [], []
@@ -102,13 +109,15 @@ class Catalog:
                 Draft202012Validator.check_schema(schema)
                 keyed = bool(body and 'idempotency_key' in properties['body'].get('properties', {}))
                 description = operation.get('description') or operation.get('summary') or name
-                if method != 'get':
+                if not operation.get('x-mcp-read-only', method == 'get'):
                     description += ' Mutates application state; use only for an explicit requested operation.'
                 self.tools.append(types.Tool(
                     name=name, description=description, inputSchema=schema,
                     annotations=types.ToolAnnotations(
-                        readOnlyHint=method == 'get', destructiveHint=method != 'get',
-                        idempotentHint=method in ('get', 'put') or keyed, openWorldHint=False)))
+                        readOnlyHint=operation.get('x-mcp-read-only', method == 'get'),
+                        destructiveHint=operation.get('x-mcp-destructive', method != 'get'),
+                        idempotentHint=method in ('get', 'put') or keyed or operation.get('x-mcp-read-only', False),
+                        openWorldHint=operation.get('x-mcp-open-world', False))))
                 self.operations[name] = (method.upper(), path, parameters, schema)
 
     def request(self, name, arguments):

@@ -50,6 +50,15 @@ class GoogleDriveArtifactStore:
             raise ValueError('Google API timeout must be positive and Drive cache duration non-negative')
         self._children_cache = {}
         self._listing_cache = {}
+        self.creator = None
+        from .google_auth import ServiceAccountToken, GoogleAccessToken
+        if isinstance(access_token, ServiceAccountToken) and os.environ.get('AJSS_DATABASE_URL'):
+            from .user_drive import file_credentials
+            credentials = file_credentials()
+            if credentials:
+                from .drive_file_creator import FileCreator
+                client_id, client_secret, refresh_token = credentials
+                self.creator = FileCreator(self, GoogleAccessToken(refresh_token, client_id, client_secret))
 
     def _forget_metadata(self):
         self._children_cache.clear()
@@ -67,6 +76,13 @@ class GoogleDriveArtifactStore:
         except urllib.error.HTTPError:
             self._forget_metadata()
             raise
+
+    def _create_metadata(self, metadata):
+        if self.creator is not None:
+            return self.creator.create(metadata)
+        return self._request(
+            'POST', 'https://www.googleapis.com/drive/v3/files?fields=id,name,mimeType,parents,webViewLink',
+            json.dumps(metadata).encode('utf-8'))
 
     def _replace_content(self, file_id, content, mime_type):
         self._listing_cache.clear()
@@ -208,15 +224,9 @@ class GoogleDriveArtifactStore:
         existing = self._find_child(parent_id, name, FOLDER_MIME)
         if existing:
             return existing
-        folder = self._request(
-            "POST",
-            "https://www.googleapis.com/drive/v3/files?fields=id,name,mimeType,parents,webViewLink",
-            json.dumps({
-                "name": name,
-                "mimeType": FOLDER_MIME,
-                "parents": [parent_id],
-            }).encode("utf-8"),
-        )
+        folder = self._create_metadata({
+            'name': name, 'mimeType': FOLDER_MIME, 'parents': [parent_id],
+        })
         self._children_cache[(parent_id, name, FOLDER_MIME, None)] = (
             monotonic() + self.metadata_cache_seconds, dict(folder))
         self._listing_cache.pop(parent_id, None)
@@ -241,18 +251,11 @@ class GoogleDriveArtifactStore:
         sections = [journal_text or first_tab]
         for item in research or []:
             sections.append("{}\n{}".format(item.get("title") or "Research", item.get("content") or ""))
-        created = self._request(
-            "POST", "https://www.googleapis.com/drive/v3/files?fields=id,name,parents",
-            json.dumps({
-                "name": title,
-                "mimeType": "text/plain",
-                "parents": [parent_id],
-                "appProperties": {
-                    "ajss_completed_application": application_id,
-                    "ajss_completion_reason": reason,
-                    "ajss_first_tab": first_tab,
-                },
-            }).encode("utf-8"))
+        created = self._create_metadata({
+            'name': title, 'mimeType': 'text/plain', 'parents': [parent_id],
+            'appProperties': {'ajss_completed_application': application_id,
+                              'ajss_completion_reason': reason, 'ajss_first_tab': first_tab},
+        })
         stored = self._replace_content(created["id"], "\n\n".join(sections).encode("utf-8"), "text/plain")
         stored["first_tab"] = first_tab
         return stored
@@ -437,11 +440,7 @@ class GoogleDriveArtifactStore:
         # Create metadata first, then upload bytes with the media endpoint.
         # This avoids fragile multipart boundary handling and makes the two
         # phases independently observable when Drive rejects an upload.
-        metadata = self._request(
-            "POST",
-            "https://www.googleapis.com/drive/v3/files?fields=id,name,mimeType,parents,webViewLink",
-            json.dumps(dict(metadata_value, mimeType=mime_type)).encode("utf-8"),
-        )
+        metadata = self._create_metadata(dict(metadata_value, mimeType=mime_type))
         stored = self._replace_content(metadata["id"], content, mime_type)
         self._children_cache[(folder_id, filename, None, None)] = (
             monotonic() + self.metadata_cache_seconds, dict(stored))

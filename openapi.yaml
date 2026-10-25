@@ -46,6 +46,16 @@ paths:
               schema:
                 type: array
                 items: {$ref: '#/components/schemas/Application'}
+  /workflows/readiness:
+    get:
+      operationId: getWorkflowExecutionReadiness
+      description: Read the active execution split and deployment prerequisites. Native browser availability is supplied by the ChatGPT host and cannot be proven by this service.
+      responses:
+        '200':
+          description: Active execution settings and prerequisites, without credentials
+          content:
+            application/json:
+              schema: {type: object}
   /workflows:
     get:
       operationId: listWorkflows
@@ -56,6 +66,389 @@ paths:
           content:
             application/json:
               schema: {type: object}
+  /workflow-runs/{run_id}/chatgpt/next:
+    post:
+      operationId: nextChatGPTWorkflowTask
+      x-mcp-destructive: false
+      description: Claim or resume one task for ChatGPT native browser execution. No
+        website is fetched by the server. Return serialized context and deployed agent
+        contracts. Continue until complete=true; omitted run limit means all eligible
+        items. A begun submission must not be clicked again.
+      parameters:
+      - in: path
+        name: run_id
+        required: true
+        schema:
+          type: string
+          minLength: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties: {}
+      responses:
+        '200':
+          description: Workflow context or validated result
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          description: Invalid, stale or uncertain task; do not repeat a website action
+        '401':
+          description: Authentication required
+  /workflow-runs/{run_id}/chatgpt/validation:
+    post:
+      operationId: completeChatGPTValidation
+      description: Record a posting read in ChatGPT native browser and its strong-match
+        decision. Reuses the deployed posting parser and validation planner. Supply
+        the complete description from the exact admitted posting and evidence from the
+        applicant profile; never invent a browser observation.
+      parameters:
+      - in: path
+        name: run_id
+        required: true
+        schema:
+          type: string
+          minLength: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                task_id:
+                  type: string
+                  minLength: 1
+                token:
+                  type: string
+                  minLength: 1
+                idempotency_key:
+                  type: string
+                  minLength: 1
+                posting:
+                  type: object
+                  required:
+                  - company
+                  - role
+                  - posting_url
+                  - description
+                  properties:
+                    company:
+                      type:
+                      - string
+                      - 'null'
+                      description: Company name from the posting
+                    role:
+                      type:
+                      - string
+                      - 'null'
+                      description: Job title or role name
+                    posting_url:
+                      type: string
+                      format: uri
+                      description: Exact URL of the job posting
+                    resolved_url:
+                      type:
+                      - string
+                      - 'null'
+                      format: uri
+                      description: Final page, canonical posting, or exact public data
+                        endpoint used to verify the supplied posting
+                    description:
+                      type: string
+                      description: Complete posting text extracted verbatim, preserving
+                        original structure, section headings, bullet points, and line
+                        breaks. Should match the length of the original posting content.
+                    read_failure:
+                      type: string
+                      description: Short reason if the page could not be read; empty
+                        string when successful
+                  additionalProperties: false
+                decision:
+                  type: object
+                  required:
+                  - is_match
+                  - company
+                  - role
+                  - posting_url
+                  properties:
+                    company:
+                      type: string
+                      description: Company name from the posting
+                    role:
+                      type: string
+                      description: Job title or role name
+                    posting_url:
+                      type: string
+                      format: uri
+                      description: URL of the job posting
+                    is_match:
+                      type: boolean
+                      description: True if the posting is a strong match for the applicant
+                    relevance_evidence:
+                      type: array
+                      items:
+                        type: string
+                      description: Concise evidence for each direct match (required
+                        when is_match is true)
+                    decline_reason:
+                      type: string
+                      description: Short reason when is_match is false
+                  additionalProperties: false
+              required:
+              - task_id
+              - token
+              - idempotency_key
+              - posting
+              - decision
+      responses:
+        '200':
+          description: Workflow context or validated result
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          description: Invalid, stale or uncertain task; do not repeat a website action
+        '401':
+          description: Authentication required
+  /workflow-runs/{run_id}/chatgpt/begin-submission:
+    post:
+      operationId: beginChatGPTSubmission
+      x-mcp-destructive: false
+      description: Immediately before ChatGPT native browser clicks final submit, persist
+        a submission intent. Only may_submit=true on the first response authorizes that
+        click. A replay is not authorization to click again. Never use a server-side
+        or remote browser.
+      parameters:
+      - in: path
+        name: run_id
+        required: true
+        schema:
+          type: string
+          minLength: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                task_id:
+                  type: string
+                  minLength: 1
+                token:
+                  type: string
+                  minLength: 1
+                idempotency_key:
+                  type: string
+                  minLength: 1
+              required:
+              - task_id
+              - token
+              - idempotency_key
+      responses:
+        '200':
+          description: Workflow context or validated result
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          description: Invalid, stale or uncertain task; do not repeat a website action
+        '401':
+          description: Authentication required
+  /workflow-runs/{run_id}/chatgpt/submission:
+    post:
+      operationId: completeChatGPTSubmission
+      x-mcp-destructive: false
+      description: Record the outcome actually observed in ChatGPT native browser. Success
+        requires a begun attempt, confirmation text and the observed page URL. Failures
+        route according to existing policy. Record Submission unconfirmed when reception
+        is uncertain; never retry it automatically.
+      parameters:
+      - in: path
+        name: run_id
+        required: true
+        schema:
+          type: string
+          minLength: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                task_id:
+                  type: string
+                  minLength: 1
+                token:
+                  type: string
+                  minLength: 1
+                idempotency_key:
+                  type: string
+                  minLength: 1
+                outcome:
+                  type: object
+                  additionalProperties: false
+                  required:
+                  - status
+                  properties:
+                    status:
+                      type: string
+                      enum:
+                      - Submitted successfully
+                      - Already submitted
+                      - Prepared but not submitted
+                      - Submission unconfirmed
+                      - Blocked
+                    confirmation_text:
+                      type: string
+                    application_reference:
+                      type: string
+                    observed_url:
+                      type: string
+                      format: uri
+                    blockers:
+                      type: array
+                      items:
+                        type: string
+                        minLength: 1
+                    failure_kind:
+                      type: string
+                      enum:
+                      - system_error
+                      - blocker
+                    requires_human_verification:
+                      type: boolean
+              required:
+              - task_id
+              - token
+              - idempotency_key
+              - outcome
+      responses:
+        '200':
+          description: Workflow context or validated result
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          description: Invalid, stale or uncertain task; do not repeat a website action
+        '401':
+          description: Authentication required
+  /workflow-runs/{run_id}/chatgpt/pause:
+    post:
+      operationId: pauseChatGPTWorkflowTask
+      x-mcp-destructive: false
+      description: Preserve the task when ChatGPT native browser requires user CAPTCHA,
+        sign-in or file-upload interaction, or is unavailable. Ask only for that specific
+        interaction. Never switch to a workstation or hosted browser and never repeat
+        a begun submission.
+      parameters:
+      - in: path
+        name: run_id
+        required: true
+        schema:
+          type: string
+          minLength: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                task_id:
+                  type: string
+                  minLength: 1
+                token:
+                  type: string
+                  minLength: 1
+                idempotency_key:
+                  type: string
+                  minLength: 1
+                reason:
+                  type: string
+                  enum:
+                  - captcha
+                  - sign_in
+                  - file_upload
+                  - native_browser_unavailable
+                explanation:
+                  type: string
+                  minLength: 1
+              required:
+              - task_id
+              - token
+              - idempotency_key
+              - reason
+              - explanation
+      responses:
+        '200':
+          description: Workflow context or validated result
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          description: Invalid, stale or uncertain task; do not repeat a website action
+        '401':
+          description: Authentication required
+  /workflow-runs/{run_id}/chatgpt/package:
+    post:
+      operationId: getChatGPTSubmissionPackage
+      description: Read the exact validated PDF package for an active ChatGPT submission
+        task. Returns base64 PDF bytes and SHA-256. Use native host file capabilities
+        when available; if upload is unavailable, pause for the user instead of delegating
+        the browser.
+      parameters:
+      - in: path
+        name: run_id
+        required: true
+        schema:
+          type: string
+          minLength: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                task_id:
+                  type: string
+                  minLength: 1
+                token:
+                  type: string
+                  minLength: 1
+              required:
+              - task_id
+              - token
+      responses:
+        '200':
+          description: Workflow context or validated result
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          description: Invalid, stale or uncertain task; do not repeat a website action
+        '401':
+          description: Authentication required
+      x-mcp-read-only: true
+      x-mcp-destructive: false
   /workflow-runs:
     get:
       operationId: listWorkflowRuns
@@ -89,7 +482,7 @@ paths:
         '401': {description: Authentication required}
     post:
       operationId: startWorkflow
-      description: Enqueue a named workflow in the existing runtime. Omit limit to process all eligible positions. application_id scopes execution to one posting. Prepared submission is automatic. Reuse idempotency_key on retries. Requires a separately configured worker.
+      description: Admit a named workflow and snapshot its eligible scope. Omit limit for all eligible positions. validate-bookmarked and submit-prepared must execute in ChatGPT native browser via nextChatGPTWorkflowTask and result tools; they never go to a worker. Other workflows use their configured execution host. Reuse idempotency_key on retries.
       requestBody:
         required: true
         content:

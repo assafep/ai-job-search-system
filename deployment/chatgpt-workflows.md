@@ -1,53 +1,140 @@
-# ChatGPT workflow execution
+# Workflow execution from ChatGPT
 
-ChatGPT calls the Application Service's existing authenticated `/mcp` endpoint.
-The service queues durable requests in PostgreSQL `installation_resources`.
-A separate, long-running Python worker executes the repository's existing
-workflow runtime. HTTP requests never spawn background threads for execution.
-The application database role needs the existing `002_runtime.sql` migration.
+`validate-bookmarked` and `submit-prepared` execute website interactions in
+**ChatGPT's native Browser/Computer Use**. The MCP server never launches a local
+browser, hosted browser, CLI agent or API model for these tasks. Use a ChatGPT
+host where both the AJSS MCP connection and native browser are available.
+The Codex CLI/IDE session alone does not supply ChatGPT's native browser.
 
-## Configure and start
+## Configure the connection
 
-Deploy this source revision to the Application Service and the workflow host.
-Keep the existing OAuth configuration. Set these on the **Application Service**:
+Deploy the repository using `./deployment/ctl.sh connect`, preserving its existing
+OAuth configuration. Keep these Application Service settings:
 
 ```text
 AJSS_WORKFLOW_RUNS_ENABLED=1
 AJSS_MCP_TOOL_PROFILE=workflows
+AJSS_WORKLOAD_FILE_BACKEND=database
 ```
 
-The profile exposes workflow control and relevant read tools, excluding direct
-transitions, deletion, repairs, registry claims, and worker completion tools.
-The default `domain` profile preserves existing clients' domain operations.
-To preserve these settings on future deployments, configure `chat_workflows`
-in `config/runtime.json`:
+The deployment publishes these from `config/runtime.json`:
 
 ```json
 {"chat_workflows":{"enabled":true,"mcp_tool_profile":"workflows","internal_file_backend":"database"}}
 ```
 
-Refresh the connected ChatGPT app's tool catalog after deploying.
+Refresh the ChatGPT app's tool catalog after deployment. Select the AJSS app and
+use ChatGPT's native browser in the same conversation. A suitable request is:
 
-On the **workflow host**, complete the normal onboarding/runtime configuration,
-install the repository requirements and the configured workflow providers, and
-configure `APPLICATION_SERVICE_URL` and `APPLICATION_SERVICE_TOKEN` for the same
-installation. Start a supervised process:
+> Use AJSS to validate all Bookmarked positions. Open each posting with your
+> native browser, extract the complete role description, evaluate it against my
+> applicant profile, and record the result through the workflow tools.
 
-```bash
-python3 -m services.chat_workflow_worker
+For submission:
+
+> Use AJSS to submit all Prepared applications in your native browser. Use each
+> saved PDF and my applicant profile. Record the attempt before the final submit
+> click and record the observed confirmation afterward. Never resubmit an
+> uncertain attempt.
+
+## Native-browser tool sequence
+
+1. `listWorkflows` reports the active `execution_host`. Call
+   `getWorkflowExecutionReadiness` for deployment prerequisites.
+2. `startWorkflow` admits the scope and returns a durable run ID. Example:
+
+```json
+{"body":{"workflow":"validate-bookmarked","idempotency_key":"validate-request-001"}}
 ```
 
-`--once` claims at most one request and then exits. The worker validates
-`config/runtime.json` before claiming anything. Requests can stay queued while
-the worker is offline; connecting MCP alone does not start the worker.
+Omitting a limit snapshots **all** eligible IDs. `application_id` scopes one
+posting; `limit` is only for an explicitly requested count. Do not combine them.
+Reuse the admission key after a lost response; a deliberately new run uses a new
+key. Items arriving after admission belong to a later request.
 
-Use a single workflow host and a persistent checkout/registry volume. Stop other
-orchestrators, schedulers, and manual registry-writing runners before starting
-this worker. It holds `config/concurrent-queues.lock`, shared with the concurrent
-queue CLI. Do not run a separate registry writer alongside it. Multiple chat
-workers are also serialized by the service's durable installation-wide claim.
+3. Call `nextChatGPTWorkflowTask` with the run ID and `body: {}`. It returns one
+   task, an opaque task token, the posting URL, applicant data, and the deployed
+   agent contracts. Repeated calls return the pending task. When `complete` is
+   true, the admitted scope has finished or requires reconciliation.
+4. For validation, ChatGPT opens the exact posting URL, extracts the complete
+   role description, and makes the strong-match decision. Call
+   `completeChatGPTValidation` with the task ID/token, a unique command key,
+   `posting` matching the read-posting schema, and `decision` matching the
+   validation schema. Concrete evidence is required for a strong match. The
+   service reuses its posting parser and validation/completion planner, verifies
+   the snapshot is current, and persists the result. Browser observations are
+   supplied by ChatGPT; the server does not independently visit the website.
+5. For submission, `getChatGPTSubmissionPackage` returns the exact validated PDF
+   and SHA-256. ChatGPT fills the form using native host capabilities. Immediately
+   before final submit, call `beginChatGPTSubmission` with the task ID/token and
+   a unique command key. Only the first response's `may_submit: true` authorizes
+   one final click. A replay returns `may_submit: false`.
+6. Read the actual confirmation in the browser and call
+   `completeChatGPTSubmission` with a different command key and an `outcome`.
+   Success requires confirmation text and the observed page URL. An uncertain
+   result must be `Submission unconfirmed`; failed attempts follow the existing
+   Manual Apply Required / pre-submission system-error policy.
+7. Call `nextChatGPTWorkflowTask` again until finished, then retrieve the readable
+   PDF using `getWorkflowRunReport`.
 
-## Tools
+Each effect records its intent before writing. Repeating the same command key
+and payload returns the saved outcome without repeating application writes.
+Changing the payload under that key conflicts. The task is bound to its admitted
+application, profile/events snapshot, prepared-package hash and deployed agent /
+execution-code contract. A stale context or uncertain effect cannot silently
+start another attempt.
+
+## Browser interruptions
+
+Use `pauseChatGPTWorkflowTask` for a specific CAPTCHA, sign-in, file-upload step,
+or unavailable native browser. Ask the user for that interaction and preserve the
+task. Pausing is not an additional Prepared approval gate. Never substitute a
+backend browser. After a begun submission is interrupted, inspect for confirmation
+without clicking submit again; otherwise record an unconfirmed outcome.
+
+Browser support depends on the ChatGPT host. Some sites remain blocked, and the
+built-in browser can require manual file uploads. See the [official browser
+documentation](https://learn.chatgpt.com/docs/browser). This integration does not
+promise CAPTCHA bypass or unattended completion on every site.
+
+## Vercel execution for the other nine workflows
+
+The managed subscriber is `application_service.vercel_subscriber`, declared in
+`deployment/vercel/pyproject.toml`. Vercel Queues delivers independent work units;
+PostgreSQL stores run progress, workload/approval registries and mutation intents.
+No daemon, local checkout or local registry is needed for this path. Redelivery
+never re-executes an uncertain unit. The two ChatGPT workflows are rejected by
+this subscriber and by the workstation claim endpoint.
+
+Bookmarking only moves discovered links into Bookmarked; it does not open their
+websites. Website extraction happens in ChatGPT validation. Preparation consumes
+the resulting saved posting artifact and the Drive-backed original résumé.
+
+Cloud activation is explicit:
+
+```json
+{"workflow_execution":{"vercel_enabled":true}}
+```
+
+Before enabling this in runtime.json and redeploying, configure an API model
+credential (`OPENAI_API_KEY` or `XAI_API_KEY`) for hosted agent workflows, complete
+applicant onboarding so the résumé is portable, and verify Drive artifact creation. New My Drive files use the existing owner
+`drive.file` grant, then move into the selected folder for service-account access;
+IDs are durably allocated before creation.
+These credentials and a remote browser are **not** needed for the two native
+ChatGPT browser workflows. An unavailable hosted configuration remains queued
+without attempting a posting. Stop the legacy workstation worker when activating
+the cloud split; do not run another registry-writing scheduler alongside it.
+
+The supplied Cron job runs daily at 05:00 UTC and admits only the nine Vercel
+workflows. It never starts a ChatGPT browser session. It uses a generated
+`CRON_SECRET`; the endpoint rejects unauthenticated calls and does nothing while
+cloud execution is disabled. The interview default remains daily. Vercel Hobby
+supports daily Cron; preserving minute-level automatic polling requires a plan
+that supports it and a corresponding Cron configuration. On-demand requests use
+Queues and do not wait for the next daily Cron.
+
+## Monitoring
 
 For monitoring, call `listWorkflowRuns` with `{}` to discover durable requests.
 Optional arguments are `status` (`queued`, `running`, `succeeded`, `failed`, or
@@ -67,92 +154,31 @@ API-admitted requests, including ChatGPT requests, rather than legacy local
 stale heartbeats; listing does not prove that a worker process is alive.
 Refresh the ChatGPT app's tool catalog after deploying to discover the new tool.
 
-1. Call `listWorkflows` with `{}` to discover deployed workflow names and scopes.
-2. Call `startWorkflow` with a `body`, for example:
 
-```json
-{"body":{"workflow":"submit-prepared","idempotency_key":"submit-request-001"}}
-```
+Public status omits task capabilities, stored applicant context and internal
+queue work-unit records. Run progress includes completed/admitted counts.
 
-This processes all currently eligible Prepared postings. For one posting, add
-`"application_id":"app-123"`; for an explicitly requested count, add `"limit":5`.
-Do not combine those fields. Queue IDs are snapshotted at admission and filtered
-again against current eligibility at execution. Newly arriving postings belong
-to a later request. There is no additional Prepared approval gate.
+## Reconciliation
 
-Scheduled workflows run their existing scheduled admission logic. External
-workflows poll the appropriate adapter and process matching queued events;
-ChatGPT does not supply invented email/calendar payloads. Scheduled and external
-polls support whole-workflow scope only; scoped requests are rejected explicitly.
-Existing failed scheduled workloads require reconciliation rather than an
-implicit retry through this interface.
-
-3. Poll `getWorkflowRun` with `{"run_id":"chat-..."}`.
-4. Call `getWorkflowRunReport` with the same arguments for a readable PDF. Status
-   includes the stored PDF metadata/path; the report tool returns PDF bytes as
-   base64 with file metadata. Use the returned file URL when available, or render
-   the returned PDF bytes as an attachment in the host. JSON checkpoints are not
-   the user-facing report. A report not ready yet returns 409.
-
-Reuse an idempotency key when a tool response is lost. Repeating a request returns
-its original run and scope, including after completion; changing the request
-under the same key is rejected. Starting another deliberate run needs a new key.
-The service and worker compare blueprint digests before execution, and reports
-record the worker code revision (`+dirty` denotes a modified checkout).
-
-## Interruptions and reconciliation
-
-`updated_at` is refreshed every 20 seconds during execution. A crashed worker
-leaves the run `running`; a caught interruption becomes `reconciliation_required`.
-Both block further claims across this installation. They are never reclaimed on
-a timeout, because an application may have been submitted before connectivity
-was lost. Check stale timestamps and the worker supervisor when investigating.
-
-Stop the original worker, inspect application events and submission receipts,
-and manually reconcile unconfirmed submissions before starting any new work.
-Then explicitly release the block through authenticated REST (not exposed to
-ChatGPT's tools):
+Running or reconciliation-required requests block another installation-wide run.
+No lease timeout reclaims a ChatGPT submission. Stop the original browser/worker,
+inspect receipts and application events, and reconcile any uncertain submission.
+An explicit operator can then use authenticated REST:
 
 ```text
 POST /workflow-runs/{run_id}/reconcile
-{"worker_stopped":true,"note":"Describe verified outcomes and reconciliation"}
+{"worker_stopped":true,"note":"Verified outcomes and stopped the original executor"}
 ```
 
-This keeps the old run failed and does not retry it. Restore dead letters only
-through the existing explicit operator procedure. Resuming the worker may then
-consume queued requests. If reporting/storage fails during execution, the run
-also requires investigation; the worker attempts a failure PDF when storage is
-available. A hard process crash cannot generate a final PDF.
+This closes the old run as failed; it never retries it. The internal reconcile,
+worker-claim and worker-update operations are not exposed as MCP tools.
 
-Internal worker endpoints are `POST /workflow-runs/claim` and
-`POST /workflow-runs/{run_id}/worker-update`. They require normal service bearer
-authentication; completion additionally requires the opaque claim token. Tokens
-are omitted from public run status. These endpoints are excluded from MCP.
+## Legacy workstation compatibility
 
-## Supervised workstation worker
-
-On a Linux workstation with the configured agent/browser tools and saved API
-credentials, install the user service using the project's virtualenv:
-
-```bash
-.venv/bin/python -m provisioning.chat_worker
-systemctl --user status ajss-chat-workflow-worker
-```
-
-This uses the existing workload and approval registries and private API
-credential file. The workstation must remain online. Manage it with
-`systemctl --user stop|start|restart ajss-chat-workflow-worker`; stop it before
-running another registry-writing orchestrator on this host. This user service
-is enabled for login sessions; it is not an always-on cloud worker.
-
-## Workflow-owned file storage
-
-For hybrid installations, `chat_workflows.internal_file_backend=database`
-publishes `AJSS_WORKLOAD_FILE_BACKEND=database`. The existing `/files` API then
-stores paths beneath `.ai-job-search-system/workloads-internal-state/` in the
-service's existing PostgreSQL runtime table. Checkpoints, submission receipts,
-and report PDFs remain behind the Application Service and its path validation.
-Idempotent file writes commit their content and retry receipt together. Older
-files remain readable from Drive when no database file exists. Journal/profile
-and application artifacts retain their configured storage. The default `drive`
-setting never silently switches storage after a failed write.
+`services.chat_workflow_worker` remains a compatibility runner for the other
+workflows while cloud execution is disabled. It cannot claim or execute the two
+native ChatGPT browser workflows. Its systemd service is named
+`ajss-chat-workflow-worker`. It is not the executor for ChatGPT browser tasks.
+Workflow-owned checkpoints, receipts and PDFs continue to use the Application
+Service `/files` boundary; database-backed internal files retain Drive fallback
+reads. Journal/profile/application artifacts stay in their configured storage.

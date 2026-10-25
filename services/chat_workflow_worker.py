@@ -24,6 +24,9 @@ def revision():
 
 
 def execute(record, persistence):
+    from application_service.workflow_execution import CHATGPT_WORKFLOWS
+    if record['request']['workflow'] in CHATGPT_WORKFLOWS:
+        raise ValueError('This workflow requires ChatGPT native browser execution through MCP task tools')
     from .concurrent_queues import run as run_queues
     from .polling import definitions, enqueue_scheduled
     from .workload_registry import registry_from_environment

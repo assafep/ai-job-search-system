@@ -20,9 +20,13 @@ and JSON bodies use `body`. Keyed writes require a non-empty `idempotency_key`.
 Start with the read-only `journalQueueCounts` tool and empty arguments.
 
 The endpoint exposes domain operations and the workflow tools `listWorkflows`, `listWorkflowRuns`,
-`startWorkflow`, `getWorkflowRun`, and `getWorkflowRunReport`. `startWorkflow`
-enqueues a durable request; a separately provisioned worker executes existing
-Python workflows. Connecting MCP does not provision or start that worker.
+`startWorkflow`, `getWorkflowRun`, and `getWorkflowRunReport`. `startWorkflow` admits a durable scope. `validate-bookmarked` and `submit-prepared`
+execute website interactions in ChatGPT native Browser/Computer Use via
+`nextChatGPTWorkflowTask` and the workflow result tools. Never delegate those
+website interactions to a workstation, CLI agent, hosted browser or API model.
+The service validates their structured observations/results and owns all writes.
+Other workflows use the configured host reported by `listWorkflows`; Vercel
+Queues activation is explicit. See `getWorkflowExecutionReadiness`.
 Use `AJSS_MCP_TOOL_PROFILE=workflows` for ChatGPT workflow control without direct
 state mutations. Omitted limits process all eligible postings; an application ID
 is resolved before execution. Never retry an interrupted/uncertain running claim;
@@ -148,3 +152,19 @@ Workflows 8, 9, and 10 use this interface for their item writes. Terminal cleanu
 must select from `/journal/terminal-items`, which excludes archived entries.
 Ghosting completion carries the observed activity timestamp and expected state;
 Gmail notice acknowledgement carries the grant expiry observed before sending.
+
+## Native ChatGPT website tasks
+
+The ChatGPT workflow orchestrator may use its native browser for the two named
+workflows; stateless decision contracts still receive serialized context only.
+Read the task's supplied agent contracts and exact admitted posting URL.
+Validation extracts the live role description and checks a strong candidate match;
+`completeChatGPTValidation` reuses the deployed parser and persistence planner.
+Before final submission, call `beginChatGPTSubmission`. Only its first
+`may_submit: true` permits a final click; replay never authorizes another click.
+Record the observed confirmation with `completeChatGPTSubmission`.
+Use `pauseChatGPTWorkflowTask` for specific CAPTCHA, login, upload or missing
+native-browser interaction. Never substitute a backend browser. If a begun
+attempt loses its confirmation, record an unconfirmed result for manual
+reconciliation instead of resubmitting. Continue the admitted scope until
+`nextChatGPTWorkflowTask` reports completion and retrieve the PDF activity report.

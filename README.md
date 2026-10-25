@@ -10,10 +10,10 @@ Application Service.
 
 The system polls queues and external sources to run these workflow groups:
 
-1. **Job discovery and bookmarking** — scheduled scans save postings as `Discovered`. The bookmark workflow reads and saves their role descriptions, moving them to `Bookmarked`.
-2. **Validation** — compare each bookmarked role description with the candidate’s experience to confirm a strong match. Matching postings move to `Validated` before preparation.
+1. **Job discovery and bookmarking** — scheduled scans save postings as `Discovered`. Bookmarking queues their links as `Bookmarked`; ChatGPT reads the websites during validation.
+2. **Validation in ChatGPT** — open each bookmarked website in ChatGPT’s native browser, extract the role description, and compare it with the candidate’s experience to confirm a strong match. Matching postings move to `Validated` before preparation.
 3. **Preparation** — each validated posting receives a personalized cover letter and resume PDF. Successful packages move to `Prepared`.
-4. **Auto-apply** — items in the ready queue are submitted automatically. Confirmed submissions become `Applied`; failures go to `Manual Apply Required` or `Dead Letters Queue`.
+4. **Auto-apply in ChatGPT** — ChatGPT’s native browser fills and submits Prepared applications using their saved packages. Confirmed submissions become `Applied`; failures go to `Manual Apply Required` or `Dead Letters Queue`.
 5. **Recruitment correspondence** — incoming emails are matched to applications and classified. Rejections, offers, and interview invitations update the application state.
 
 Each application follows this lifecycle:
@@ -66,7 +66,7 @@ stateless and application-state writes remain behind that API.
 Once configured, you can:
 
 - **Process Discovered queue** (bookmark workflow): `python3 -m services.run_single Discovered`
-- **Process Bookmarked and Ready queues** (8 threads): `python3 -m services.concurrent_queues`
+- **Validate Bookmarked / submit Prepared**: use the AJSS MCP workflow tools with ChatGPT native Browser/Computer Use ([guide](deployment/chatgpt-workflows.md)).
 - **Run continuously**: `python3 -m services.orchestrator run`
 - **Monitor queues**: `python3 -m services.run --monitor`
 
@@ -78,7 +78,7 @@ The Application Service exposes **`https://ajss-one.vercel.app/mcp`** over
 Streamable HTTP. Remote MCP clients can connect with OAuth; the owner authorizes
 on the AJSS consent page using the existing service token. The tools mirror the
 OpenAPI domain operations and include reads and writes. Start with the read-only
-`journalQueueCounts` tool. MCP access does not start workflow workers.
+`journalQueueCounts` tool. For validation and submission, ChatGPT uses its own native browser through workflow-specific MCP task tools; MCP does not launch a different browser. The other nine workflows have an explicitly activated Vercel Queue execution path. Check `listWorkflows` and `getWorkflowExecutionReadiness` for the live host and prerequisites.
 
 `./deployment/ctl.sh chatgpt` verifies the endpoint and generates private
 connection files. `./deployment/ctl.sh codex` registers the local stdio launcher
@@ -90,18 +90,15 @@ for connection commands and provisioning behavior.
 
 ### Queue runners
 
+The supported browser-workflow entry point is [the ChatGPT MCP task protocol](deployment/chatgpt-workflows.md). Validation and submission must use ChatGPT native Browser/Computer Use. The local utilities below are legacy compatibility/debugging tools for the remaining workflows; they do not substitute for native ChatGPT website execution.
+
 **Bookmark workflow** — `python3 -m services.run_single Discovered` processes one position from the `Discovered` queue through the bookmark workflow. Add `--all` to process all positions. For a specific application: `--application-id <id>`. To read a posting URL without any workflow: `python3 -m services.agent_cli read-posting --url https://...`.
 
-The bookmark workflow extracts the posting content and saves it as a `Job Posting - Company - Role.json` artifact. Preparation reads that saved artifact through the Application Service; missing or mismatched content stops preparation rather than re-fetching.
+The canonical bookmark workflow only queues the link as Bookmarked. ChatGPT validation opens the website, extracts the complete posting and saves it as a `Job Posting - Company - Role.json` artifact through the Application Service. Preparation reads that artifact; missing or mismatched content stops preparation rather than re-fetching.
 
-**Single ready submission** — Process one `Prepared` position:
-```bash
-python3 -m services.ready_submission --application-id <application_id>
-```
+**Prepared submission** — use `startWorkflow` for `submit-prepared` and the native-browser MCP task sequence. The local ready-submission CLI rejects live execution of this workflow.
 
-**Bounded system run** — `python3 -m services.system_run` processes Ready queue with per-workload activity and a persisted PDF report. Email and interview workflows poll Gmail (last 14 days) and Calendar (next 30 days) read-only. Ambiguous matches are skipped; event IDs prevent duplicates.
-
-**Concurrent queues** — `python3 -m services.concurrent_queues` consumes Bookmarked and Prepared with eight posting threads. Preparation successes continue into submission in the same pool. One shared persistence client serializes all I/O; per-posting locks prevent duplicate work. A process lock prevents two runner copies. Do not run a separate daemon against the same registries.
+**Concurrent queues** — the shared eight-thread implementation remains available for isolated legacy tests. Its CLI rejects a live Bookmarked/Prepared pass; use durable native-browser task claims in ChatGPT for those queues.
 
 ### Continuous operation
 
@@ -275,7 +272,7 @@ journal event.
 ## Architecture
 
 See [workflow execution diagrams](docs/architecture.md) for the current deployment
-and the proposed Vercel/ChatGPT execution split. See [state-machine diagrams](docs/state-machines.md)
+and the native ChatGPT/Vercel execution split, including activation prerequisites. See [state-machine diagrams](docs/state-machines.md)
 for application lifecycle, workflow requests and workload execution states.
 
 The target architecture separates workflow execution and ad hoc AI operations

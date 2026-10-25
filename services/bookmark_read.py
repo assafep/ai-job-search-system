@@ -1,5 +1,7 @@
 """Read one discovered posting: exact URL first, language model if that fails."""
 
+import os
+
 from adapters.job_boards.posting_details import fetch_posting_details
 from adapters.llm.coding_agent import CodingAgentProvider
 from .agent_runner import run as run_agent
@@ -9,6 +11,10 @@ from .scout_reading import PostingReadFailure, posting_from_model
 
 def configured_reader(provider=None):
     """Read this workflow's own model and effort from config/runtime.json."""
+    if provider is not None and os.environ.get('VERCEL'):
+        if not callable(provider) and not (hasattr(provider, 'generate') or hasattr(provider, 'generate_with_schema')):
+            raise ValueError('Hosted bookmark reader needs an API-backed provider')
+        return provider, getattr(provider, 'model', 'configured API provider'), 'medium'
     section = (load(require=True).get("bookmark-discovered") or {})
     agent = str(section.get("coding_agent") or "").strip()
     model = str(section.get("model") or "").strip()

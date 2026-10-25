@@ -182,6 +182,7 @@ def test_http_and_mcp_workflow_tools(monkeypatch):
     repository = MemoryRepository()
     monkeypatch.setattr(main, 'repository', repository)
     app = create(repository, 1)
+    app.status = 'Discovered'
     server = HTTPServer(('127.0.0.1', 0), main.Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -191,7 +192,7 @@ def test_http_and_mcp_workflow_tools(monkeypatch):
             assert httpx.get(url + '/workflows').status_code == 401
             assert httpx.get(url + '/workflow-runs').status_code == 401
             assert client.get('/workflow-runs').json() == {'runs': [], 'next_cursor': None}
-            request = {'workflow': 'validate-bookmarked', 'application_id': app.application_id, 'idempotency_key': 'http'}
+            request = {'workflow': 'bookmark-discovered', 'application_id': app.application_id, 'idempotency_key': 'http'}
             response = client.post('/workflow-runs', json=request)
             assert response.status_code == 202
             run = response.json()

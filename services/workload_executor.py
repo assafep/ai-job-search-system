@@ -249,9 +249,19 @@ def plan_persistence_writes(workflow_name, context, agent_results):
                     {"workload_id": posting_url}, "discovered-url"),
             })
     elif workflow_name == "bookmark-discovered":
-        # Extract posting content from URL, save as artifact, then transition
-        # to Bookmarked so validate can consume it.
+        # Canonical bookmarking only queues the link. Native ChatGPT validation
+        # owns website reading. Captured legacy read-posting results remain
+        # supported for replay and isolated contract tests.
         posting_result = agent_results.get("read-posting")
+        if posting_result is None:
+            if not context.get('application_id'):
+                raise ValueError('bookmarking requires application_id')
+            operations.append({
+                'operation': 'transition', 'application_id': context['application_id'], 'target': 'Bookmarked',
+                'data': {'source': 'bookmark workflow', 'bullets': [
+                    'Bookmarked the discovered link. ChatGPT native browser will read and validate the role description.']},
+                'idempotency_key': _idempotency_key(context, 'bookmark-link'),
+            })
         if posting_result is not None:
             _validate_agent_result("read-posting", posting_result)
             from .scout_reading import PostingReadFailure, posting_from_model

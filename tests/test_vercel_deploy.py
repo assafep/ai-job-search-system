@@ -85,6 +85,7 @@ def test_deploy_reuses_a_ready_release_with_the_same_fingerprint():
             {'id': 'i', 'key': 'AJSS_MCP_ISSUER', 'type': 'plain', 'target': ['production'],
              'value': 'https://ajss.vercel.app'},
             {'id': 'f', 'key': 'AJSS_WORKLOAD_FILE_BACKEND', 'type': 'plain', 'target': ['production'], 'value': 'drive'},
+            {'id': 'v', 'key': 'AJSS_VERCEL_WORKFLOWS_ENABLED', 'type': 'plain', 'target': ['production'], 'value': '0'},
             {'id': 'w', 'key': 'AJSS_WORKFLOW_RUNS_ENABLED', 'type': 'plain', 'target': ['production'], 'value': '0'},
             {'id': 'p', 'key': 'AJSS_MCP_TOOL_PROFILE', 'type': 'plain', 'target': ['production'], 'value': 'domain'},
             {'id': 't', 'key': 'AJSS_API_TOKEN', 'target': ['production']},

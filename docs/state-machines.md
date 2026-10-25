@@ -132,3 +132,27 @@ Provider deferral and waiting for input refund the current attempt. Recovery and
 reopening are registry capabilities, not authorization to retry an uncertain
 submission or consume the application Dead Letters Queue automatically. Application
 policy and submission reconciliation checks still apply.
+
+## Native ChatGPT task lifecycle
+
+Source: [`chatgpt_workflows.py`](../application_service/chatgpt_workflows.py).
+These are tasks within one admitted workflow request, not application states.
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending: eligible ID and versioned context
+    pending --> paused: CAPTCHA / sign-in / upload / native browser unavailable
+    paused --> completed: validation result or definitive pre-submission failure
+    pending --> completed: validated website observation and match decision
+    pending --> submission_started: durable intent before final submit click
+    paused --> submission_started: first submission intent after resolving interaction
+    submission_started --> paused: specific host interaction required
+    submission_started --> completed: observed confirmation or unconfirmed result
+    paused --> completed: record result for an already-begun submission
+    completed --> [*]
+```
+
+A begin-command replay returns `may_submit: false`. A paused begun attempt cannot
+start again. Uncertain persistence or changed execution contracts move the whole
+run to `reconciliation_required`. The service does not automatically reclaim
+these tasks or restart website actions on a timeout.

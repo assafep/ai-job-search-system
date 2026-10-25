@@ -78,7 +78,7 @@ clients. Regenerate the handoff after URL, token, or API changes.
 
 MCP's `workflows` profile exposes workflow requests and related reads; the
 `domain` profile also exposes direct domain mutations. MCP does not provision or
-start workers. Use the [workstation worker setup](chatgpt-workflows.md) for a
+start workers. See the [native-browser protocol and remaining-workflow host setup](chatgpt-workflows.md) for a
 supervised local consumer. Docker runner provisioning can remain blocked after
 a successful API deployment and connection verification.
 
@@ -117,7 +117,7 @@ Do not run `provisioning/bootstrap` by itself. Its paths still belong to the sib
 
 ## Other host shapes
 
-Docker, Kubernetes, and Cloud Run run the Application Service as a long-lived process. The Vercel profile serves that API as functions and runs workflows on a separate process host. The worker path is:
+Docker, Kubernetes, and Cloud Run run the Application Service as a long-lived process. The Vercel profile serves the API as functions, provides a managed Queue subscriber for nine workflows, and reserves validation/submission website interaction for ChatGPT native browser. Cloud activation is explicit. The worker path is:
 
 ```text
 adapter event → workload registry → services.workflow_runtime → Application Service

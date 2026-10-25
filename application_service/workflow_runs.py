@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import uuid
+from .workflow_execution import execution_host
 from urllib.parse import parse_qs, urlparse
 
 
@@ -29,6 +30,7 @@ def blueprint_digest(name):
 def list_workflows():
     return {'workflows': [dict(name=name, kind=d['trigger']['poll_kind'], cadence=d['trigger']['cadence'],
                               input_states=d.get('input_states', []),
+                              execution_host=execution_host(name),
                               scope='all, application_id, or limit' if d['trigger']['poll_kind'] == 'queue' else 'all')
                           for name, d in definitions().items()]}
 
@@ -100,6 +102,7 @@ class Runs:
                     ids = [request['application_id']]
                 selected = ids[:request['limit']] if 'limit' in request else ids
             record = dict(run_id=identity, request=request, application_ids=selected,
+                          execution_host=execution_host(request['workflow']),
                           blueprint_digest=blueprint_digest(request['workflow']),
                           status='queued', created_at=timestamp(), updated_at=timestamp())
             records[identity] = record
@@ -139,7 +142,10 @@ class Runs:
         with self.store.locked() as records:
             if any(r['status'] in {'running', 'reconciliation_required'} for r in records.values()):
                 return {'run': None}
-            record = next((r for r in records.values() if r['status'] == 'queued'), None)
+            from .workflow_execution import CHATGPT_WORKFLOWS
+            record = next((r for r in records.values() if r['status'] == 'queued'
+                           and r['request']['workflow'] not in CHATGPT_WORKFLOWS
+                           and r.get('execution_host', 'workstation') == 'workstation'), None)
             if record is None:
                 return {'run': None}
             record.update(status='running', worker_id=worker_id, claim_token=uuid.uuid4().hex,
@@ -184,12 +190,43 @@ class Runs:
 
 
 def public(record):
-    return {key: value for key, value in record.items() if key not in {'claim_token', 'worker_id'}}
+    result = {key: value for key, value in record.items() if key not in {'claim_token', 'worker_id', 'chatgpt', 'vercel'}}
+    if record.get('chatgpt'):
+        tasks = record['chatgpt']['tasks'].values()
+        result['progress'] = {'admitted': len(record.get('application_ids') or []),
+                              'completed': sum(t['state'] == 'completed' for t in tasks),
+                              'pending': [{'task_id': t['task_id'], 'state': t['state'],
+                                           'pause_reason': t.get('pause_reason')}
+                                          for t in tasks if t['state'] != 'completed']}
+    if record.get('vercel'):
+        units = list(record['vercel']['units'].values())
+        result['progress'] = {'admitted': len(units),
+                              'completed': sum(u['status'] in {'succeeded', 'failed', 'skipped'} for u in units)}
+    return result
 
 
 def handle(handler, method, parts, repository, payload=None):
     """Called only after normal Application Service bearer authentication."""
     runs = Runs()
+    if len(parts) == 4 and parts[0] == 'workflow-runs' and parts[2] == 'chatgpt' and method == 'POST':
+        from .chatgpt_workflows import Sessions
+        from .mcp_adapter import Catalog
+        actions = {
+            'next': ('nextChatGPTWorkflowTask', lambda sessions: sessions.next(parts[1])),
+            'validation': ('completeChatGPTValidation', lambda sessions: sessions.validate(parts[1], payload)),
+            'begin-submission': ('beginChatGPTSubmission', lambda sessions: sessions.begin_submission(parts[1], payload)),
+            'submission': ('completeChatGPTSubmission', lambda sessions: sessions.complete_submission(parts[1], payload)),
+            'pause': ('pauseChatGPTWorkflowTask', lambda sessions: sessions.pause(parts[1], payload)),
+            'package': ('getChatGPTSubmissionPackage', lambda sessions: sessions.package(parts[1], payload['task_id'], payload['token'])),
+        }
+        if parts[3] not in actions:
+            return handler.send_json(404, {'error': 'not found'})
+        operation, action = actions[parts[3]]
+        Catalog(profile='domain').request(operation, {'run_id': parts[1], 'body': payload or {}})
+        return handler.send_json(200, action(Sessions(repository, runs)))
+    if method == 'GET' and parts == ['workflows', 'readiness']:
+        from .vercel_workflows import readiness
+        return handler.send_json(200, readiness(repository))
     if method == 'GET' and parts == ['workflows']:
         return handler.send_json(200, list_workflows())
     if method == 'GET' and parts == ['workflow-runs']:
@@ -204,7 +241,11 @@ def handle(handler, method, parts, repository, payload=None):
                 raise ValueError('limit must be an integer') from None
         return handler.send_json(200, runs.list(**arguments))
     if method == 'POST' and parts == ['workflow-runs']:
-        return handler.send_json(202, runs.start(payload, repository))
+        record = runs.start(payload, repository)
+        if record.get('execution_host') == 'vercel' and record['status'] in {'queued', 'running'}:
+            from .vercel_workflows import notify
+            notify(record['run_id'])
+        return handler.send_json(202, record)
     if method == 'POST' and parts == ['workflow-runs', 'claim']:
         return handler.send_json(200, runs.claim(payload.get('worker_id')))
     if len(parts) == 2 and parts[0] == 'workflow-runs' and method == 'GET':

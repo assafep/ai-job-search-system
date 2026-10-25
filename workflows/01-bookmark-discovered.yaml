@@ -4,7 +4,7 @@ trigger:
   cadence: minute
   poll_kind: queue
   event_type: read_posting_schedule
-agent: read-posting
+agent: null
 input_states:
   - Discovered
 external_actions: []
