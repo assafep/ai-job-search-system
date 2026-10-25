@@ -271,7 +271,8 @@ journal event.
 ## Architecture
 
 See [workflow execution diagrams](docs/architecture.md) for the current deployment
-and the proposed Vercel/ChatGPT execution split.
+and the proposed Vercel/ChatGPT execution split. See [state-machine diagrams](docs/state-machines.md)
+for application lifecycle, workflow requests and workload execution states.
 
 The target architecture separates workflow execution and ad hoc AI operations
 from the backend that owns application state:

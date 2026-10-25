@@ -1,5 +1,7 @@
 # Workflow execution architecture
 
+See [state machines](state-machines.md) for lifecycle transitions and execution tracking.
+
 ## Current implementation
 
 ChatGPT starts and monitors workflows through MCP. Python workflow execution
