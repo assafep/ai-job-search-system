@@ -77,10 +77,13 @@ def authorize(client, base):
     consent = base + location.path + '?' + location.query
     page = client.get(consent)
     assert page.status_code == 200 and 'Test client' in page.text
+    # no-referrer makes browsers send Origin: null on this form's POST.
+    assert page.headers['referrer-policy'] == 'same-origin'
     assert 'owner-test-token' not in page.text
     assert client.post(consent, data={'token': 'wrong'}).status_code == 403
     assert client.post(consent, data={'token': 'owner-test-token'}, headers={'Origin': 'https://attacker.test'}).status_code == 403
-    approved = client.post(consent, data={'token': 'owner-test-token'})
+    assert client.post(consent, data={'token': 'owner-test-token'}, headers={'Origin': 'null'}).status_code == 403
+    approved = client.post(consent, data={'token': 'owner-test-token'}, headers={'Origin': 'https://ajss.example.test'})
     assert approved.status_code == 303, approved.text
     result = parse_qs(urlsplit(approved.headers['location']).query)
     assert result['state'] == ['test-client-csrf-state']

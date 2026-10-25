@@ -103,7 +103,7 @@ class Provider:
     async def consent(self, request: Request):
         nonce = request.query_params.get('request', '')
         headers = {'Cache-Control': 'no-store', 'Pragma': 'no-cache',
-                   'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY',
+                   'Referrer-Policy': 'same-origin', 'X-Frame-Options': 'DENY',
                    'Content-Security-Policy': "default-src 'none'; form-action 'self'; frame-ancestors 'none'"}
         pending = self.store.get('pending', nonce)
         if not pending:
