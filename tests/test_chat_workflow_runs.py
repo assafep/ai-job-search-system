@@ -28,6 +28,7 @@ class MemoryStore:
 @pytest.fixture
 def runs(monkeypatch):
     monkeypatch.setenv('AJSS_WORKFLOW_RUNS_ENABLED', '1')
+    monkeypatch.setenv('AJSS_LEGACY_WORKSTATION_WORKFLOWS', '1')
     return Runs(MemoryStore())
 
 
@@ -177,6 +178,7 @@ def test_http_and_mcp_workflow_tools(monkeypatch):
     monkeypatch.setenv('REPOSITORY_BACKEND', 'memory')
     monkeypatch.setenv('APPLICATION_SERVICE_TOKEN', 'test-workflow-token')
     monkeypatch.setenv('AJSS_WORKFLOW_RUNS_ENABLED', '1')
+    monkeypatch.setenv('AJSS_LEGACY_WORKSTATION_WORKFLOWS', '1')
     store = MemoryStore()
     monkeypatch.setattr(workflow_runs, 'Store', lambda: store)
     repository = MemoryRepository()

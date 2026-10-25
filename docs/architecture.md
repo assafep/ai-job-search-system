@@ -11,9 +11,9 @@ A deployed API does not prove that a ChatGPT browser session is available.
 The implemented split assigns website reading/match validation and form submission
 to ChatGPT's **own native browser**. MCP supplies context and records structured
 results; it does not launch a separate browser. The other nine workflows have a
-Vercel Queues execution path. Cloud activation is explicit; until enabled and
-configured, those nine retain their workstation compatibility host. The two
-native-browser workflows are never claimed by that workstation worker.
+Vercel Queues execution path. Cloud activation is explicit; until enabled and configured, those nine wait
+without executing. There is no implicit workstation fallback. The two
+native-browser workflows are never claimed by a workstation worker.
 
 ```mermaid
 flowchart TB
@@ -108,8 +108,9 @@ assuming that shipping this source activates every dependency.
 
 ## Legacy workstation compatibility
 
-This earlier architecture remains available for the other nine workflows while
-cloud execution is disabled. It is not how native ChatGPT browser tasks execute.
+This earlier architecture is available only with the explicit
+`AJSS_LEGACY_WORKSTATION_WORKFLOWS=1` compatibility setting. It is disabled by
+default; disabling Vercel does not activate it. It is not how native ChatGPT browser tasks execute.
 Only one registry-writing runner should be used for an installation.
 
 ```mermaid

@@ -70,6 +70,9 @@ def public_settings(runtime):
     for key, source in PUBLIC_SETTINGS:
         settings[key] = source if isinstance(source, str) else drive.get(source[1]) or ''
     chat = runtime.get('chat_workflows') or {}
+    settings['AJSS_LEGACY_WORKSTATION_WORKFLOWS'] = '1' if (runtime.get('workflow_execution') or {}).get('legacy_workstation_enabled') is True else '0'
+    if settings['AJSS_LEGACY_WORKSTATION_WORKFLOWS'] == '1' and (runtime.get('workflow_execution') or {}).get('vercel_enabled') is True:
+        raise VercelError('Choose Vercel execution or explicit legacy workstation mode, not both')
     settings['AJSS_VERCEL_WORKFLOWS_ENABLED'] = '1' if (runtime.get('workflow_execution') or {}).get('vercel_enabled') is True else '0'
     settings['AJSS_WORKFLOW_RUNS_ENABLED'] = '1' if chat.get('enabled') is True else '0'
     settings['AJSS_MCP_TOOL_PROFILE'] = chat.get('mcp_tool_profile', 'domain')

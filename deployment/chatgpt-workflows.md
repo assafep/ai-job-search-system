@@ -175,8 +175,10 @@ worker-claim and worker-update operations are not exposed as MCP tools.
 
 ## Legacy workstation compatibility
 
-`services.chat_workflow_worker` remains a compatibility runner for the other
-workflows while cloud execution is disabled. It cannot claim or execute the two
+`services.chat_workflow_worker` is an explicitly opt-in compatibility runner
+for the other workflows. It requires `AJSS_LEGACY_WORKSTATION_WORKFLOWS=1` on
+the service; it is disabled by default. Disabled cloud execution leaves requests
+queued instead of falling back to this worker. It cannot claim or execute the two
 native ChatGPT browser workflows. Its systemd service is named
 `ajss-chat-workflow-worker`. It is not the executor for ChatGPT browser tasks.
 Workflow-owned checkpoints, receipts and PDFs continue to use the Application

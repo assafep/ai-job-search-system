@@ -10,7 +10,7 @@ import hashlib
 import json
 import os
 import uuid
-from .workflow_execution import execution_host
+from .workflow_execution import execution_host, execution_enabled
 from urllib.parse import parse_qs, urlparse
 
 
@@ -30,7 +30,7 @@ def blueprint_digest(name):
 def list_workflows():
     return {'workflows': [dict(name=name, kind=d['trigger']['poll_kind'], cadence=d['trigger']['cadence'],
                               input_states=d.get('input_states', []),
-                              execution_host=execution_host(name),
+                              execution_host=execution_host(name), execution_enabled=execution_enabled(name),
                               scope='all, application_id, or limit' if d['trigger']['poll_kind'] == 'queue' else 'all')
                           for name, d in definitions().items()]}
 
@@ -137,6 +137,8 @@ class Runs:
                 'next_cursor': page[-1]['run_id'] if len(rows) > limit else None}
 
     def claim(self, worker_id):
+        if os.environ.get('AJSS_LEGACY_WORKSTATION_WORKFLOWS') != '1':
+            return {'run': None}
         if not isinstance(worker_id, str) or not worker_id.strip():
             raise ValueError('worker_id is required')
         with self.store.locked() as records:
@@ -191,6 +193,8 @@ class Runs:
 
 def public(record):
     result = {key: value for key, value in record.items() if key not in {'claim_token', 'worker_id', 'chatgpt', 'vercel'}}
+    if record.get('execution_host') == 'vercel' and record['status'] == 'queued' and not execution_enabled(record['request']['workflow']):
+        result['activation_required'] = True
     if record.get('chatgpt'):
         tasks = record['chatgpt']['tasks'].values()
         result['progress'] = {'admitted': len(record.get('application_ids') or []),
@@ -242,7 +246,7 @@ def handle(handler, method, parts, repository, payload=None):
         return handler.send_json(200, runs.list(**arguments))
     if method == 'POST' and parts == ['workflow-runs']:
         record = runs.start(payload, repository)
-        if record.get('execution_host') == 'vercel' and record['status'] in {'queued', 'running'}:
+        if record.get('execution_host') == 'vercel' and execution_enabled(record['request']['workflow']) and record['status'] in {'queued', 'running'}:
             from .vercel_workflows import notify
             notify(record['run_id'])
         return handler.send_json(202, record)
