@@ -16,3 +16,9 @@ config/browser-sessions
 config/*.lock
 config/*.tmp
 logs
+
+.venv
+.pytest_cache
+*.swp
+**/*.swp
+config/orchestrator-status.json

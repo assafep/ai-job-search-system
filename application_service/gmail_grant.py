@@ -1,4 +1,4 @@
-"""Gmail grant stored for the Vercel Application Service.
+"""Gmail grant stored for the Application Service.
 
 The one-hour access token is refreshed from the stored refresh token.
 A Testing-mode refresh token still ends after about seven days. This module
@@ -156,7 +156,7 @@ def authorization_url(client_id, redirect_uri, state, challenge=None):
 
 
 def start_connect(record, redirect_uri):
-    """Remember a PKCE verifier so the Vercel callback can finish the grant."""
+    """Remember a PKCE verifier so the callback can finish the grant."""
     verifier = secrets.token_urlsafe(64)
     digest = hashlib.sha256(verifier.encode()).digest()
     challenge = base64.urlsafe_b64encode(digest).rstrip(b'=').decode()

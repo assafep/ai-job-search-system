@@ -4,6 +4,7 @@ SYSTEM_DIRECTORY = '.ai-job-search-system'
 APPLICANT_DIRECTORY = 'Applicant'
 PROFILE_PATH = APPLICANT_DIRECTORY + '/applicant_profile.json'
 LEGACY_PROFILE_PATH = SYSTEM_DIRECTORY + '/applicant_profile.json'
+WORKFLOW_EXECUTION_PATH = SYSTEM_DIRECTORY + '/workflow_execution.json'
 WORKLOAD_STATE_DIRECTORY = SYSTEM_DIRECTORY + '/workloads-internal-state'
 
 

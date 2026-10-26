@@ -49,7 +49,7 @@ class AutomationDaemon:
             package_workloads.extend(batch)
             results = self.worker.run_once()
             preparation_results.extend(results)
-            if any(result.get('status') == 'failed' for result in results):
+            if not results or any(result.get('status') == 'failed' for result in results):
                 break
         submission_workloads = self.enqueue_ready_submission()
         submission_results = self.worker.run_once()

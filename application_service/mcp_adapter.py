@@ -299,7 +299,7 @@ def deployment_credentials():
     url = os.environ.get('APPLICATION_SERVICE_URL')
     token = os.environ.get('APPLICATION_SERVICE_TOKEN') or os.environ.get('AJSS_API_TOKEN')
     if not url and not token:
-        checkpoint = ROOT.parent / 'auto-signup-vercel' / '.onboarding' / 'cloud.json'
+        checkpoint = ROOT / '.onboarding' / 'cloud.json'
         cloud = json.loads(checkpoint.read_text())
         if not cloud.get('application_ready'):
             raise ValueError('Application Service has not been deployed')

@@ -12,8 +12,8 @@ def test_workflow_sends_the_notice_and_does_not_keep_the_access_token():
                 'refresh_expires_at': 10,
                 'message': {
                     'to': 'ada@example.com', 'subject': 'expires', 'body': 'renew',
-                    'connect_url': 'https://ajss-one.vercel.app/gmail/connect?code=1',
-                    'renew_url': 'https://ajss-one.vercel.app/gmail/renew?code=1',
+                    'connect_url': 'https://ajss.example.com/gmail/connect?code=1',
+                    'renew_url': 'https://ajss.example.com/gmail/renew?code=1',
                 },
             }
 

@@ -114,7 +114,7 @@ class Handler(BaseHTTPRequestHandler):
                     or os.environ.get("PERSISTENCE_API_TOKEN")
                     or os.environ.get('AJSS_API_TOKEN'))
         if not expected:
-            return not (os.environ.get('VERCEL') or os.environ.get('REPOSITORY_BACKEND') == 'hybrid')
+            return os.environ.get('REPOSITORY_BACKEND') != 'hybrid'
         return hmac.compare_digest(self.headers.get("Authorization", ''), "Bearer " + expected)
 
     def unauthorized(self):
@@ -145,7 +145,7 @@ class Handler(BaseHTTPRequestHandler):
         return self.send_json(status, {"error": str(exc)})
 
     def _public_base(self):
-        host = self.headers.get('Host', 'ajss-one.vercel.app')
+        host = self.headers.get('Host', 'localhost:8080')
         return 'https://' + host
 
     def _gmail_record(self):
@@ -219,20 +219,7 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path)
         parts = [x for x in path.path.split("/") if x]
         if parts == ['internal', 'workflow-schedule']:
-            expected = os.environ.get('CRON_SECRET')
-            if not expected or not hmac.compare_digest(self.headers.get('Authorization', ''), 'Bearer ' + expected):
-                return self.unauthorized()
-            if os.environ.get('AJSS_VERCEL_WORKFLOWS_ENABLED') != '1':
-                return self.send_json(200, {'status': 'disabled', 'runs': []})
-            if repository is None and os.environ.get('REPOSITORY_BACKEND') == 'hybrid':
-                initialize_backend()
-            if repository is None:
-                return self.backend_unavailable()
-            try:
-                from .vercel_workflows import schedule
-                return self.send_json(200, schedule(repository))
-            except Exception as exc:
-                return self.send_exception(exc)
+            return self.send_json(404, {'error': 'not found'})
         if parts[:1] == ['gmail'] and parts[1:2] != ['grant']:
             return self._gmail_public(parts)
         if parts not in (["health"], ["ready"]) and not self.authorized():
@@ -247,6 +234,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(200, {"ok": True, **checks})
             except Exception:
                 return self.send_json(503, {'error': 'persistence readiness check failed'})
+        if parts == ["workflows", "execution"]:
+            if repository is None and os.environ.get('REPOSITORY_BACKEND') == 'hybrid':
+                initialize_backend()
+            if repository is None:
+                return self.backend_unavailable()
+            try:
+                we = repository.get_workflow_execution()
+                return self.send_json(200, we if we else {'workstation_enabled': True})
+            except Exception as exc:
+                return self.send_exception(exc)
         if parts != ["health"] and repository is None:
             return self.backend_unavailable()
         try:
@@ -347,6 +344,13 @@ class Handler(BaseHTTPRequestHandler):
                 initialize_backend()
             if repository is None:
                 return self.backend_unavailable()
+            if parts == ['workflows', 'execution']:
+                if 'workstation_enabled' not in data:
+                    return self.send_json(400, {'error': 'workstation_enabled is required'})
+                if not isinstance(data['workstation_enabled'], bool):
+                    return self.send_json(400, {'error': 'workstation_enabled must be a boolean'})
+                result = repository.set_workflow_execution({'workstation_enabled': data['workstation_enabled']})
+                return self.send_json(200, result)
             if parts == ['bulk-updates']:
                 from .bulk_updates import execute
                 return self.send_json(200, execute(repository, data))
@@ -367,8 +371,6 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(200, repository.repair_journal())
             if parts == ["journal", "migrate-application-states"]:
                 return self.send_json(200, repository.migrate_application_states())
-            if parts == ["journal", "migrate-completed"]:
-                return self.send_json(200, repository.migrate_completed())
             if parts == ["journal", "rollback-prepared"]:
                 results = []
                 for application in repository.list_applications(status="Prepared"):

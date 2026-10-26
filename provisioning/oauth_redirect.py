@@ -8,7 +8,7 @@ from .drive_login import CLIENT_PATH
 from .drive_storage import gcloud_access_token
 from .state import ProvisioningFailure
 
-CALLBACK = 'https://ajss-one.vercel.app/gmail/callback'
+CALLBACK = None  # Set to the deployed service URL + '/gmail/callback'
 LOOPBACK = 'http://127.0.0.1:8765/'
 
 

@@ -1,9 +1,9 @@
-"""Bind an existing My Drive folder to one service account.
+"""Bind a My Drive folder to one service account.
 
 The operator's only prompt is the browser login. Later runs reuse the saved
-user grant. The folder path is never created here: a missing or ambiguous path
-stops the run. The service account, its single local key, and the folder
-writer grant are reconciled by stable ids.
+user grant. Missing folder components in the path are created automatically.
+The service account, its single local key, and the folder writer grant are
+reconciled by stable ids.
 """
 import base64
 import hashlib
@@ -93,7 +93,8 @@ class Api:
                 self._enabled.add((match.group(2), match.group(1)))
                 enable_google_api(match.group(2), match.group(1))
                 return self.request(method, url, body)
-            raise ProvisioningFailure('Google returned HTTP {}: {}'.format(exc.code, detail[:300])) from None
+            raise ProvisioningFailure('Google returned HTTP {} for {} {}: {}'.format(
+                exc.code, method, urllib.parse.urlsplit(url).path, detail[:300])) from None
 
 
 def _list_files(api, query):
@@ -111,7 +112,7 @@ def _list_files(api, query):
             return matches
 
 
-def resolve_folder(api, path):
+def resolve_folder(api, path, create_missing=False):
     if str(path).startswith('https://drive.google.com/'):
         from application_service.google_drive_artifacts import folder_id_from_url
         folder_id = folder_id_from_url(path)
@@ -127,13 +128,20 @@ def resolve_folder(api, path):
     for name in split_drive_path(path):
         matches = _list_files(api, folder_query(name, parent))
         if not matches:
-            siblings = _list_files(api, "'{}' in parents and mimeType = 'application/vnd.google-apps.folder' "
-                                    "and trashed = false".format(parent))
-            names = ', '.join(sorted(item['name'] for item in siblings)) or 'no folders'
-            raise ProvisioningFailure('Drive folder does not exist: ' + name + '. Folders here: ' + names)
-        if len(matches) > 1:
+            if create_missing:
+                folder = api.request('POST', 'https://www.googleapis.com/drive/v3/files?fields=id,name', {
+                    'name': name, 'mimeType': 'application/vnd.google-apps.folder',
+                    'parents': [parent],
+                })
+            else:
+                siblings = _list_files(api, "'{}' in parents and mimeType = 'application/vnd.google-apps.folder' "
+                                        "and trashed = false".format(parent))
+                names = ', '.join(sorted(item['name'] for item in siblings)) or 'no folders'
+                raise ProvisioningFailure('Drive folder does not exist: ' + name + '. Folders here: ' + names)
+        elif len(matches) > 1:
             raise ProvisioningFailure('Drive folder is ambiguous: ' + name)
-        folder = matches[0]
+        else:
+            folder = matches[0]
         parent = folder['id']
     return folder
 
@@ -152,8 +160,17 @@ def _poll_operation(api, operation, collection):
 
 
 def ensure_project(api, project_id):
+    print('Google Cloud project ID: ' + project_id, flush=True)
     try:
-        return api.request('GET', 'https://cloudresourcemanager.googleapis.com/v1/projects/' + project_id), False
+        project = api.request('GET', 'https://cloudresourcemanager.googleapis.com/v1/projects/' + project_id)
+        lifecycle = project.get('lifecycleState')
+        if lifecycle != 'ACTIVE':
+            raise ProvisioningFailure(
+                'Drive project ' + project_id + ' is ' + str(lifecycle) +
+                '; restore it to ACTIVE before provisioning its services. '
+                'For DELETE_REQUESTED, run ./deployment/ctl.sh restore-drive-project, then rerun up.')
+        print('Reusing existing Google Cloud project: ' + project_id, flush=True)
+        return project, False
     except ProvisioningFailure as exc:
         if 'HTTP 403' not in str(exc) and 'HTTP 404' not in str(exc):
             raise
@@ -162,6 +179,7 @@ def ensure_project(api, project_id):
     })
     _poll_operation(api, operation, 'https://cloudresourcemanager.googleapis.com/v1/')
     project = api.request('GET', 'https://cloudresourcemanager.googleapis.com/v1/projects/' + project_id)
+    print('Created Google Cloud project: ' + project_id, flush=True)
     return project, True
 
 
@@ -181,11 +199,15 @@ def ensure_service_account(api, project_id):
     listed = api.request('GET', 'https://iam.googleapis.com/v1/projects/' + project_id + '/serviceAccounts')
     for account in listed.get('accounts', []):
         if account.get('email') == email:
-            return email, False
+            return email, account.get('uniqueId'), False
     api.request('POST', 'https://iam.googleapis.com/v1/projects/' + project_id + '/serviceAccounts', {
         'accountId': account_id, 'serviceAccount': {'displayName': 'AJSS Drive writer'},
     })
-    return email, True
+    listed = api.request('GET', 'https://iam.googleapis.com/v1/projects/' + project_id + '/serviceAccounts')
+    for account in listed.get('accounts', []):
+        if account.get('email') == email:
+            return email, account.get('uniqueId'), True
+    return email, None, True
 
 
 def ensure_permission(api, folder_id, email):
@@ -242,13 +264,24 @@ def verify_writer(key, folder_id, opener=None, owner_api=None):
     api = Api(service_account_token(key, opener), opener)
     # Service accounts have no My Drive storage quota. Create the probe as
     # the owner, then verify service-account read/update access to that file.
-    created = (owner_api or api).request('POST', 'https://www.googleapis.com/drive/v3/files?fields=id', {
-        'name': '.ajss-write-probe', 'mimeType': 'text/plain', 'parents': [folder_id],
-    })
+    try:
+        created = (owner_api or api).request('POST', 'https://www.googleapis.com/drive/v3/files?fields=id', {
+            'name': '.ajss-write-probe', 'mimeType': 'text/plain', 'parents': [folder_id],
+        })
+    except ProvisioningFailure as exc:
+        if 'HTTP 403' in str(exc):
+            raise ProvisioningFailure('403 when creating write probe file in folder {}. The authenticated user cannot create files here.'.format(folder_id)) from None
+        raise
     file_id = created['id']
-    api.request('GET', 'https://www.googleapis.com/drive/v3/files/' + file_id + '?fields=id,name')
-    api.request('PATCH', 'https://www.googleapis.com/drive/v3/files/' + file_id, {'name': '.ajss-write-probe-verified'})
-    api.request('PATCH', 'https://www.googleapis.com/drive/v3/files/' + file_id, {'trashed': True})
+    try:
+        api.request('GET', 'https://www.googleapis.com/drive/v3/files/' + file_id + '?fields=id,name')
+        api.request('PATCH', 'https://www.googleapis.com/drive/v3/files/' + file_id,
+                    {'name': '.ajss-write-probe-verified'})
+    finally:
+        # My Drive editors can update a file but cannot trash another user's
+        # file. The user who created the probe must also clean it up.
+        (owner_api or api).request('PATCH', 'https://www.googleapis.com/drive/v3/files/' + file_id,
+                                  {'trashed': True})
     return file_id
 
 
@@ -336,12 +369,12 @@ def bind(path, state_dir=None, opener=None, login=None):
     record_path = state_dir / 'drive-folder.json'
     access = ensure_drive_login(opener) if login is None else login()
     api = Api(access, opener)
-    folder = resolve_folder(api, path)
+    folder = resolve_folder(api, path, create_missing=True)
     project_id = project_id_for(folder['id'])
     _, project_created = ensure_project(api, project_id)
     services_enabled = any([ensure_service(api, project_id, name) for name in (
         'iam.googleapis.com', 'drive.googleapis.com')])
-    email, account_created = ensure_service_account(api, project_id)
+    email, sa_id, account_created = ensure_service_account(api, project_id)
     key_created = ensure_key(api, project_id, email, key_path)
     granted = ensure_permission(api, folder['id'], email)
     key = json.loads(key_path.read_text())
@@ -354,5 +387,28 @@ def bind(path, state_dir=None, opener=None, login=None):
     return {
         'outcome': 'changed' if changed else 'unchanged',
         'folder_id': folder['id'], 'project_id': project_id,
-        'service_account': email, 'write_probe_trashed': probe,
+        'service_account': email, 'service_account_id': sa_id, 'write_probe_trashed': probe,
     }
+
+
+def restore_project(path):
+    """Explicit, retry-safe recovery of this folder's named AJSS project only."""
+    api = Api(ensure_drive_login())
+    folder = resolve_folder(api, path)
+    project_id = project_id_for(folder['id'])
+    print('Google Cloud project ID: ' + project_id, flush=True)
+    url = 'https://cloudresourcemanager.googleapis.com/v1/projects/' + project_id
+    project = api.request('GET', url)
+    if project.get('projectId') != project_id or project.get('name') != 'AJSS Drive':
+        raise ProvisioningFailure('Refusing to restore a project without the expected AJSS identity.')
+    if project.get('lifecycleState') == 'ACTIVE':
+        return {'project_id': project_id, 'outcome': 'unchanged'}
+    if project.get('lifecycleState') != 'DELETE_REQUESTED':
+        raise ProvisioningFailure('The Drive project is not in a restorable state.')
+    api.request('POST', url + ':undelete', {})
+    deadline = time.monotonic() + 180
+    while time.monotonic() < deadline:
+        if api.request('GET', url).get('lifecycleState') == 'ACTIVE':
+            return {'project_id': project_id, 'outcome': 'changed'}
+        time.sleep(2)
+    raise ProvisioningFailure('Project restoration is pending. Rerun restore-drive-project to observe its state.')

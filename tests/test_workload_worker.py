@@ -74,3 +74,56 @@ def test_worker_rejects_invalid_limits_and_poll_intervals():
             pass
         else:
             raise AssertionError("invalid poll interval was accepted")
+
+
+def test_shutdown_finishes_current_item_and_leaves_next_unclaimed():
+    from types import SimpleNamespace
+    from threading import Event
+    stop = Event()
+    seen = []
+    records = [SimpleNamespace(workload_id='first', workflow='discover'),
+               SimpleNamespace(workload_id='next', workflow='discover')]
+    class Runtime:
+        registry = SimpleNamespace(pending=lambda: records)
+        def run(self, workload_id, **kwargs):
+            seen.append(workload_id)
+            stop.set()
+            return 'completed'
+    worker = WorkloadWorker(Runtime(), lambda *_: {})
+    assert worker.run_once(stop_event=stop) == ['completed']
+    assert seen == ['first']
+
+
+def test_cli_worker_leaves_native_browser_workflows_unclaimed():
+    from types import SimpleNamespace
+    records = [SimpleNamespace(workload_id=name, workflow=name)
+               for name in ('validate-bookmarked', 'submit-prepared', 'discover')]
+    seen = []
+    runtime = SimpleNamespace(registry=SimpleNamespace(pending=lambda: records),
+                              run=lambda workload_id, **kwargs: seen.append(workload_id))
+    WorkloadWorker(runtime, lambda *_: {}).run_once()
+    assert seen == ['discover']
+
+
+def test_automatic_polling_respects_workflow_host_and_cadence(monkeypatch):
+    from threading import Event
+    from types import SimpleNamespace
+    from services import polling
+    stop = Event()
+    admitted = []
+    specs = {'discover': 'scheduled', 'prepare-validated': 'queue',
+             'validate-bookmarked': 'queue', 'submit-prepared': 'queue', 'prepare-interview': 'external'}
+    monkeypatch.setattr(polling, 'definitions', lambda: {name: {'trigger': {'poll_kind': kind}} for name, kind in specs.items()})
+    monkeypatch.setattr(polling, 'workflow_poll_seconds', lambda name: 60)
+    monkeypatch.setattr(polling, 'enqueue_scheduled', lambda registry, names: admitted.extend(names))
+    monkeypatch.setattr(polling, 'enqueue_queues', lambda client, registry, names: admitted.extend(names))
+    runtime = SimpleNamespace(persistence_client=object(), registry=object())
+    worker = WorkloadWorker(runtime, lambda *_: {})
+    ticks = []
+    def run_once(**kwargs):
+        ticks.append(1)
+        if len(ticks) == 2:
+            stop.set()
+    monkeypatch.setattr(worker, 'run_once', run_once)
+    worker.run_forever(0, stop_event=stop, poll_workflows=True)
+    assert admitted == ['discover', 'prepare-validated']

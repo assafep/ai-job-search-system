@@ -17,21 +17,36 @@ TOKEN_PATH = REPO / '.onboarding' / 'drive-user.json'
 RUNTIME_PATH = REPO / 'config' / 'runtime.json'
 
 
+class GoogleConsentRequired(ProvisioningFailure):
+    """The owner must configure/authorize their dedicated Google OAuth client."""
+
+
+
 def file_login_instructions(email, project_id=None):
     """Steps for the person being onboarded. The test user is their email."""
     if not email:
         raise ProvisioningFailure(
             'The applicant profile has no personal.email. Add that address, then rerun Drive setup.')
     query = '?project=' + project_id if project_id else ''
-    clients = 'https://console.cloud.google.com/auth/clients' + query
-    audience = 'https://console.cloud.google.com/auth/audience' + query
+    credentials = 'https://console.cloud.google.com/apis/credentials' + query
     return '\n'.join((
-        'Google needs a one-time file-access approval for ' + email + '.',
-        '1. Open ' + clients + ' and create an OAuth client of type Desktop.',
-        '2. Download the JSON to .onboarding/oauth-client.json.',
-        '3. Open ' + audience + '. Leave the app External and in Testing.',
-        '4. Add ' + email + ' under Test users and save.',
-        '5. Rerun Drive setup and choose Allow for ' + email + '.',
+        'Setup paused: the downloaded Desktop OAuth client JSON is missing.',
+        'Expected file: ' + str(CLIENT_PATH),
+        'No consent browser will open until this file is saved at that path.',
+        '1. Open Credentials: ' + credentials,
+        ('   Select project ' + project_id + '; make sure its ID matches the Google Cloud project ID printed earlier in the log.'
+         if project_id else '   Select the project matching the Google Cloud project ID printed earlier in the log.'),
+        '2. Choose Create credentials > OAuth client ID and select Desktop app.',
+        '   Recommended name: AJSS Application Service.',
+        '   Mark the checkbox "Use this client for an AI-powered agent".',
+        '   Save/create the client and download its JSON (containing the client ID and client secret).',
+        '   Save the JSON as .onboarding/oauth-client.json in this repository.',
+        '3. Notice the existing "AJSS Drive writer" service account (ID: drive-writer).',
+        '   Do not delete it; you will need it soon.',
+        '4. After saving the JSON at the expected path, rerun ./deployment/ctl.sh up.',
+        '   The script will display a Google consent link and try to open it in your host browser.',
+        '   Use your existing Google session for ' + email + ' and approve AJSS file access.',
+        '   The permission is called drive.file; it is not a web page to open.',
     ))
 
 
@@ -49,7 +64,7 @@ def applicant_email(runtime_path=RUNTIME_PATH):
 
 def client_credentials(path=CLIENT_PATH, email=None, project_id=None):
     if not path.is_file():
-        raise ProvisioningFailure(file_login_instructions(email, project_id))
+        raise GoogleConsentRequired(file_login_instructions(email, project_id))
     data = json.loads(path.read_text())
     installed = data.get('installed') or data.get('web') or data
     client_id = installed.get('client_id')
@@ -84,10 +99,10 @@ def ensure_file_login(project_id=None, email=None):
     if token_saved():
         return False
     address = applicant_email() if email is None else email
-    instructions = file_login_instructions(address, project_id)
     client_id, client_secret = client_credentials(email=address, project_id=project_id)
-    print(instructions, flush=True)
-    print('Sign in as ' + address + ' and choose Allow.', flush=True)
+    print('OAuth client JSON found. Requesting AJSS Drive file-access approval for ' + address + '.', flush=True)
+    print('Google shows the application name configured for your OAuth client (recommended: "AJSS Application Service").', flush=True)
+    print('You can use your existing Google sign-in; approve this application when prompted.', flush=True)
     credentials = browser_credentials(client_id, client_secret)
     save_user_token(credentials)
     return True

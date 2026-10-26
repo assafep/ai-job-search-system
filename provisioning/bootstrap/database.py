@@ -3,10 +3,9 @@ from pathlib import Path
 import shutil
 from .contracts import DatabaseError, DatabaseProvider, validate_database_handoff
 from .progress import creating, completed
-from .providers import vercel_neon
 from . import postgres
 
-PROVIDERS: dict[str, DatabaseProvider] = {'vercel-neon': vercel_neon}
+PROVIDERS: dict[str, DatabaseProvider] = {}
 SCHEMA_FILE = Path(__file__).resolve().parents[2] / 'sql' / 'schema.sql'
 
 
@@ -68,7 +67,7 @@ END $reset$;
     completed('application schema', str(schema_file.name))
 
 
-def provision_database(state, root, command, save, checkpoint, provider='vercel-neon', *, reset=False):
+def provision_database(state, root, command, save, checkpoint, provider='docker-postgres', *, reset=False):
     preflight(provider)
     if not shutil.which('psql'):
         raise DatabaseError('Install the PostgreSQL client (psql) before running database onboarding.')

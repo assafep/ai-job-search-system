@@ -1,8 +1,9 @@
-"""Assign an existing My Drive folder as the AJSS storage root.
+"""Assign a My Drive folder as the AJSS storage root.
 
 Run this yourself. The only prompt is the Google browser login when the
-current gcloud account lacks the Drive scope. A second run with the same
-path reuses the project, service account, key, and writer grant.
+current gcloud account lacks the Drive scope. Missing folder components
+are created automatically. A second run with the same path reuses the
+project, service account, key, and writer grant.
 
     python3 -m provisioning.drive_folder --path 'My Drive/JobSearch/JobSearch2026'
 """
@@ -46,10 +47,10 @@ def provision(path):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--path', required=True, help='Existing folder path, for example My Drive/JobSearch/JobSearch2026')
+    parser.add_argument('--path', required=True, help='Folder path (created if missing), for example My Drive/JobSearch/JobSearch2026')
     args = parser.parse_args(argv)
     print('1. Use the logged-in gcloud account, or open a browser if Drive access is missing.')
-    print('2. Resolve the existing folder. The path is not created.')
+    print('2. Resolve the folder path, creating missing components automatically.')
     print('3. Ensure one Cloud project, drive-writer service account, and one local key.')
     print('4. Grant that account writer on the folder and probe a create-then-trash.')
     print('5. Set config/runtime.json google_drive.artifact_root_url to that folder.')
@@ -64,6 +65,7 @@ def main(argv=None):
     print('Drive folder {}: {}'.format(result['outcome'], result['folder_id']))
     print('Project: ' + result['project_id'])
     print('Service account: ' + result['service_account'])
+    print('Service account ID: ' + result.get('service_account_id', 'unknown'))
     print('Write probe trashed file: ' + result['write_probe_trashed'])
     print('AJSS artifact root {}: {}'.format('changed' if root_changed else 'unchanged', url))
     print('drive.file login: ' + ('saved' if result['file_login_created'] else 'already present'))

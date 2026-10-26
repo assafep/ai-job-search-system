@@ -1,4 +1,4 @@
-"""Vercel's file-based Python entrypoint for the existing application API."""
+"""File-based Python entrypoint for the existing application API."""
 from application_service.main import Handler
 
 

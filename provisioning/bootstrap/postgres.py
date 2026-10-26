@@ -108,7 +108,7 @@ DECLARE credentials ajss_bootstrap.credentials%ROWTYPE;
 BEGIN
     SELECT * INTO STRICT credentials FROM ajss_bootstrap.credentials;
     IF credentials.project_id <> {literal(project_id)} THEN
-        RAISE EXCEPTION 'Database belongs to a different Vercel project';
+        RAISE EXCEPTION 'Database belongs to a different project';
     END IF;
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{APP_ROLE}') THEN
         EXECUTE format('CREATE ROLE %I LOGIN NOINHERIT NOCREATEDB NOCREATEROLE PASSWORD %L',

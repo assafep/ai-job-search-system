@@ -17,7 +17,7 @@ TOKEN_PATH = REPO / '.onboarding' / 'gmail-user.json'
 GMAIL_READONLY = 'https://www.googleapis.com/auth/gmail.readonly'
 GMAIL_SEND = 'https://www.googleapis.com/auth/gmail.send'
 GMAIL_SCOPES = (GMAIL_READONLY, GMAIL_SEND)
-PRODUCTION_CALLBACK = 'https://ajss-one.vercel.app/gmail/callback'
+PRODUCTION_CALLBACK = None  # Set to the deployed service URL + '/gmail/callback'
 LOOPBACK_PORT = int(LOOPBACK.rsplit(':', 1)[1].strip('/'))
 
 

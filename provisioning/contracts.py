@@ -244,7 +244,7 @@ class LifecycleHooks(Protocol):
         """Ensure a process/container host; require execution_model='process'.
 
         Runner hosting is independent of the application API provider. Workflow
-        instances call that API over HTTP; they are not Vercel Functions.
+        instances call that API over HTTP.
         """
         ...
 

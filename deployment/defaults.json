@@ -1,6 +1,6 @@
 {
-  "setup": "vercel",
+  "setup": "local-docker",
   "action": "up",
   "drive_mode": "user-oauth",
-  "drive_path": "My Drive/JobSearch/JobSearch 2026"
+  "drive_path": "JobSearch/JobSearch 2026"
 }

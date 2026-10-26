@@ -5,10 +5,11 @@ This package is the implementation behind [deployment/ctl.sh](../deployment/ctl.
 | Module | Role |
 | --- | --- |
 | `lifecycle.py` | Names the steps for `plan`. |
+| `runner_control.py` | Starts, gracefully drains, and inspects the deployed Docker runner. |
 | `execute.py` | Runs the steps that exist for `up`. |
 | `drive_folder.py` | Binds an existing Drive folder for `drive`. |
 | `drive_storage.py` | Drive, Cloud project, and service-account calls. |
-| `bootstrap/` | Imported Vercel and Neon adapter. The sibling project still runs it. |
+| `bootstrap/` | Repository-owned Vercel and Neon adapters used by the live provisioning hooks. |
 | `contracts.py` | Shared result types. |
 
 ## ChatGPT and Codex connection handoff

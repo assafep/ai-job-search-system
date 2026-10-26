@@ -85,8 +85,6 @@ class HybridRepository:
             with self.mutation_scope():
                 connection = self._sessions.connection
                 self.journal.client.invalidate_document()
-                if self.journal.completed_client:
-                    self.journal.completed_client.invalidate_document()
                 if self.journal.artifacts:
                     self.journal.artifacts._forget_metadata()
                 self.journal._idempotency.clear()

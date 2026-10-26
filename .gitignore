@@ -19,3 +19,4 @@ config/browser-sessions/
 logs/
 config/orchestrator-status.json
 deployment/*verification.pdf
+.vercel

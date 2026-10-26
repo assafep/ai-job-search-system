@@ -5,33 +5,33 @@ Design and provider review: 2026-10-24. Operator guide:
 
 Provisioning ensures resources exist. Deployment installs a release. Activation
 enables serving or work consumption. `plan` shows this contract and changes
-nothing. `drive` and the Vercel/Neon portion of `up` have live implementations.
-Application deployment and the workflow runner do not. Use `--setup
-local-docker|vercel` in non-interactive sessions.
+nothing. `drive` and `up` have live implementations covering host provisioning,
+Drive binding, applicant preparation, application deployment, and MCP connection
+verification. Docker runner deployment now creates an image, persistent volume,
+and stopped container; activation remains separate. The live `start`, `stop`, and `status` commands control only this existing Docker runner. `start` checks API/worker readiness; `stop` drains without force-killing on timeout. Application pause/resume in the broader contract below remains unimplemented. Use `--setup
+local-docker` in non-interactive sessions.
 The launcher selects Python 3.9+ (this workstation's default `python3` is 3.7).
 
 ## Repository findings
 
-`auto-signup-vercel` is a sibling directory without Git metadata in this
-workspace. Its `onboard.py` already separates provider contracts, Vercel hosting,
-Vercel Marketplace/Neon, PostgreSQL roles, and DDL. Its hosting operation also
-deploys a Node.js **bootstrap probe**, and database provisioning publishes an app
-connection into the host. Those responsibilities must be split before registering
-them as the new hooks. Existing private `.onboarding` files need an explicit,
-validated import; they must not be copied into a build or committed.
+PostgreSQL roles and DDL use repository-owned adapters in
+`provisioning/bootstrap`. They save private state under this repository's
+`.onboarding` directory and do not require another checkout. Host provisioning
+ensures the database; application deployment publishes the Python Application
+Service directly. No bootstrap probe is deployed. Private state must never enter
+a build or version control.
 
 The main repository's `application_service/main.py` serves `openapi.yaml` through
 Python's `HTTPServer`; storage is Google Docs/Drive or memory. It has no PostgreSQL
 repository or database driver. `AJSS_DATABASE_URL` alone cannot enable SQL
-persistence. Its authentication reads `APPLICATION_SERVICE_TOKEN`, while the sibling
+persistence. Its authentication reads `APPLICATION_SERVICE_TOKEN`, while the bootstrap
 exports `AJSS_API_TOKEN`. Cloud deployment must map that name and fail if the
 token is absent. `/ready` currently confirms repository initialization, not a
 full database/Drive/authentication test.
 
-The application service is the API hosted as Vercel Functions. Workflow instances
-execute in the separately hosted workflow runner and call that API over HTTP.
-The runner has a process/container lifecycle and an independently selected host;
-there is no plan to convert the runner into Vercel Functions.
+The application service is the API. Workflow instances execute in the separately
+hosted workflow runner and call that API over HTTP. The runner has a
+process/container lifecycle and an independently selected host.
 
 `services.orchestrator`, the workload/approval registries and
 `services.orchestration_lock` rely on process-local synchronization and local
@@ -50,13 +50,12 @@ already present, and never overwrite existing profile or runtime configuration.
 
 | Area | Verified capability | Contract consequence |
 | --- | --- | --- |
-| Database | Vercel uses Marketplace providers such as Neon; Neon is managed PostgreSQL, with compute that may suspend while idle. | `provision_database` promises a reachable database, not an always-running process. Select database and compute providers independently. |
+| Database | PostgreSQL is the managed database; compute may suspend while idle. | `provision_database` promises a reachable database, not an always-running process. Select database and compute providers independently. |
 | Database identities | A PostgreSQL user is a role with `LOGIN`. Neon SQL-created roles avoid the privileged membership of API-created roles. | Create/reconcile owner/migrator and restricted app roles during provisioning; apply table grants/default privileges after DDL too. Never give the runner SQL credentials. |
-| Schema | The sibling DDL is PostgreSQL-specific but independent of hosting vendor. `IF NOT EXISTS` does not migrate an existing table definition. | Common `sql/schema.sql` is an initial baseline. Future changes require numbered, checksummed migrations and a migration ledger; schema drift is an error, never an automatic reset. |
-| Vercel host | Project creation reserves a deployment target; it does not start a server. Deployments are immutable releases. | Provision host before attaching Marketplace resources. Fingerprint code/config/secret versions and reuse a matching release; stage a production release before activation. |
-| Application start/stop | Vercel supports project pause/resume; pausing makes production return 503. | Map API start/stop to production availability. Preview URLs and in-flight work are not covered by that guarantee. Runner start/stop controls its separate process/container. |
-| Python API | Vercel supports Python entrypoints; existing `/api` handlers are also documented. | Add a supported entrypoint and routing, explicit config/secrets, dependency packaging and authentication tests. Do not run `serve_forever` as function startup. |
-| Vercel API limits | Current Fluid Compute Hobby duration is at most 300s; requests/responses are limited to 4.5 MB. | Bound each API request; base64 artifact payloads reach the limit before the raw file does. Large artifacts need an API-owned chunk/stream design. These limits do not bound workflow duration in the separate runner. |
+| Schema | The bootstrap DDL is PostgreSQL-specific but independent of hosting vendor. `IF NOT EXISTS` does not migrate an existing table definition. | Common `sql/schema.sql` is an initial baseline. Future changes require numbered, checksummed migrations and a migration ledger; schema drift is an error, never an automatic reset. |
+| Application host | The host reserves a deployment target; it does not start a server. Deployments are immutable releases. | Fingerprint code/config/secret versions and reuse a matching release; stage a production release before activation. |
+| Application start/stop | The API can be started and stopped. | Map API start/stop to production availability. Runner start/stop controls its separate process/container. |
+| Python API | The service uses Python with standard HTTPServer. | Add a supported entrypoint and routing, explicit config/secrets, dependency packaging and authentication tests. |
 | Runner hosting | The current runner is a continuous process with local locks/files. | A single process/container host needs persistent storage and the existing synchronization. Multiple runner hosts would additionally require shared claims/leases/checkpoints; that is a separate scaling change. Package agent/browser dependencies for the selected host. |
 | Docker | Compose can create stopped containers and start/stop them; `up` reconciles changed configuration. | Use stable project/service names, persistent named volumes, explicit image/config fingerprints and health checks. Provision Docker engine/host as a prerequisite; local does not imply empty hooks. |
 | Personal Google Drive | Service accounts have no storage quota and cannot own newly uploaded files. | Use user OAuth for My Drive. `drive.file` limits access to app-created/selected files, **not to one folder**. Enforce the configured root in the Application Service too. |
@@ -70,11 +69,9 @@ service-account token acquisition are missing from the current Drive adapter.
 The personal OAuth and Workspace service-account paths are explicit alternatives;
 there is no silent fallback from one security model to another.
 
-Initial setup choices are `local-docker` (PostgreSQL, API and runner in Docker)
-and `vercel` (Neon + application API on Vercel Functions + a separate Docker
-runner). Docker is the initial runner implementation; the runner host can later
-be another local or cloud process/container provider. Selecting Vercel for the
-API does not select a runner host implicitly in the provider interface.
+Initial setup choice is `local-docker` (PostgreSQL, API and runner in Docker).
+Docker is the initial runner implementation; the runner host can later be
+another local or cloud process/container provider.
 Both profiles remain **contract-only** in the new orchestrator. A provider may return
 `unchanged` only after observing the requested postcondition; unsupported hooks
 must return `unsupported`, never an empty successful function.
@@ -90,7 +87,7 @@ in provider-owned state, not portable application configuration.
 | Task | Additional inputs | Outputs / postcondition | Prerequisites |
 | --- | --- | --- | --- |
 | `provision_application_host` | host spec: account, region, stable resource name | application `HostTarget`; deploy permissions verified | preflight and authorization |
-| `provision_database` | database spec: PostgreSQL version/name, app role; optional host binding | `DatabaseAccess`: resource/database identity, app and migrator secret refs; connectivity and identity privileges checked | application host for Vercel Marketplace; no host dependency for Docker |
+| `provision_database` | database spec: PostgreSQL version/name, app role; optional host binding | `DatabaseAccess`: resource/database identity, app and migrator secret refs; connectivity and identity privileges checked | no host dependency |
 | `apply_database_schema` | `DatabaseAccess`, schema/migration artifact and checksum | `SchemaState`: applied version/checksum and verified app grants | database |
 | `provision_drive` | auth mode, credential ref, parent/shared-drive ID, stable folder key; optional Cloud project | `DriveAccess`: folder ID, principal, credential ref, authorization model; verified create/read/update within root | preflight and Google authorization |
 | `deploy_application` | application host, immutable release, database app ref, schema state, Drive access, API token ref | `Deployment`: release ID, fingerprint, candidate endpoint, verification evidence; not yet activated | host, schema, Drive |
@@ -125,8 +122,7 @@ use backward-compatible schema migrations before promoting a release.
    yields `blocked` with a concrete continuation; it never masquerades as ready.
 2. Acquire one installation/environment lock. A local file lock covers one host
    only; multiple provisioners require a shared lease with fencing or must be
-   explicitly disallowed. The sibling bootstrap currently has no such global
-   lock. Never race two discovery-then-create operations.
+   explicitly disallowed. The live lifecycle holds an installation file lock. Never race two discovery-then-create operations.
 3. Checkpoint intent and stable operation key **before** a remote write; save
    returned resource IDs and secret references atomically after it. Keys are
    derived from installation, environment, task and spec digest, not timestamps.
@@ -136,8 +132,7 @@ use backward-compatible schema migrations before promoting a release.
    run. Do not adopt arbitrary prefix matches or rotate passwords on retries.
 5. A timeout after a write has an **unknown outcome**. Discover/poll the same
    operation first. Do not retry a non-idempotent create until absence is proved;
-   if it cannot be proved, require reconciliation. Vercel/Marketplace create APIs
-   must not be assumed to accept idempotency keys. Tag releases with the desired
+   if it cannot be proved, require reconciliation. Tag releases with the desired
    fingerprint and inspect pending/failed releases before creating another.
 6. Preallocate and persist a Drive folder ID (supported for folders), then create
    with that ID and an installation marker. On 409, retrieve and validate it.
@@ -173,7 +168,7 @@ application readiness, and runner readiness are separate claims.
 
 1. Define this lifecycle and typed hooks in the main project. Bring the initial
    DDL into `sql/schema.sql`, without moving provider code or private state yet.
-2. Split and import the sibling adapters under the new namespace; remove
+2. Split and import the bootstrap adapters under the new namespace; remove
    bootstrap deployment from host provisioning and secret publication from DB
    provisioning. Preserve source attribution and add explicit legacy state import.
 3. Implement the selected Google mode and runtime prerequisites. Add API-owned
@@ -192,32 +187,16 @@ application readiness, and runner readiness are separate claims.
    deployment, and overlapping runners. Sequential rerun success alone does not
    establish crash recovery or concurrent safety.
 
-Live testing of the sibling bootstrap covers hosting/Neon/schema only. It cannot
-certify Google provisioning, the actual application release, or runner hooks
-which do not exist yet. Record observed results in a readable PDF, with private
+Current live checks cover schema/role verification, Drive read/update access,
+production API readiness/authentication, REST/MCP reads, and Docker runner
+image/container/volume deployment. Dedicated
+Drive file-creation consent remains a separate gate. Record observed results in a readable PDF, with private
 machine checkpoints kept outside version control. Do not start job submission
 workflows merely to test infrastructure idempotency.
 
-The live check on 2026-10-24 found and fixed an encrypted Config comparison bug
-in the sibling `providers/vercel_neon.py`: CLI `env ls` returned ciphertext for
-`AJSS_DATABASE_RESOURCE_ID`. Recovery now resolves/decrypts that Config using
-the management API before comparing it with the resource ID. Two regression
-tests cover matching, unreadable and mismatched encrypted markers. All 60 sibling
-Python tests pass. The initial failed attempt changed no inventoried resources.
-
-After the fix, two complete bootstrap runs succeeded against the existing `ajss`
-project. Run A added the missing three application tables/eight indexes; run B
-preserved all inventoried remote IDs and PostgreSQL object OIDs, the app connection
-and runtime API token. Both retained one Vercel project, one deployment and one
-Neon resource. See [the verification report](provisioning-verification.pdf) for
-scope and limitations. This is not a live test of the new contract-only entrypoint.
 
 ## Primary sources
 
-- [Vercel storage](https://vercel.com/docs/storage) and [Neon role management](https://neon.com/docs/manage/roles)
-- [Vercel project pause/resume](https://vercel.com/docs/projects/managing-projects)
-- [Vercel Python runtime](https://vercel.com/docs/functions/runtimes/python)
-- [Vercel function limits](https://vercel.com/docs/functions/limitations) and [cron limits](https://vercel.com/docs/cron-jobs/usage-and-pricing)
 - [Docker Compose create](https://docs.docker.com/reference/cli/docker/compose/create/) and [up](https://docs.docker.com/reference/cli/docker/compose/up/)
 - [Google Shared Drives and service-account storage](https://developers.google.com/workspace/drive/api/guides/about-shareddrives)
 - [Google service-account creation prerequisites](https://docs.cloud.google.com/iam/docs/service-accounts-create)

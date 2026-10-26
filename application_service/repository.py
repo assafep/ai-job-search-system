@@ -63,6 +63,14 @@ class Repository:
     def save_profile(self, profile):
         raise NotImplementedError
 
+    def get_workflow_execution(self):
+        """Return workflow execution config: {'workstation_enabled': bool}."""
+        raise NotImplementedError
+
+    def set_workflow_execution(self, config):
+        """Persist workflow execution config. Config: {'workstation_enabled': bool}."""
+        raise NotImplementedError
+
     def journal_status(self):
         raise NotImplementedError
 
@@ -82,9 +90,6 @@ class Repository:
     def repair_journal(self):
         raise NotImplementedError
 
-    def migrate_completed(self):
-        """Move Rejected and Invalidated applications to the completed document."""
-        raise NotImplementedError
 
 
 class MemoryRepository(Repository):
@@ -99,6 +104,7 @@ class MemoryRepository(Repository):
         self.idempotency: Dict[str, object] = {}
         self.profile = None
         self.files = {}
+        self._workflow_execution = None
         self._completed_ids = set()
 
     def _cached(self, key):
@@ -236,6 +242,13 @@ class MemoryRepository(Repository):
         self.profile = validate_profile(profile)
         return profile
 
+    def get_workflow_execution(self):
+        return self._workflow_execution
+
+    def set_workflow_execution(self, config):
+        self._workflow_execution = dict(config)
+        return self._workflow_execution
+
     def store_artifact(self, application_id, name, content, mime_type=None, idempotency_key=None):
         cached = self._cached(idempotency_key)
         if cached:
@@ -364,15 +377,3 @@ class MemoryRepository(Repository):
                 application.status = 'Prepared'
         return self.journal_status()
 
-    def migrate_completed(self):
-        """In memory mode, completed states stay in the same store — nothing to migrate."""
-        migrated = []
-        for app in self.applications.values():
-            if app.status in COMPLETED_STATES:
-                migrated.append({
-                    "application_id": app.application_id,
-                    "company": app.company,
-                    "role": app.role,
-                    "status": app.status,
-                })
-        return {"migrated": migrated, "count": len(migrated)}

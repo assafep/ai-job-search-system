@@ -38,8 +38,6 @@ def owner_token():
 
 def issuer_url():
     value = os.environ.get('AJSS_MCP_ISSUER')
-    if not value and os.environ.get('VERCEL_PROJECT_PRODUCTION_URL'):
-        value = 'https://' + os.environ['VERCEL_PROJECT_PRODUCTION_URL']
     parsed = urlsplit(value or '')
     if (parsed.scheme != 'https' or not parsed.hostname or parsed.path not in ('', '/')
             or parsed.username or parsed.password or parsed.query or parsed.fragment):

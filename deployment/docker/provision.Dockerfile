@@ -7,6 +7,7 @@ FROM python:3.12-slim-bookworm
 ARG NODE_VERSION=22.23.4
 ARG GCLOUD_VERSION=590.0.1
 ARG VERCEL_VERSION=65.2.0
+ARG CODEX_VERSION=0.163.0
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl postgresql-client \
@@ -18,7 +19,7 @@ RUN apt-get update \
        esac \
     && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${node_arch}.tar.gz" \
          | tar -xz -C /usr/local --strip-components=1 \
-    && npm install -g "vercel@${VERCEL_VERSION}" \
+    && npm install -g "vercel@${VERCEL_VERSION}" "@openai/codex@${CODEX_VERSION}" \
     && rm -rf /usr/local/lib/node_modules/npm \
               /usr/local/lib/node_modules/corepack \
               /root/.npm \
@@ -39,7 +40,7 @@ RUN apt-get update \
 # Schema initialization imports psycopg. The repo is not copied into this image.
 RUN pip install --no-cache-dir 'psycopg[binary]==3.2.12' \
     'mcp==1.26.0' 'PyYAML==6.0.3' 'jsonschema==4.26.0' \
-    'pypdf==3.17.4' 'phonenumbers==8.13.55'
+    'pypdf==4.3.1' 'phonenumbers==8.13.55' 'reportlab==5.1.0'
 
 ENV PATH="/opt/google-cloud-sdk/bin:${PATH}" \
     CLOUDSDK_CORE_DISABLE_PROMPTS=1 \

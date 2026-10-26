@@ -1,9 +1,9 @@
 # Common PostgreSQL artifacts
 
 `schema.sql` is the initial PostgreSQL DDL imported unchanged from
-`auto-signup-vercel/sql/schema.sql`. It is independent of Vercel, Neon, or Docker;
+the bootstrap project's `sql/schema.sql`. It is independent of Vercel, Neon, or Docker;
 it is not portable to other database engines. The main project owns this artifact
-for the lifecycle integration. The sibling keeps its current copy until its
+for the lifecycle integration. The bootstrap project keeps its current copy until its
 provider implementation is migrated, so its standalone command remains usable.
 
 This is a baseline, not a migration engine. `CREATE TABLE IF NOT EXISTS` does not

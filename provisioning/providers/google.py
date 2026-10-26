@@ -7,11 +7,11 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from application_service.google_auth import GoogleAccessToken
 from ..state import ProvisioningFailure
+from ..browser import open_browser
 
 
 def browser_credentials(client_id, client_secret, timeout=180, scopes=('https://www.googleapis.com/auth/drive.file',), purpose='Google Drive', port=0):
@@ -42,8 +42,12 @@ def browser_credentials(client_id, client_secret, timeout=180, scopes=('https://
             'prompt': 'consent', 'state': nonce, 'code_challenge': challenge,
             'code_challenge_method': 'S256',
         })
-        print('Authorize ' + purpose + ' in your browser: ' + url, flush=True)
-        webbrowser.open(url)
+        print('Google consent link for ' + purpose + ':', flush=True)
+        print(url, flush=True)
+        if open_browser(url):
+            print('Opened the consent page in your host browser. Approve access, then return here.', flush=True)
+        else:
+            print('Could not open your host browser automatically. Open the Google consent link above on this computer.', flush=True)
         server.timeout = 1
         deadline = time.monotonic() + timeout
         while not result and time.monotonic() < deadline:

@@ -1,4 +1,5 @@
 """Prepare verified MCP connection files and an optional GPT Action handoff."""
+from pathlib import Path
 import json
 import os
 import tempfile
@@ -9,13 +10,14 @@ import urllib.request
 
 from .contracts import Outcome, TaskResult
 from .bootstrap.handoffs import save
-from .vercel_deploy import REPO, SIBLING
+REPO = Path(__file__).resolve().parents[1]
+ONBOARDING = REPO / '.onboarding'
 
 
-def prepare(repo=REPO, sibling=SIBLING, opener=None, mcp_verifier=None):
+def prepare(repo=REPO, onboarding=ONBOARDING, opener=None, mcp_verifier=None):
     opener = opener or urllib.request.urlopen
     try:
-        cloud = json.loads((sibling / '.onboarding' / 'cloud.json').read_text())
+        cloud = json.loads((onboarding / 'cloud.json').read_text())
         runtime = cloud.get('runtime') or {}
         url = (runtime.get('base_url') or '').rstrip('/')
         token = runtime.get('bearer_token')

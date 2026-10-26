@@ -4,6 +4,9 @@ import argparse
 import importlib
 import json
 import os
+import signal
+from pathlib import Path
+from threading import Event
 import sys
 
 from .workload_worker import WorkloadWorker
@@ -46,13 +49,38 @@ def main(argv=None):
     parser.add_argument("--once", action="store_true", help="drain current pending workloads and exit")
     parser.add_argument("--limit", type=int, default=None, help="maximum workloads for a one-shot drain")
     parser.add_argument("--poll-seconds", type=float, default=60.0)
+    parser.add_argument("--poll-workflows", action="store_true", help="Poll scheduled and state-queue workflows; external events arrive separately")
     args = parser.parse_args(argv)
     try:
         if args.limit is not None and not args.once:
             raise ValueError("--limit requires --once")
-        provider = load_provider(args.provider)
-        worker = WorkloadWorker(runtime_from_environment(), provider)
-        results = worker.run_once(args.limit) if args.once else worker.run_forever(args.poll_seconds)
+        from .orchestration_lock import runner_lock
+        stop_event = Event()
+        previous_handlers = {}
+        ready_path = Path(os.environ['AJSS_WORKER_READY_PATH']) if os.environ.get('AJSS_WORKER_READY_PATH') else None
+        # Install handlers before initialization so startup can also be stopped.
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            previous_handlers[signum] = signal.signal(signum, lambda *_: stop_event.set())
+        try:
+            with runner_lock():
+                if ready_path:
+                    ready_path.unlink(missing_ok=True)
+                provider = load_provider(args.provider)
+                runtime = runtime_from_environment()
+                if any(record.status == 'running' for record in runtime.registry.snapshot()):
+                    raise RuntimeError('Interrupted workloads require manual reconciliation before restarting the runner')
+                worker = WorkloadWorker(runtime, provider)
+                if ready_path and not stop_event.is_set():
+                    from .worker_health import mark_ready
+                    mark_ready(ready_path)
+                try:
+                    results = worker.run_once(args.limit, stop_event=stop_event) if args.once else worker.run_forever(args.poll_seconds, stop_event=stop_event, poll_workflows=args.poll_workflows)
+                finally:
+                    if ready_path:
+                        ready_path.unlink(missing_ok=True)
+        finally:
+            for signum, handler in previous_handlers.items():
+                signal.signal(signum, handler)
         if args.once:
             print(json.dumps(results, indent=2, ensure_ascii=False, default=lambda value: value.__dict__))
         return 0

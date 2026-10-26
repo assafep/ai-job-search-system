@@ -1,47 +1,77 @@
-"""Run the lifecycle against the imported Vercel/Neon bootstrap and local hooks.
+"""Run the lifecycle using repository-owned provider adapters.
 
-Host, database, and schema reuse the sibling auto-signup-vercel onboarding,
-which owns the verified Vercel login and Neon bindings. Drive uses the local
-user-OAuth provisioner. Application deployment publishes the Python service
-onto that Vercel project. The workflow runner stays blocked.
+Host, database, and schema use Docker-based provisioning.
+Drive uses the local user-OAuth provisioner. Application deployment publishes
+the Python service. The Docker workload runner is deployed without activation.
 """
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 from .bootstrap.handoffs import save
 from .contracts import Outcome, TaskResult
 from .chatgpt import prepare as prepare_chatgpt_connection
 from .drive_folder import provision
+from .drive_login import GoogleConsentRequired
 from .state import ProvisioningFailure, State
-from .vercel_deploy import deploy as deploy_application_release
+from .docker_runner import deploy as deploy_runner
 
 REPO = Path(__file__).resolve().parents[1]
-SIBLING = REPO.parent / 'auto-signup-vercel'
-PROGRESS = REPO / '.onboarding' / 'up-stages.json'
+ONBOARDING = REPO / '.onboarding'
+PROGRESS = ONBOARDING / 'up-stages.json'
 
 
 def _result(outcome, evidence, resume=None):
     return TaskResult(outcome, None, tuple(evidence), resume)
 
 
+def onboard_runtime(argv=None):
+    """The explicit onboarding command shares the installation mutation lock."""
+    from services.onboarding.main import main as onboard
+    with State(ONBOARDING).locked():
+        return onboard(argv or [])
+
+
+def configure_runtime_up():
+    """Own first-run onboarding; never depend on an operator's Python snippet."""
+    runtime = REPO / 'config' / 'runtime.json'
+    if not runtime.is_file():
+        if not sys.stdin.isatty():
+            return _result(Outcome.BLOCKED, ('config/runtime.json is missing',),
+                           'Run ./deployment/ctl.sh onboard in an interactive terminal, then rerun ./deployment/ctl.sh up.')
+        from services.onboarding.main import main as onboard
+        status = onboard([])
+        if status != 0:
+            return _result(Outcome.BLOCKED, ('First-run onboarding did not complete',),
+                           'Complete ./deployment/ctl.sh onboard, then rerun ./deployment/ctl.sh up.')
+    config = json.loads(runtime.read_text())
+    if not isinstance(config, dict):
+        raise ValueError('runtime configuration must be a JSON object')
+    drive = config.get('google_drive')
+    profile = drive.get('applicant_profile_path') if isinstance(drive, dict) else None
+    if isinstance(profile, str) and profile:
+        cache = Path(profile).expanduser()
+        if not cache.is_absolute():
+            cache = REPO / cache
+        if not cache.is_file():
+            if not sys.stdin.isatty():
+                return _result(Outcome.BLOCKED, ('The configured applicant cache is missing',),
+                               'Run ./deployment/ctl.sh onboard --applicant, then rerun ./deployment/ctl.sh up.')
+            from services.onboarding.main import main as onboard
+            if onboard(['--applicant']) != 0:
+                return _result(Outcome.BLOCKED, ('Applicant onboarding did not complete',),
+                               'Complete ./deployment/ctl.sh onboard --applicant, then rerun up.')
+    from services.runtime_config import load
+    load(str(runtime), require=True)
+    return _result(Outcome.UNCHANGED, ('Runtime configuration and applicant cache validated',))
+
+
 def bootstrap_up():
-    script = SIBLING / 'onboard.sh'
-    if not script.is_file():
-        return _result(Outcome.BLOCKED, ('auto-signup-vercel/onboard.sh is not available',),
-                       'Place the sibling project next to this repository and rerun.')
-    env = os.environ.copy()
-    env.setdefault('ONBOARD_PYTHON', '/usr/bin/python3')
-    completed = subprocess.run(
-        [str(script), '--existing-account', '--auth', 'browser'],
-        cwd=str(SIBLING), env=env, text=True)
-    if completed.returncode != 0:
-        return _result(Outcome.FAILED, ('sibling bootstrap exited ' + str(completed.returncode),),
-                       'Rerun after checking the sibling .onboarding checkpoint. No rollback was applied.')
-    return _result(Outcome.UNCHANGED, (
-        'sibling bootstrap completed for the existing Vercel project, Neon database, roles, and schema',
-    ))
+    """Placeholder: Docker-based host provisioning is not yet implemented."""
+    return _result(Outcome.BLOCKED, ('Docker-based host provisioning is not yet implemented',),
+                   'Configure Docker-based deployment manually, then rerun ./deployment/ctl.sh up.')
 
 
 def drive_up(path):
@@ -50,6 +80,8 @@ def drive_up(path):
                        'Set drive_path in deployment/defaults.json and rerun ./deployment/ctl.sh drive')
     try:
         result = provision(path)
+    except GoogleConsentRequired as exc:
+        return _result(Outcome.BLOCKED, (str(exc),), 'Configure the dedicated OAuth client, then rerun ./deployment/ctl.sh up.')
     except ProvisioningFailure as exc:
         return _result(Outcome.FAILED, (str(exc),), 'Rerun ./deployment/ctl.sh drive after the reported condition is fixed.')
     changed = result['outcome'] == 'changed' or result['root_changed']
@@ -87,16 +119,14 @@ def blocked(name, resume):
 
 
 def up_steps(drive_path):
-    # Database and schema are inside the sibling bootstrap, so they are not separate steps here.
+    # Host provisioning also verifies the database and schema.
     return (
+        ('configure_runtime', configure_runtime_up),
         ('provision_application_host', bootstrap_up),
         ('provision_drive', lambda: drive_up(drive_path)),
         ('prepare_applicant', prepare_applicant_up),
-        ('deploy_application', deploy_application_release),
         ('prepare_chatgpt_connection', prepare_chatgpt_connection),
-        ('provision_runner_host', lambda: blocked(
-            'provision_runner_host',
-            'Add a Docker Compose runner service with a persistent volume before starting workflow workers.')),
+        ('provision_runner_host', deploy_runner),
     )
 
 
@@ -129,22 +159,33 @@ def resume_from(steps, completed):
     return prefix, [item for item in steps if item[0] not in prefix]
 
 
-def run_up(drive_path=None, completed=()):
-    """Execute implemented hooks in plan order. Stop after the first non-success."""
-    state = State()
-    steps = up_steps(drive_path)
-    done, pending = resume_from(steps, completed)
+def run_up(drive_path=None):
+    """Reconcile every stage on each invocation; checkpoints are diagnostic only."""
+    state = State(ONBOARDING)
+    done = []
+    pending = up_steps(drive_path)
     results = []
     with state.locked():
         for name, action in pending:
+            print(f'Starting step: {name}', flush=True)
             try:
                 result = action()
             except (ProvisioningFailure, OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
-                result = _result(Outcome.FAILED, (name + ': ' + str(exc),), 'Fix the reported condition and rerun.')
+                exc_args = ' '.join(str(a) for a in exc.args) if exc.args else ''
+                detail = f'{type(exc).__name__}'
+                if exc_args:
+                    detail += ': ' + exc_args
+                if hasattr(exc, 'filename') and exc.filename:
+                    detail += ' (file: ' + exc.filename + ')'
+                result = _result(Outcome.FAILED, (name + ': ' + detail,), 'Fix the reported condition and rerun.')
+            except Exception as exc:
+                result = _result(Outcome.FAILED,
+                                 (name + ': unexpected ' + type(exc).__name__,),
+                                 'Check this stage configuration and rerun. Dependent stages were not executed.')
             results.append((name, result))
             if result.outcome not in (Outcome.CHANGED, Outcome.UNCHANGED):
-                save_progress(done)
+                save_progress(done, PROGRESS)
                 break
             done.append(name)
-            save_progress(done)
+            save_progress(done, PROGRESS)
     return results

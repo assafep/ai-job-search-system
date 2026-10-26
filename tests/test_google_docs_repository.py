@@ -149,54 +149,6 @@ def test_repository_reads_state_tabs_and_application_journal():
     assert repository.list_events("app-1")[0].occurred_at == "2026-10-12T00:00:00+00:00"
 
 
-def test_completed_posting_artifacts_remain_readable_for_duplicate_checks():
-    import pytest
-    from adapters.job_boards.posting_details import posting_content_bytes, read_posting_artifact
-    from application_service.journal_format import STATE_TABS
-    from services.orchestrator import Orchestrator
-    from services.workload_registry import WorkloadRegistry
-
-    repository = GoogleDocsRepository("token", "active", completed_document_id="completed")
-    repository.client = FakeClient({"tabs": [tab("state-" + name, name) for name in STATE_TABS]})
-    rejected = tab("rejected", "Rejected", children=[tab(
-        "completed-app", "Lemonade / Backend Engineer", parent="rejected",
-        paragraphs=[("2026-10-18", False),
-                    ("Posting URL: https://example.test/lemonade", True),
-                    ("Artifact: Job Posting - Lemonade.json (Drive file: posting-file)", True)])])
-    repository.completed_client = FakeClient({"tabs": [rejected]})
-    description = "Archived backend posting requirements. " * 30
-
-    class Artifacts:
-        def list_application_files(self, company, role):
-            assert (company, role) == ("Lemonade", "Backend Engineer")
-            return [{"id": "posting-file", "name": "Job Posting - Lemonade.json",
-                     "mimeType": "application/json"}]
-
-        def read(self, file_id):
-            assert file_id == "posting-file"
-            return posting_content_bytes({"posting_url": "https://example.test/lemonade",
-                                          "description": description})
-
-    repository.artifacts = Artifacts()
-    artifacts = repository.list_artifacts("completed-app")
-    assert len(artifacts) == 1
-    assert artifacts[0].application_id == "completed-app"
-    assert read_posting_artifact(repository, "completed-app", "https://example.test/lemonade")["description"] == description
-    with pytest.raises(KeyError):
-        repository.list_artifacts("missing-app")
-
-    orchestrator = Orchestrator(repository, WorkloadRegistry(), agents=None)
-    try:
-        sentra = {"application_id": "sentra", "company": "Sentra", "role": "Backend Engineer",
-                  "posting_url": "https://example.test/sentra"}
-        assert orchestrator._handled_match(sentra, "Different data team requirements. " * 30) is None
-        match, reason = orchestrator._handled_match(sentra, description)
-        assert match["application_id"] == "completed-app"
-        assert reason == "posting content"
-    finally:
-        orchestrator.close()
-
-
 def test_repository_rejects_journal_without_offer_state_tab():
     states = [tab("state-" + name.replace(" ", "-"), name) for name in (
         "Bookmarked", "Prepared", "Manual Apply Required", "Dead Letters Queue", "Applied", "Interviewing", "Rejected"

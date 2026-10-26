@@ -168,6 +168,20 @@ class Runs:
             record.pop('claim_token', None)
             return public(record)
 
+    def cancel(self, run_id, reason=None):
+        """Cancel a queued or running workflow run. Only queued runs can be cleanly cancelled."""
+        with self.store.locked() as records:
+            record = records.get(run_id)
+            if record is None:
+                raise KeyError(run_id)
+            if record['status'] not in {'queued', 'running'}:
+                raise ValueError('Only queued or running runs can be cancelled; current status is ' + record['status'])
+            record.update(status='failed', cancelled_at=timestamp(), updated_at=timestamp(),
+                          summary={'cancelled': True, 'reason': reason or 'User cancelled'})
+            record.pop('claim_token', None)
+            record.pop('worker_id', None)
+            return public(record)
+
     def update(self, run_id, data):
         with self.store.locked() as records:
             record = records.get(run_id)
@@ -192,9 +206,7 @@ class Runs:
 
 
 def public(record):
-    result = {key: value for key, value in record.items() if key not in {'claim_token', 'worker_id', 'chatgpt', 'vercel'}}
-    if record.get('execution_host') == 'vercel' and record['status'] == 'queued' and not execution_enabled(record['request']['workflow']):
-        result['activation_required'] = True
+    result = {key: value for key, value in record.items() if key not in {'claim_token', 'worker_id', 'chatgpt'}}
     if record.get('chatgpt'):
         tasks = record['chatgpt']['tasks'].values()
         result['progress'] = {'admitted': len(record.get('application_ids') or []),
@@ -202,10 +214,6 @@ def public(record):
                               'pending': [{'task_id': t['task_id'], 'state': t['state'],
                                            'pause_reason': t.get('pause_reason')}
                                           for t in tasks if t['state'] != 'completed']}
-    if record.get('vercel'):
-        units = list(record['vercel']['units'].values())
-        result['progress'] = {'admitted': len(units),
-                              'completed': sum(u['status'] in {'succeeded', 'failed', 'skipped'} for u in units)}
     return result
 
 
@@ -229,8 +237,7 @@ def handle(handler, method, parts, repository, payload=None):
         Catalog(profile='domain').request(operation, {'run_id': parts[1], 'body': payload or {}})
         return handler.send_json(200, action(Sessions(repository, runs)))
     if method == 'GET' and parts == ['workflows', 'readiness']:
-        from .vercel_workflows import readiness
-        return handler.send_json(200, readiness(repository))
+        return handler.send_json(200, {'status': 'not-configured'})
     if method == 'GET' and parts == ['workflows']:
         return handler.send_json(200, list_workflows())
     if method == 'GET' and parts == ['workflow-runs']:
@@ -246,9 +253,6 @@ def handle(handler, method, parts, repository, payload=None):
         return handler.send_json(200, runs.list(**arguments))
     if method == 'POST' and parts == ['workflow-runs']:
         record = runs.start(payload, repository)
-        if record.get('execution_host') == 'vercel' and execution_enabled(record['request']['workflow']) and record['status'] in {'queued', 'running'}:
-            from .vercel_workflows import notify
-            notify(record['run_id'])
         return handler.send_json(202, record)
     if method == 'POST' and parts == ['workflow-runs', 'claim']:
         return handler.send_json(200, runs.claim(payload.get('worker_id')))
@@ -256,6 +260,9 @@ def handle(handler, method, parts, repository, payload=None):
         return handler.send_json(200, runs.get(parts[1]))
     if len(parts) == 3 and parts[0] == 'workflow-runs' and parts[2] == 'reconcile' and method == 'POST':
         return handler.send_json(200, runs.reconcile(parts[1], payload))
+    if len(parts) == 3 and parts[0] == 'workflow-runs' and parts[2] == 'cancel' and method == 'POST':
+        reason = (payload or {}).get('reason')
+        return handler.send_json(200, runs.cancel(parts[1], reason))
     if len(parts) == 3 and parts[0] == 'workflow-runs' and parts[2] == 'worker-update' and method == 'POST':
         return handler.send_json(200, runs.update(parts[1], payload))
     if len(parts) == 3 and parts[0] == 'workflow-runs' and parts[2] == 'report' and method == 'GET':

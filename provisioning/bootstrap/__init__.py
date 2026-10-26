@@ -1,1 +1,1 @@
-"""Imported Vercel/Neon primitives from auto-signup-vercel; used by live hooks."""
+"""Repository-owned primitives used by live provisioning hooks."""

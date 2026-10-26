@@ -18,11 +18,12 @@ class Response:
 def test_handoff_is_private_authenticated_and_repeatable():
     with TemporaryDirectory() as temporary:
         root = Path(temporary)
-        repo, sibling = root / 'repo', root / 'host'
+        repo = root / 'repo'
         repo.mkdir()
-        (sibling / '.onboarding').mkdir(parents=True)
+        onboarding = repo / '.onboarding'
+        (onboarding).mkdir(parents=True)
         (repo / 'openapi.yaml').write_text('openapi: 3.0.3\npaths: {}\n')
-        checkpoint = sibling / '.onboarding' / 'cloud.json'
+        checkpoint = onboarding / 'cloud.json'
         checkpoint.write_text(json.dumps({'application_ready': True, 'runtime': {
             'base_url': 'https://example.com', 'bearer_token': 'secret-test-token'}}))
         calls = []
@@ -31,7 +32,7 @@ def test_handoff_is_private_authenticated_and_repeatable():
             assert request.get_header('Authorization') == 'Bearer secret-test-token'
             assert request.full_url == 'https://example.com/journal/queues'
             return Response()
-        first = prepare(repo, sibling, opener, mcp_verifier=lambda url, token: 30)
+        first = prepare(repo, onboarding, opener, mcp_verifier=lambda url, token: 30)
         assert first.outcome.value == 'changed'
         assert 'secret-test-token' not in repr(first)
         directory = repo / '.onboarding' / 'chatgpt'
@@ -40,10 +41,10 @@ def test_handoff_is_private_authenticated_and_repeatable():
             assert (path.stat().st_mode & 0o777) == 0o600
         assert json.loads((directory / 'authentication.json').read_text())['token'] == 'secret-test-token'
         assert 'https://example.com' in (directory / 'openapi.yaml').read_text()
-        assert prepare(repo, sibling, opener, mcp_verifier=lambda url, token: 30).outcome.value == 'unchanged'
+        assert prepare(repo, onboarding, opener, mcp_verifier=lambda url, token: 30).outcome.value == 'unchanged'
         assert len(calls) == 2
         checkpoint.write_text('{}')
-        assert prepare(repo, sibling, opener, mcp_verifier=lambda url, token: 30).outcome.value == 'failed'
+        assert prepare(repo, onboarding, opener, mcp_verifier=lambda url, token: 30).outcome.value == 'failed'
         assert len(calls) == 2
 
 

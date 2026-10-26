@@ -164,7 +164,7 @@ def test_terminal_journal_api_owns_cleanup_and_is_safe_to_repeat(monkeypatch):
         thread.join(timeout=5)
 
 
-def test_daemon_polls_each_queue_stage_and_shares_daily_admission(monkeypatch):
+def test_daemon_leaves_native_browser_work_pending_without_busy_loop(monkeypatch):
     from services.automation_daemon import AutomationDaemon
     registry = WorkloadRegistry()
     app = {'application_id': 'one', 'status': 'Discovered'}
@@ -187,8 +187,9 @@ def test_daemon_polls_each_queue_stage_and_shares_daily_admission(monkeypatch):
     monkeypatch.setattr('services.external_event_polling.poll', lambda *args, **kwargs: {})
     daemon = AutomationDaemon(registry, Runtime(), Client(), lambda *args: {})
     daemon.run_cycle()
-    assert app['status'] == 'Applied'
-    assert set(calls) == set(definitions()) - {'handle-incoming-email', 'prepare-interview'}
+    assert app['status'] == 'Bookmarked'
+    assert set(calls) == set(maintenance_names()) | {'discover', 'bookmark-discovered'}
+    assert {record.workflow for record in registry.pending()} == {'validate-bookmarked'}
     prior = list(calls)
     daemon.run_cycle()
     assert calls == prior

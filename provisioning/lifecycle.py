@@ -8,9 +8,6 @@ from .contracts import Setup
 
 PROFILES = {
     'local-docker': Setup('local-docker', 'docker', 'docker-postgres', 'docker', 'user-oauth'),
-    # Vercel hosts the application API. Runner hosting is an independent choice;
-    # Docker is the initial process/container implementation in both profiles.
-    'vercel': Setup('vercel', 'vercel', 'vercel-neon', 'docker', 'user-oauth'),
 }
 DRIVE_MODES = ('user-oauth', 'workspace-service-account')
 ACTIONS = ('up', 'start', 'stop')
@@ -60,10 +57,12 @@ def plan(setup, action='up'):
     if action == 'start':
         return (application_start, runner_start)
     return (
-        TaskSpec('provision_application_host', setup.application_provider, (),
+        TaskSpec('configure_runtime', 'local', (), ('runtime configuration or first-run onboarding inputs',),
+                 'Validated runtime configuration'),
+        TaskSpec('provision_application_host', setup.application_provider, ('configure_runtime',),
                  ('HostSpec',), 'HostTarget'),
         TaskSpec('provision_database', setup.database_provider,
-                 ('provision_application_host',) if setup.database_provider == 'vercel-neon' else (),
+                 (),
                  ('DatabaseSpec', 'optional application HostTarget'), 'DatabaseAccess'),
         TaskSpec('apply_database_schema', 'postgresql', ('provision_database',),
                  ('DatabaseAccess', 'SchemaSpec'), 'SchemaState'),
@@ -87,17 +86,15 @@ def plan(setup, action='up'):
 def implementation_gaps(setup):
     """Inspection findings, not a live provider capability probe."""
     gaps = [
-        'Live up currently runs the sibling Vercel/Neon bootstrap and Drive folder provisioning. Application deploy and the Docker runner are still blocked.',
-        'Hybrid PostgreSQL snapshots and journal initialization exist in the API, but they are not deployed or covered by the two-run check.',
+        'Live up runs Docker-based provisioning, then Drive folder binding, applicant preparation, application deployment, and MCP connection verification. Docker runner images and stopped containers are deployed with persistent storage.',
+        'Database/Drive readiness and deployment reuse are verified after deployment.',
         'Drive folder provisioning is implemented for user OAuth; it blocks when refresh credentials are absent.',
     ]
     if setup.drive_mode == 'workspace-service-account':
         gaps.append('Workspace mode needs Shared Drive access, Cloud IAM authorization and service-account support in the Drive adapter.')
     else:
         gaps.append('My Drive needs configured OAuth consent/client and browser authorization; drive.file is not a folder-only credential.')
-    if setup.application_provider == 'vercel':
-        gaps.append('Vercel API needs an entrypoint, token-name mapping, bounded artifact transfer and cross-instance write coordination.')
-    gaps.append('Runner process/container needs browser/agent packaging, credentials, durable storage and graceful drain.')
+    gaps.append('Runner deployment does not activate workloads; website interactions remain on the native ChatGPT host.')
     if setup.database_provider == 'docker-postgres':
         gaps.append('Docker PostgreSQL provisioning is not implemented; existing Compose only defines the API.')
     return tuple(gaps)

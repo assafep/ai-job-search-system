@@ -1,5 +1,7 @@
 reportlab==5.1.0
-pypdf==3.17.4
+pypdf==4.3.1
 phonenumbers==8.13.55
+psycopg[binary]==3.2.12
+cryptography==44.0.0
 
 -r requirements-mcp.txt

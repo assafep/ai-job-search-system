@@ -9,7 +9,7 @@ from .runtime_config import ROOT
 
 @contextmanager
 def runner_lock():
-    path = os.path.join(ROOT, 'config', 'concurrent-queues.lock')
+    path = os.environ.get('AJSS_RUNNER_LOCK_PATH') or os.path.join(ROOT, 'config', 'concurrent-queues.lock')
     with open(path, 'a') as handle:
         try:
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)

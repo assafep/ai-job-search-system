@@ -84,9 +84,7 @@ persistence backend is available. Leave the token unset for local development.
 
 ## MCP endpoint
 
-The same service exposes MCP at **`/mcp`**. The production connection URL is
-`https://ajss-one.vercel.app/mcp`; use the service origin plus `/mcp` for another
-installation. This is a stateless Streamable HTTP transport using JSON responses,
+The same service exposes MCP at **`/mcp`**. Use the deployed service origin plus `/mcp` for the connection URL. This is a stateless Streamable HTTP transport using JSON responses,
 implemented with the official MCP SDK. Authenticated requests use `POST`;
 `GET` and `DELETE` return `405`. Use an MCP client to initialize, list tools,
 and call tools rather than opening the URL as a page. Request bodies are limited
@@ -132,12 +130,10 @@ configure database connectivity for OAuth. OAuth tokens are limited to this MCP
 resource and do not authenticate direct REST requests. Rotating the service
 owner token invalidates existing OAuth records, requiring clients to reconnect.
 
-Set `AJSS_MCP_ISSUER` to the canonical public HTTPS **origin**, without `/mcp`
-(for production, `https://ajss-one.vercel.app`). The Vercel deployer sets it from
-the saved production URL; the server can also use
-`VERCEL_PROJECT_PRODUCTION_URL`. A service token must be configured for MCP even
-when REST is intentionally unauthenticated for local development. Accepted server
-variables are `APPLICATION_SERVICE_TOKEN`, `PERSISTENCE_API_TOKEN`, or `AJSS_API_TOKEN`.
+Set `AJSS_MCP_ISSUER` to the canonical public HTTPS **origin**, without `/mcp`.
+A service token must be configured for MCP even when REST is intentionally
+unauthenticated for local development. Accepted server variables are
+`APPLICATION_SERVICE_TOKEN`, `PERSISTENCE_API_TOKEN`, or `AJSS_API_TOKEN`.
 Unauthenticated MCP requests return `401` with an OAuth discovery challenge;
 a cross-origin browser request is rejected with `403`.
 
@@ -150,7 +146,7 @@ The same tool catalog is available through a local launcher:
 ```
 
 The launcher runs in the provisioning container and reads the saved deployed
-HTTPS URL and bearer credential from the sibling bootstrap checkpoint at startup.
+HTTPS URL and bearer credential from the bootstrap checkpoint at startup.
 It calls the REST API over HTTPS; it does not run the persistence backend locally.
 For a direct Python launch, configure both `APPLICATION_SERVICE_URL` and
 `APPLICATION_SERVICE_TOKEN` (or `AJSS_API_TOKEN`), then run

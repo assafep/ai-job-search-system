@@ -74,11 +74,11 @@ For detailed operational reference, see [Running the system](#running-the-system
 
 ## Connect through MCP
 
-The Application Service exposes **`https://ajss-one.vercel.app/mcp`** over
+The Application Service exposes **`<service-url>/mcp`** over
 Streamable HTTP. Remote MCP clients can connect with OAuth; the owner authorizes
 on the AJSS consent page using the existing service token. The tools mirror the
 OpenAPI domain operations and include reads and writes. Start with the read-only
-`journalQueueCounts` tool. For validation and submission, ChatGPT uses its own native browser through workflow-specific MCP task tools; MCP does not launch a different browser. The other nine workflows have an explicitly activated Vercel Queue execution path. Check `listWorkflows` and `getWorkflowExecutionReadiness` for the live host and prerequisites.
+`journalQueueCounts` tool. For validation and submission, ChatGPT uses its own native browser through workflow-specific MCP task tools; MCP does not launch a different browser. The other nine workflows execute on the configured workflow runner. Check `listWorkflows` and `getWorkflowExecutionReadiness` for the live host and prerequisites.
 
 `./deployment/ctl.sh chatgpt` verifies the endpoint and generates private
 connection files. `./deployment/ctl.sh codex` registers the local stdio launcher
@@ -272,7 +272,7 @@ journal event.
 ## Architecture
 
 See [workflow execution diagrams](docs/architecture.md) for the current deployment
-and the native ChatGPT/Vercel execution split, including activation prerequisites. See [state-machine diagrams](docs/state-machines.md)
+and the native ChatGPT/workstation execution split, including activation prerequisites. See [state-machine diagrams](docs/state-machines.md)
 for application lifecycle, workflow requests and workload execution states.
 
 The target architecture separates workflow execution and ad hoc AI operations
@@ -285,7 +285,7 @@ flowchart TB
         AI["AI Operations Client<br/>ChatGPT or another LLM agent<br/>AJSS skill + API token"]
     end
 
-    Service["Application Service<br/>Authenticated API · Vercel Functions or container<br/>Validation · State transitions"]
+    Service["Application Service<br/>Authenticated API · Container<br/>Validation · State transitions"]
 
     subgraph Persistence["Persistence"]
         Postgres[("Completed Applications Store<br/>PostgreSQL")]
@@ -302,7 +302,7 @@ flowchart TB
 | --- | --- |
 | **AJSS Workflow Runner** | Executes time-driven polling workflows and reads or updates state through the backend API. Runs locally, within ChatGPT, or on a separately selected cloud process/container host. |
 | **AI Operations Client** | Uses an AJSS skill and API token to perform ad hoc operations through the backend API. |
-| **Application Service** | The system of record in front of Google Drive and PostgreSQL. It validates operations, manages state transitions, and is the only component that writes application state. Vercel Functions is the default cloud target. |
+| **Application Service** | The system of record in front of Google Drive and PostgreSQL. It validates operations, manages state transitions, and is the only component that writes application state. Runs as a container or standalone process. |
 | **Completed Applications Store** | Stores completed applications in PostgreSQL. |
 | **Application Drafts Document** | Stores incomplete applications in Google Docs. |
 

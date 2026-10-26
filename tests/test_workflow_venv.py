@@ -24,13 +24,13 @@ def test_changed_requirements_rebuild_the_virtualenv(tmp_path, monkeypatch):
 
     first = workflow_venv.ensure_workflow_python("prepare-validated", create_venv=create)
     second = workflow_venv.ensure_workflow_python("prepare-validated", create_venv=create)
-    requirements.write_text("reportlab==5.1.0\npypdf==3.17.4\n")
+    requirements.write_text("reportlab==5.1.0\npypdf==4.3.1\n")
     third = workflow_venv.ensure_workflow_python("prepare-validated", create_venv=create)
 
     assert first == second
     assert os.path.isfile(first)
     assert third == first
     assert len(created) == 2
-    assert "pypdf==3.17.4" in created[1][1]
+    assert "pypdf==4.3.1" in created[1][1]
     stored = (tmp_path / "venvs" / "prepare-validated" / "requirements.sha256").read_text().strip()
     assert len(stored) == 64
