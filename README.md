@@ -272,8 +272,8 @@ journal event.
 ## Architecture
 
 See [workflow execution diagrams](docs/architecture.md) for the current deployment
-and the native ChatGPT/workstation execution split, including activation prerequisites. See [state-machine diagrams](docs/state-machines.md)
-for application lifecycle, workflow requests and workload execution states.
+and the native ChatGPT/Vercel execution split, including activation prerequisites. See [state-machine diagrams](docs/state-machines.md)
+for application lifecycle, execution requests and task execution states.
 
 The target architecture separates workflow execution and ad hoc AI operations
 from the backend that owns application state:
@@ -281,35 +281,35 @@ from the backend that owns application state:
 ```mermaid
 flowchart TB
     subgraph Clients["Execution and interaction"]
-        Runner["AJSS Workflow Runner<br/>Local · ChatGPT · Cloud process/container"]
-        AI["AI Operations Client<br/>ChatGPT or another LLM agent<br/>AJSS skill + API token"]
+        Runner["Stage execution hosts: ChatGPT and activated Vercel workers"]
+        AI["AI Operations Client: ChatGPT or another agent using the API"]
     end
 
-    Service["Application Service<br/>Authenticated API · Container<br/>Validation · State transitions"]
+    Service["Application Service: authenticated API, validation and state transitions"]
 
     subgraph Persistence["Persistence"]
-        Postgres[("Completed Applications Store<br/>PostgreSQL")]
-        Docs["Application Drafts Document<br/>Google Docs"]
+        Postgres[("PostgreSQL: completed applications and durable execution records")]
+        Docs["Google Drive / Docs: journal, artifacts and applicant files"]
     end
 
-    Runner <-->|"Workflow reads and updates"| Service
+    Runner <-->|"Stage context, outcomes and writes"| Service
     AI <-->|"Ad hoc operations"| Service
-    Service <-->|"Completed applications"| Postgres
-    Service <-->|"Incomplete applications"| Docs
+    Service <-->|"Applications and execution records"| Postgres
+    Service <-->|"Journal and artifacts"| Docs
 ```
 
 | Component | Responsibility |
 | --- | --- |
-| **AJSS Workflow Runner** | Executes time-driven polling workflows and reads or updates state through the backend API. Runs locally, within ChatGPT, or on a separately selected cloud process/container host. |
+| **Stage execution hosts** | Execute tasks for stage definitions through the Application Service. ChatGPT owns native-browser stages; Vercel workers own the other nine stages when explicitly activated. Workstation execution is an explicit legacy option. |
 | **AI Operations Client** | Uses an AJSS skill and API token to perform ad hoc operations through the backend API. |
 | **Application Service** | The system of record in front of Google Drive and PostgreSQL. It validates operations, manages state transitions, and is the only component that writes application state. Runs as a container or standalone process. |
 | **Completed Applications Store** | Stores completed applications in PostgreSQL. |
 | **Application Drafts Document** | Stores incomplete applications in Google Docs. |
 
-ChatGPT can host the Workflow Runner and act as an AI Operations Client; these
+ChatGPT can execute native-browser stage tasks and act as an AI Operations Client; these
 are distinct roles that can share an environment. Both roles access application
 state through the Application Service, which owns all application-state mutations.
-Workflow agents remain stateless decision-makers within the runner.
+Agent definitions provide stateless decision logic invoked by stage tasks.
 
 The diagram describes the target architecture. The current implementation uses
 Google Docs for application state, including an optional separate completed

@@ -197,11 +197,11 @@ other application states.
 
 The Python client's `bulk_update_items(items, batch_size=25)` processes every
 supplied item in bounded requests, preserving global result order. An empty list
-makes no HTTP calls. Workflows 8 and 10 use batches of five completion/removal
-items; workflow 9 uses bulk grant installation and acknowledgement. Notice
+makes no HTTP calls. The `complete-journal` and `identify-ghosting` stages use batches of five completion/removal
+items; `renew-gmail-grant` uses bulk grant installation and acknowledgement. Notice
 preparation and the adapter's message send keep their existing boundaries.
 
-Workflow 8 reads `GET /journal/terminal-items` to select only terminal items in
+The `complete-journal` stage reads `GET /journal/terminal-items` to select only terminal items in
 the main journal, excluding archived applications. The existing single-item
 and terminal-cleanup endpoints remain available. MCP exposes `bulkUpdateItems`
 in the domain tool profile; the workflow-only profile continues to exclude

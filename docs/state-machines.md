@@ -4,7 +4,7 @@
 
 Source of truth: [`ALLOWED_TRANSITIONS`](../application_service/state_machine.py).
 The chart includes every allowed change between distinct lifecycle states.
-Labels describe API permissions; workflow definitions and automation policy decide
+Labels describe API permissions; stage definitions and automation policy decide
 which transition to request. All writes pass through the Application Service.
 
 ```mermaid
@@ -83,7 +83,9 @@ lifecycle states. Completed application snapshots remain separate from active qu
 ## Durable workflow requests
 
 Source: [`application_service/workflow_runs.py`](../application_service/workflow_runs.py).
-These are whole execution requests from MCP/REST, not application statuses.
+These are execution requests from MCP/REST, not application statuses. A request
+can select a named stage and snapshot its eligible application IDs. Existing
+workflow API names remain unchanged.
 
 ```mermaid
 stateDiagram-v2
@@ -104,11 +106,13 @@ reissued on timeout. Finished requests cannot be retried or changed; repeating t
 same status is idempotent. Reusing an admission key returns the original request;
 changing its payload conflicts.
 
-## Workload registry
+## Task execution registry (WorkloadRegistry)
 
 Source: [`services/workload_registry.py`](../services/workload_registry.py).
-A workload is an execution unit within a workflow, distinct from a whole request
-and from an application lifecycle state.
+Each workload registry record tracks a task for a named stage, distinct from a
+whole execution request and from an application lifecycle state. The code and
+persisted fields retain `WorkloadRegistry`, `workload_id`, and `workflow` for
+compatibility; `workflow` identifies the stage for that task.
 
 ```mermaid
 stateDiagram-v2

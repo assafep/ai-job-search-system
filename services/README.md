@@ -4,15 +4,20 @@ Services own deterministic behavior and side-effect boundaries. The existing
 `application_service` package is the Application Service. Onboarding is deliberately
 small: it records Drive identifiers/URLs locally and never stores credentials.
 
-`polling.py` is the shared scheduling boundary. Workflow blueprints declare
-one-minute polling with queue, external, or scheduled checks. It supplies the common due-time
+`stage_definitions.py` loads stage definitions from `stages/*.yaml`. Each
+definition declares its trigger, input states, optional agent, external actions,
+and outcome routing. Filenames carry no execution order. Stage-specific
+dependencies live in `stages/<name>/requirements.txt`.
+
+`polling.py` is the shared scheduling boundary. Stage definitions declare
+queue, external, or scheduled checks with a minute or daily cadence. It supplies the common due-time
 clock, state-queue admission, and durable minute-based UTC workload identities used by
 the orchestrator, daemon, and bounded system runner. Maintenance checks run once a minute and include
 reconciliation, terminal journal completion, Gmail grant renewal, and ghosting.
 Live reconciliation leaves active workers alone; recovery is performed at startup.
 
 `event_dispatcher.py` is the pure internal routing boundary: normalized adapter events
-become queued workload envelopes, which are then handled independently by the
+become queued task envelopes (persisted as workload records), which are then handled independently by the
 workflow runtime. It can optionally enqueue the envelope into
 `WorkloadRegistry`; without a registry it remains a pure function.
 For a scheduler or fixture-driven test, route one event with:

@@ -1,4 +1,4 @@
-# Workflow execution architecture
+# Workflow and stage execution architecture
 
 See [state machines](state-machines.md) for lifecycle transitions and execution
 tracking, and [the ChatGPT workflow guide](../deployment/chatgpt-workflows.md)
@@ -6,39 +6,82 @@ for tools, setup and interruption handling. `listWorkflows` reports the active
 execution host; `getWorkflowExecutionReadiness` reports activation prerequisites.
 A deployed API does not prove that a ChatGPT browser session is available.
 
+## Processing terminology
+
+A **workflow** is the overall application lifecycle. A **stage definition** in
+`stages/<name>.yaml` declares a trigger, input states, an optional agent, external
+actions, and outcome-to-state routing. Stage filenames have no execution order;
+triggers and application states determine eligibility. Stage-specific dependencies
+live under `stages/<name>/requirements.txt`.
+
+`services.stage_definitions` loads these definitions. A **worker** executes queued
+**tasks** for stages; the **orchestrator** allocates consumers and routes results.
+An **agent definition** is the reusable source directory containing its prompt
+and output contract; an **agent run** is one invocation.
+
+Existing API names, configuration keys and durable records using `workflow`
+remain compatible. They identify the same named stage when referring to an
+individual operation. The old discovery/parser imports in `services.test_runner`
+remain compatibility aliases; runtime code uses the stage definition module.
+
+## Definition and execution boundaries
+
+```mermaid
+flowchart TB
+    DEFINITIONS["Stage definitions: stages/*.yaml"] --> LOADER["Stage loader: services.stage_definitions"]
+    LOADER --> ADMISSION["Admission and routing: triggers, input states, outcomes"]
+    ADMISSION --> TASKS["Queued tasks: named stage and item context"]
+    TASKS --> WORKER["Worker: claim and execute a task"]
+    WORKER --> RUNTIME["Stage runtime: prepare context and execute"]
+    AGENT["Agent definition: instructions, prompt, output schema"] --> RUN["Optional agent run: structured result"]
+    RUNTIME --> RUN
+    RUN --> RESULT["Stage outcome and proposed writes"]
+    RUNTIME --> RESULT
+    RESULT --> SERVICE["Application Service: validate and persist state"]
+    SERVICE -->|"Updated state determines eligibility"| ADMISSION
+```
+
+These are logical boundaries shared by the host-specific paths below. A stage
+is a reusable processing definition; a worker is execution capacity and can
+process tasks for multiple stages. The YAML list does not imply one dedicated
+process per stage. Agent-free stages execute deterministic handlers or adapters.
+Native-browser stages use the ChatGPT task protocol for website interaction.
+The standalone orchestrator also has a separate live consumer/routing configuration
+in `config/pipelines.json`; renaming the YAML directory did not merge those paths.
+
 ## Native ChatGPT browser and Vercel execution
 
 The implemented split assigns website reading/match validation and form submission
 to ChatGPT's **own native browser**. MCP supplies context and records structured
-results; it does not launch a separate browser. The other nine workflows have a
-Vercel Queues execution path. Cloud activation is explicit; until enabled and configured, those nine wait
+results; it does not launch a separate browser. The other nine stages have a
+Vercel Queues execution path. Cloud activation is explicit; until enabled and configured, those nine stages wait
 without executing. There is no implicit workstation fallback. The two
-native-browser workflows are never claimed by a workstation worker.
+native-browser stages are never claimed by a workstation worker.
 
 ```mermaid
 flowchart TB
     USER[User] --> CHAT
     subgraph CHAT["ChatGPT conversation with native Browser / Computer Use"]
-        VALIDATE["2. validate-bookmarked<br/>Open the website and extract the role description<br/>Check a strong match against candidate experience"]
-        SUBMIT["4. submit-prepared<br/>Fill the employer form with the saved package<br/>Submit once and observe confirmation"]
-        BROWSER["ChatGPT native browser<br/>User interaction when the host requires it"]
+        VALIDATE["validate-bookmarked stage: read and evaluate"]
+        SUBMIT["submit-prepared stage: fill and confirm"]
+        BROWSER["ChatGPT native browser"]
         VALIDATE --> BROWSER
         SUBMIT --> BROWSER
     end
     BROWSER <-->|Read pages / fill forms / observed receipt| SITES[Employer websites / ATS]
     VALIDATE & SUBMIT <-->|Context, contracts, package and results| MCP
 
-    subgraph VERCEL["Vercel — Application Service and managed workflow functions"]
-        MCP["Authenticated MCP endpoint /mcp<br/>Workflow-specific tools generated from OpenAPI"]
-        ADMIT["Run admission<br/>Validate scope and idempotency<br/>Snapshot all eligible IDs unless explicitly limited"]
-        TASKS["ChatGPT task protocol<br/>Claims and context versions<br/>Validate observed posting and structured decisions<br/>Persist submission intent before the final click"]
-        CRON["Authenticated daily Cron<br/>Nine cloud workflows only<br/>Inactive until cloud execution is enabled"]
-        QUEUE["Vercel Queues<br/>Independent work units<br/>Managed delivery and retries"]
-        CLOUD["Managed Python subscriber<br/>Nine workflows; never validation or submission<br/>Durable intent prevents uncertain re-execution"]
-        RUNTIME["Existing workflow runtime<br/>Stateless agents and runtime-owned adapters"]
-        API["Application Service API<br/>Only owner of application-state mutations<br/>Validated transitions and explicit writes"]
-        BULK["Bulk item updates<br/>Workflows 8, 9 and 10<br/>Per-item outcomes and idempotent receipts"]
-        REPORT["Readable PDF activity reports<br/>Run status and progress"]
+    subgraph VERCEL["Vercel — Application Service and managed stage execution functions"]
+        MCP["MCP endpoint: stage control tools"]
+        ADMIT["Admission: scope, snapshot and idempotency"]
+        TASKS["Native task protocol: claims and submission intent"]
+        CRON["Daily Cron: activated cloud stages"]
+        QUEUE["Vercel Queues: task delivery"]
+        CLOUD["Python subscriber: cloud stage worker"]
+        RUNTIME["Stage runtime: agents and adapters"]
+        API["Application Service: validated state writes"]
+        BULK["Bulk updates: maintenance stage outcomes"]
+        REPORT["PDF reports and run progress"]
         MCP --> ADMIT
         MCP --> TASKS
         ADMIT -->|Vercel-owned requests| QUEUE
@@ -49,10 +92,10 @@ flowchart TB
         API --> REPORT --> MCP
     end
 
-    DB[("Neon PostgreSQL<br/>Durable request queue, task claims and execution intents<br/>Hosted workload / approval registries<br/>Idempotency, submission receipts and PDF reports")]
-    DRIVE[("Google Drive / Docs<br/>Application journal and lifecycle queues<br/>Applications: posting artifacts, packages and research<br/>Applicant: original resume and applicant_profile.json")]
+    DB[("PostgreSQL: requests, tasks, intents and receipts")]
+    DRIVE[("Drive / Docs: journal, artifacts and applicant files")]
     EXTERNAL["Job-board feeds / Gmail / Calendar"]
-    MODELS["Configured API model<br/>Hosted agent workflows only"]
+    MODELS["API model: agent-backed stages"]
     ADMIT & TASKS & CLOUD <--> DB
     API <--> DB
     API <--> DRIVE
@@ -64,7 +107,7 @@ The browser-to-website arrows are inside the ChatGPT execution path. Vercel chec
 contracts, current state, package hashes and retry semantics; it does not itself
 observe those webpages. ChatGPT reports what its native browser observed. No
 workstation browser, remote browser, Playwright process or API model substitutes
-for either of those two website workflows.
+for either of those two website stages.
 
 Bookmarking on Vercel only moves discovered links into Bookmarked. It does not
 need to read a potentially blocked employer site before ChatGPT can inspect it.
@@ -73,30 +116,30 @@ validation/completion planner. Preparation subsequently reads that saved artifac
 and the original résumé through the Application Service.
 
 The PostgreSQL request queue represents requests to run workflows. The journal's
-state queues represent application lifecycle stages. Vercel Queues delivers
+state queues group applications by lifecycle state. Vercel Queues delivers
 independent execution units. These are separate responsibilities.
 
-## Main pipeline across hosts
+## Main workflow across hosts
 
 ```mermaid
-flowchart LR
-    DISCOVER[Discover — Vercel] --> Q1[(Discovered)]
-    Q1 --> BOOKMARK[Bookmark link — Vercel]
+flowchart TB
+    DISCOVER[discover stage — Vercel] --> Q1[(Discovered)]
+    Q1 --> BOOKMARK[bookmark-discovered stage — Vercel]
     BOOKMARK --> Q2[(Bookmarked)]
-    Q2 --> VALIDATE[Read website and validate — ChatGPT native browser]
+    Q2 --> VALIDATE[validate-bookmarked stage — ChatGPT native browser]
     VALIDATE --> Q3[(Validated)]
-    Q3 --> PREPARE[Prepare package — Vercel]
+    Q3 --> PREPARE[prepare-validated stage — Vercel]
     PREPARE --> Q4[(Prepared)]
-    Q4 --> SUBMIT[Fill and submit — ChatGPT native browser]
+    Q4 --> SUBMIT[submit-prepared stage — ChatGPT native browser]
     SUBMIT --> Q5[(Applied)]
 ```
 
-## Workflow ownership
+## Stage execution ownership
 
-| Host | Workflows |
+| Host | Stages |
 | --- | --- |
-| ChatGPT native browser | 2 validate-bookmarked; 4 submit-prepared |
-| Vercel when activated | 0 discover; 1 bookmark-discovered; 3 prepare-validated; 5 handle-incoming-email; 6 prepare-interview; 7 reconcile; 8 complete-journal; 9 renew-gmail-grant; 10 identify-ghosting |
+| ChatGPT native browser | `validate-bookmarked`; `submit-prepared` |
+| Vercel when activated | `discover`; `bookmark-discovered`; `prepare-validated`; `handle-incoming-email`; `prepare-interview`; `reconcile`; `complete-journal`; `renew-gmail-grant`; `identify-ghosting` |
 
 Cloud execution needs its configured model credentials for agent work, a portable
 résumé from applicant onboarding, working artifact creation, and explicit
@@ -118,7 +161,7 @@ flowchart TB
     CHAT[ChatGPT control request] --> MCP[Application Service MCP — Vercel]
     MCP --> API[Authenticated Application Service API]
     API <--> DB[(PostgreSQL request queue / claims / reports)]
-    WORKER["Workstation worker<br/>Remaining workflows only<br/>No native-browser task claims"] <-->|Claim / status / report| API
+    WORKER["Legacy worker: cloud stages only"] <-->|Claim / status / report| API
     WORKER --> RUNTIME[Existing Python runtime and stateless agents]
     RUNTIME --> ADAPTERS[Runtime-owned external adapters]
     RUNTIME -->|Explicit state writes| API
@@ -142,21 +185,3 @@ service-account reads and updates. PostgreSQL allocates file IDs before create,
 so retries use the same ID even after a lost response. No broader Drive scope
 is requested. Live temporary probes verified folder/file creation, read/write
 and stable IDs on replacement; probe items were trashed afterward.
-
-## Processing terminology
-
-A **workflow** is the overall application lifecycle. A **stage definition** in
-`stages/<name>.yaml` declares a trigger, input states, an optional agent, external
-actions, and outcome-to-state routing. Stage filenames have no execution order;
-triggers and application states determine eligibility. Stage-specific dependencies
-live under `stages/<name>/requirements.txt`.
-
-`services.stage_definitions` loads these definitions. A **worker** executes queued
-**tasks** for stages; the **orchestrator** allocates consumers and routes results.
-An **agent definition** is the reusable source directory containing its prompt
-and output contract; an **agent run** is one invocation.
-
-Existing API names, configuration keys and durable records using `workflow`
-remain compatible. They identify the same named stage when referring to an
-individual operation. The old discovery/parser imports in `services.test_runner`
-remain compatibility aliases; runtime code uses the stage definition module.
