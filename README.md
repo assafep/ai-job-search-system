@@ -526,7 +526,7 @@ backend.
 ```text
 config/       local and policy configuration
 agents/       stateless agent instructions and output schemas
-workflows/    event-triggered workflow definitions
+stages/       processing stage definitions (triggers, agents, outcome routing)
 adapters/     Google, Gmail, Calendar, browser, LLM integrations
 services/     API, onboarding, approvals, generation, dispatch
 templates/    cover-letter, CV, and briefing templates

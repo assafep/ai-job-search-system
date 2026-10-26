@@ -15,15 +15,15 @@ from .application_service_client import ApplicationServiceClient
 from .runtime_config import load
 from .workflow_runtime import runtime_from_environment
 from .workload_registry import registry_from_environment
-from .test_runner import discover_workflows, parse_workflow
+from .stage_definitions import discover_stages, parse_stage
 from .worker_main import load_discovery_provider
 
 
 def _get_workflow():
-    workflows = discover_workflows()
+    workflows = discover_stages()
     if "bookmark-discovered" not in workflows:
         raise ValueError("bookmark-discovered workflow not found")
-    return parse_workflow(workflows["bookmark-discovered"])
+    return parse_stage(workflows["bookmark-discovered"])
 
 
 def _bookmark_one(app, event_type, registry, runtime, agent_provider):

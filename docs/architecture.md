@@ -142,3 +142,21 @@ service-account reads and updates. PostgreSQL allocates file IDs before create,
 so retries use the same ID even after a lost response. No broader Drive scope
 is requested. Live temporary probes verified folder/file creation, read/write
 and stable IDs on replacement; probe items were trashed afterward.
+
+## Processing terminology
+
+A **workflow** is the overall application lifecycle. A **stage definition** in
+`stages/<name>.yaml` declares a trigger, input states, an optional agent, external
+actions, and outcome-to-state routing. Stage filenames have no execution order;
+triggers and application states determine eligibility. Stage-specific dependencies
+live under `stages/<name>/requirements.txt`.
+
+`services.stage_definitions` loads these definitions. A **worker** executes queued
+**tasks** for stages; the **orchestrator** allocates consumers and routes results.
+An **agent definition** is the reusable source directory containing its prompt
+and output contract; an **agent run** is one invocation.
+
+Existing API names, configuration keys and durable records using `workflow`
+remain compatible. They identify the same named stage when referring to an
+individual operation. The old discovery/parser imports in `services.test_runner`
+remain compatibility aliases; runtime code uses the stage definition module.

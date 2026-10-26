@@ -10,7 +10,7 @@ import json
 from time import monotonic
 
 from .event_dispatcher import dispatch
-from .test_runner import discover_workflows, parse_workflow
+from .stage_definitions import discover_stages, parse_stage
 
 
 POLL_SECONDS = 60
@@ -22,7 +22,7 @@ def discovery_capacity(persistence):
 
 
 def definitions():
-    return {name: parse_workflow(path) for name, path in discover_workflows().items()}
+    return {name: parse_stage(path) for name, path in discover_stages().items()}
 
 
 def workflow_poll_seconds(name):

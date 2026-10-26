@@ -10,7 +10,7 @@ RUN pip install --no-cache-dir --require-hashes --only-binary=:all: -r requireme
 # Explicit sources only: no credentials, runtime state, or provisioning files.
 COPY application_service/ application_service/
 COPY services/ services/
-COPY workflows/ workflows/
+COPY stages/ stages/
 COPY agents/ agents/
 COPY schemas/ schemas/
 COPY adapters/ adapters/

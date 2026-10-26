@@ -27,7 +27,7 @@ from time import monotonic
 
 from .event_dispatcher import dispatch
 from .application_service_client import ApplicationServiceClient, ApplicationServiceError
-from .test_runner import discover_workflows, parse_workflow
+from .stage_definitions import discover_stages, parse_stage
 from .workflow_runtime import runtime_from_environment
 from .workload_executor import execute_persistence_writes, plan_persistence_writes
 from .workload_registry import registry_from_environment
@@ -67,8 +67,8 @@ def _run_with_workflow_python(python, application, workflow_name, run_id, root):
 def _workflow_for_state(state):
     """Find the workflow that consumes a given state from its input_states."""
     results = []
-    for name, path in discover_workflows().items():
-        definition = parse_workflow(path)
+    for name, path in discover_stages().items():
+        definition = parse_stage(path)
         input_states = definition.get("input_states", [])
         if state in input_states:
             results.append((name, definition))
@@ -84,8 +84,8 @@ def _workflow_for_state(state):
 
 def _get_provider(workflow_name):
     """Load the appropriate LLM provider for the workflow's agent."""
-    definition = parse_workflow(next(
-        path for name, path in discover_workflows().items() if name == workflow_name
+    definition = parse_stage(next(
+        path for name, path in discover_stages().items() if name == workflow_name
     ))
     agent = definition.get("agent")
     if agent in ("read-posting", "validate"):
@@ -167,10 +167,10 @@ def run_one(
                 "reason": "no consuming workflow",
             }
     else:
-        workflows = discover_workflows()
+        workflows = discover_stages()
         if workflow_name not in workflows:
             raise ValueError("unknown workflow: " + workflow_name)
-        definition = parse_workflow(workflows[workflow_name])
+        definition = parse_stage(workflows[workflow_name])
 
     if agent_provider is None and os.environ.get("WORKFLOW_VENV_DELEGATED") != "1":
         from .workflow_venv import ROOT, ensure_workflow_python
@@ -371,10 +371,10 @@ def run_all(
         if workflow_name is None:
             raise ValueError("no workflow consumes state: " + state)
     else:
-        workflows = discover_workflows()
+        workflows = discover_stages()
         if workflow_name not in workflows:
             raise ValueError("unknown workflow: " + workflow_name)
-        definition = parse_workflow(workflows[workflow_name])
+        definition = parse_stage(workflows[workflow_name])
 
     # --- Main thread: list applications ---
     if state not in definition.get("input_states", []):

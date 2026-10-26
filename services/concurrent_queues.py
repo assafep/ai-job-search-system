@@ -29,21 +29,21 @@ from .activity_report import publish
 from .application_service_client import ApplicationServiceClient
 from .report_checkpoint import ReportCheckpoint
 from .runtime_config import load, ROOT
-from .test_runner import discover_workflows, parse_workflow
+from .stage_definitions import discover_stages, parse_stage
 from .workflow_runtime import runtime_from_environment
 from .workflow_runner import run_one
 from .workload_registry import registry_from_environment
 
 
 def _discover_queue_workflows():
-    """Discover workflows that consume from application states.
+    """Discover stages that consume from application states.
 
-    Returns a dict mapping state name to workflow definition, sorted by
-    blueprint filename (00-discover, 01-bookmark-discovered, etc.).
+    Returns a dict mapping state name to stage definition, sorted by
+    stage filename. Triggers and states determine eligibility, not file order.
     """
     result = {}
-    for name, path in discover_workflows().items():
-        definition = parse_workflow(path)
+    for name, path in discover_stages().items():
+        definition = parse_stage(path)
         if definition.get("trigger", {}).get("poll_kind") != "queue":
             continue
         input_states = definition.get("input_states") or []

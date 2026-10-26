@@ -3,12 +3,12 @@
 import json
 import os
 
-from .test_runner import discover_workflows
+from .stage_definitions import discover_stages
 
 DEFAULT_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)),
                             'config', 'workload-effort.json')
 LEVELS = {'low', 'medium', 'high', 'xhigh'}
-WORKFLOWS = set(discover_workflows().keys())
+WORKFLOWS = set(discover_stages().keys())
 
 
 def effort_for_workflow(workflow, path=None):

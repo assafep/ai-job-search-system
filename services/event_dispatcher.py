@@ -10,14 +10,14 @@ import json
 import sys
 import uuid
 
-from .test_runner import discover_workflows, parse_workflow
+from .stage_definitions import discover_stages, parse_stage
 
 
 def _build_routes():
     """Build event-to-workflow routes from workflow blueprints."""
     routes = {}
-    for name, path in discover_workflows().items():
-        definition = parse_workflow(path)
+    for name, path in discover_stages().items():
+        definition = parse_stage(path)
         event_type = definition.get("trigger", {}).get("event_type")
         if event_type is not None:
             routes[event_type] = name

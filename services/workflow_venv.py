@@ -1,6 +1,6 @@
 """One virtualenv per workflow that ships a requirements file.
 
-The file lives at ``workflows/<workflow name>/requirements.txt``. Its SHA-256
+The file lives at ``stages/<stage name>/requirements.txt``. Its SHA-256
 is stored beside the virtualenv. A different hash deletes that virtualenv and
 installs the file again from scratch.
 """
@@ -17,7 +17,7 @@ VENV_ROOT = os.path.join(ROOT, ".onboarding", "workflow-venvs")
 
 
 def requirements_path(workflow_name):
-    return os.path.join(ROOT, "workflows", workflow_name, "requirements.txt")
+    return os.path.join(ROOT, "stages", workflow_name, "requirements.txt")
 
 
 def _hash_file(path):

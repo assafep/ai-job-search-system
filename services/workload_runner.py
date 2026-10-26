@@ -10,7 +10,8 @@ import argparse
 import json
 import sys
 
-from .test_runner import AGENTS, WORKFLOWS, parse_workflow, read_json, resolve
+from .test_runner import AGENTS, read_json, resolve
+from .stage_definitions import STAGES, parse_stage
 from .approval_service import evaluate
 from .workload_executor import plan_persistence_writes
 from .workload_executor import execute_persistence_writes
@@ -22,7 +23,7 @@ from application_service.state_machine import ALLOWED_TRANSITIONS
 
 def _get_agents(workflow_name):
     """Return the list of agent names for a workflow from its blueprint."""
-    definition = parse_workflow(WORKFLOWS[workflow_name])
+    definition = parse_stage(STAGES[workflow_name])
     agent = definition.get("agent")
     if agent is None:
         return []
@@ -31,7 +32,7 @@ def _get_agents(workflow_name):
 
 def _get_external_actions(workflow_name):
     """Return the list of external actions for a workflow from its blueprint."""
-    definition = parse_workflow(WORKFLOWS[workflow_name])
+    definition = parse_stage(STAGES[workflow_name])
     return definition.get("external_actions", [])
 
 
@@ -45,7 +46,7 @@ def failure_outcome(workflow_name, error):
     from urllib import error as urllib_error
     from .application_service_client import ApplicationServiceError
     from .scout_reading import PostingReadFailure
-    definition = parse_workflow(WORKFLOWS[workflow_name]) if workflow_name in WORKFLOWS else {}
+    definition = parse_stage(STAGES[workflow_name]) if workflow_name in STAGES else {}
     outcomes = definition.get('outcomes') or {}
     system = isinstance(error, (
         urllib_error.URLError, TimeoutError, ConnectionError, OSError, ApplicationServiceError))
@@ -101,9 +102,9 @@ def validate_workflow_outcomes(workflow_name, definition):
 
 
 def build_plan(workflow_name, context):
-    if workflow_name not in WORKFLOWS:
+    if workflow_name not in STAGES:
         raise ValueError("unknown workflow: " + workflow_name)
-    definition = parse_workflow(WORKFLOWS[workflow_name])
+    definition = parse_stage(STAGES[workflow_name])
     validate_workflow_outcomes(workflow_name, definition)
     agents = _get_agents(workflow_name)
     return {
@@ -157,7 +158,7 @@ def require_runtime_configuration():
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Dry-run one workflow and its agent invocations")
-    parser.add_argument("workflow", choices=sorted(WORKFLOWS))
+    parser.add_argument("workflow", choices=sorted(STAGES))
     parser.add_argument("--fixture", required=True, help="JSON workload context fixture")
     parser.add_argument(
         "--agent-results",

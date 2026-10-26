@@ -12,7 +12,7 @@ def test_missing_requirements_uses_the_current_interpreter(tmp_path, monkeypatch
 def test_changed_requirements_rebuild_the_virtualenv(tmp_path, monkeypatch):
     monkeypatch.setattr(workflow_venv, "ROOT", str(tmp_path))
     monkeypatch.setattr(workflow_venv, "VENV_ROOT", str(tmp_path / "venvs"))
-    requirements = tmp_path / "workflows" / "prepare-validated" / "requirements.txt"
+    requirements = tmp_path / "stages" / "prepare-validated" / "requirements.txt"
     requirements.parent.mkdir(parents=True)
     requirements.write_text("reportlab==5.1.0\n")
     created = []
