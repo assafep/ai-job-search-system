@@ -26,7 +26,7 @@ def test_dead_letter_does_not_keep_a_bookmarked_posting_out_of_validation(tmp_pa
     workload_id = PREFIX + digest(["validate", "validate", application.application_id, version(app)])
     record = registry.enqueue({
         "workload_id": workload_id,
-        "workflow": PREFIX + "validate",
+        "stage": PREFIX + "validate",
         "event": {"event_id": workload_id, "event_type": "pipeline_item", "payload": {
             "pipeline": "validate",
             "application_id": application.application_id,

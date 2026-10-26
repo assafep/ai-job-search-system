@@ -1,6 +1,6 @@
 """Small provider-neutral client for the Application Service.
 
-Workflow runtimes use this client instead of importing a Drive adapter. Agents
+Stage runtimes use this client instead of importing a Drive adapter. Agents
 never receive this client; they only receive serialized context.
 """
 
@@ -141,7 +141,7 @@ class ApplicationServiceClient:
     def bulk_update_items(self, items, batch_size=25):
         """Process all supplied items in bounded batches; preserve global ordering.
 
-        HTTP 200 can contain per-item failures. Workflows must inspect results
+        HTTP 200 can contain per-item failures. Stages must inspect results
         (or call require_success) before reporting successful execution.
         """
         if not isinstance(items, list):
@@ -279,8 +279,8 @@ class ApplicationServiceClient:
         result["content"] = base64.b64decode(result.pop("content_base64"), validate=True)
         return result
 
-    def list_workflow_runs(self, status=None, workflow=None, limit=50, cursor=None):
+    def list_stage_tasks(self, status=None, stage=None, limit=50, cursor=None):
         query = urllib.parse.urlencode({key: value for key, value in {
-            'status': status, 'workflow': workflow, 'limit': limit, 'cursor': cursor
+            'status': status, 'stage': stage, 'limit': limit, 'cursor': cursor
         }.items() if value is not None})
-        return self._request('GET', '/workflow-runs?' + query)
+        return self._request('GET', '/stage-tasks?' + query)

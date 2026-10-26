@@ -9,7 +9,7 @@ from .approval_registry import approval_registry_from_environment
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Inspect and decide workflow approvals")
+    parser = argparse.ArgumentParser(description="Inspect and decide stage approvals")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     list_command = subparsers.add_parser("list", help="list pending approval requests")

@@ -1,7 +1,7 @@
-"""Install/start the workstation's durable ChatGPT worker, using saved API auth.
+"""Install/start the workstation's stage task worker, using saved API auth.
 
-No application queue is run by installation. Only explicit ChatGPT run requests
-are consumed. This host must remain online for workflow execution.
+No application queue is run by installation. Only explicit stage task requests
+are consumed. This host must remain online for stage execution.
 """
 import os
 from pathlib import Path
@@ -32,7 +32,7 @@ def install():
                 values = shlex.split(line.split('=', 1)[1])
                 agent = values[0] if values else ''
     agent = agent or (load(require=True).get('scout') or {}).get('coding_agent') or 'codex'
-    template = (root / 'deployment/systemd/ajss-chat-workflow-worker.service.in').read_text()
+    template = (root / 'deployment/systemd/ajss-stage-task-worker.service.in').read_text()
     values = {'REPO': str(root), 'PYTHON': sys.executable, 'PATH': os.environ['PATH'], 'CODING_AGENT': agent}
     for key, value in values.items():
         if any(c in value for c in '\n\r"%'):
@@ -40,7 +40,7 @@ def install():
         template = template.replace('@' + key + '@', value)
     directory = Path.home() / '.config/systemd/user'
     directory.mkdir(parents=True, exist_ok=True)
-    unit = directory / 'ajss-chat-workflow-worker.service'
+    unit = directory / 'ajss-stage-task-worker.service'
     unit.write_text(template)
     subprocess.run(['systemctl', '--user', 'daemon-reload'], check=True)
     subprocess.run(['systemctl', '--user', 'enable', '--now', unit.name], check=True)

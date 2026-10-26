@@ -63,12 +63,12 @@ class Repository:
     def save_profile(self, profile):
         raise NotImplementedError
 
-    def get_workflow_execution(self):
-        """Return workflow execution config: {'workstation_enabled': bool}."""
+    def get_stage_execution(self):
+        """Return stage execution config: {'workstation_enabled': bool}."""
         raise NotImplementedError
 
-    def set_workflow_execution(self, config):
-        """Persist workflow execution config. Config: {'workstation_enabled': bool}."""
+    def set_stage_execution(self, config):
+        """Persist stage execution config. Config: {'workstation_enabled': bool}."""
         raise NotImplementedError
 
     def journal_status(self):
@@ -104,7 +104,7 @@ class MemoryRepository(Repository):
         self.idempotency: Dict[str, object] = {}
         self.profile = None
         self.files = {}
-        self._workflow_execution = None
+        self._stage_execution = None
         self._completed_ids = set()
 
     def _cached(self, key):
@@ -242,12 +242,12 @@ class MemoryRepository(Repository):
         self.profile = validate_profile(profile)
         return profile
 
-    def get_workflow_execution(self):
-        return self._workflow_execution
+    def get_stage_execution(self):
+        return self._stage_execution
 
-    def set_workflow_execution(self, config):
-        self._workflow_execution = dict(config)
-        return self._workflow_execution
+    def set_stage_execution(self, config):
+        self._stage_execution = dict(config)
+        return self._stage_execution
 
     def store_artifact(self, application_id, name, content, mime_type=None, idempotency_key=None):
         cached = self._cached(idempotency_key)

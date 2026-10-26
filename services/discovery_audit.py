@@ -48,7 +48,7 @@ def write_pdf(results, output):
         '{} employer feeds checked; {} discovery candidates; {} feed failures. '
         'This audit reads public feeds only and does not create applications. '
         'Candidates pass geography, role, profile-skill and 30-day publication filters. '
-        'Full suitability is evaluated later by the scoring workflow.'.format(len(results), candidates, failures),
+        'Full suitability is evaluated later by the scoring stage.'.format(len(results), candidates, failures),
         styles['Normal']))
     story.append(Spacer(1, 12))
     story.append(Paragraph(

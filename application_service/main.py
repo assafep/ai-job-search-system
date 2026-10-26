@@ -218,7 +218,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._mcp()
         path = urlparse(self.path)
         parts = [x for x in path.path.split("/") if x]
-        if parts == ['internal', 'workflow-schedule']:
+        if parts == ['internal', 'stage-schedule']:
             return self.send_json(404, {'error': 'not found'})
         if parts[:1] == ['gmail'] and parts[1:2] != ['grant']:
             return self._gmail_public(parts)
@@ -234,21 +234,21 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(200, {"ok": True, **checks})
             except Exception:
                 return self.send_json(503, {'error': 'persistence readiness check failed'})
-        if parts == ["workflows", "execution"]:
+        if parts == ["stages", "execution"]:
             if repository is None and os.environ.get('REPOSITORY_BACKEND') == 'hybrid':
                 initialize_backend()
             if repository is None:
                 return self.backend_unavailable()
             try:
-                we = repository.get_workflow_execution()
+                we = repository.get_stage_execution()
                 return self.send_json(200, we if we else {'workstation_enabled': True})
             except Exception as exc:
                 return self.send_exception(exc)
         if parts != ["health"] and repository is None:
             return self.backend_unavailable()
         try:
-            if parts[:1] in (["workflows"], ["workflow-runs"]):
-                from .workflow_runs import handle
+            if parts[:1] in (["stages"], ["stage-tasks"]):
+                from .stage_tasks import handle
                 return handle(self, 'GET', parts, repository)
             if parts == ["health"]:
                 return self.send_json(200, {"ok": True})
@@ -305,13 +305,13 @@ class Handler(BaseHTTPRequestHandler):
             return self.unauthorized()
         try:
             data = body(self)
-            if parts[:1] == ["workflow-runs"]:
-                if (parts == ["workflow-runs"] or (len(parts) >= 3 and parts[2] == 'chatgpt')) and repository is None:
+            if parts[:1] in (["stage-tasks"],):
+                if (parts in (["stage-tasks"],) or (len(parts) >= 3 and parts[2] == 'chatgpt')) and repository is None:
                     if os.environ.get('REPOSITORY_BACKEND') == 'hybrid':
                         initialize_backend()
                     if repository is None:
                         return self.backend_unavailable()
-                from .workflow_runs import handle
+                from .stage_tasks import handle
                 return handle(self, self.command if hasattr(self, 'command') else 'POST', parts, repository, data)
             if parts == ['gmail', 'grant', 'install']:
                 from .gmail_grant import install_grant
@@ -344,12 +344,12 @@ class Handler(BaseHTTPRequestHandler):
                 initialize_backend()
             if repository is None:
                 return self.backend_unavailable()
-            if parts == ['workflows', 'execution']:
+            if parts == ['stages', 'execution']:
                 if 'workstation_enabled' not in data:
                     return self.send_json(400, {'error': 'workstation_enabled is required'})
                 if not isinstance(data['workstation_enabled'], bool):
                     return self.send_json(400, {'error': 'workstation_enabled must be a boolean'})
-                result = repository.set_workflow_execution({'workstation_enabled': data['workstation_enabled']})
+                result = repository.set_stage_execution({'workstation_enabled': data['workstation_enabled']})
                 return self.send_json(200, result)
             if parts == ['bulk-updates']:
                 from .bulk_updates import execute

@@ -1,7 +1,7 @@
-"""Pure event-to-workflow routing.
+"""Pure event-to-stage routing.
 
-Adapters create normalized events; this dispatcher only chooses a workflow and
-creates a workload envelope. It does not run the workflow or perform effects.
+Adapters create normalized events; this dispatcher only chooses a stage and
+creates a workload envelope. It does not run the stage or perform effects.
 """
 
 import hashlib
@@ -14,7 +14,7 @@ from .stage_definitions import discover_stages, parse_stage
 
 
 def _build_routes():
-    """Build event-to-workflow routes from workflow blueprints."""
+    """Build event-to-stage routes from stage blueprints."""
     routes = {}
     for name, path in discover_stages().items():
         definition = parse_stage(path)
@@ -36,7 +36,7 @@ def dispatch(event_type, payload, event_id=None, registry=None):
     ).hexdigest()[:24]
     envelope = {
         "workload_id": workload_id,
-        "workflow": ROUTES[event_type],
+        "stage": ROUTES[event_type],
         "event": {
             "event_id": normalized_event_id,
             "event_type": event_type,

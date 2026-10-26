@@ -7,7 +7,7 @@ from services.event_dispatcher import main
 
 def test_calendar_event_routes_to_interview_preparation():
     workload = dispatch("calendar_event", {"event_id": "calendar-1"}, "event-1")
-    assert workload["workflow"] == "prepare-interview"
+    assert workload["stage"] == "prepare-interview"
     assert workload["event"]["event_id"] == "event-1"
     assert workload["status"] == "queued"
 
@@ -32,7 +32,7 @@ def test_repeated_event_has_same_workload_identity():
 def test_dispatch_can_enqueue_into_registry():
     registry = WorkloadRegistry()
     envelope = dispatch("reconciliation_schedule", {}, "event-reconcile", registry)
-    assert registry.records[envelope["workload_id"]].workflow == "reconcile"
+    assert registry.records[envelope["workload_id"]].stage == "reconcile"
 
 
 def test_normalized_adapter_event_routes_through_same_dispatcher():
@@ -41,7 +41,7 @@ def test_normalized_adapter_event_routes_through_same_dispatcher():
         "event_id": "mail-1",
         "payload": {"subject": "Next steps"},
     })
-    assert envelope["workflow"] == "handle-incoming-email"
+    assert envelope["stage"] == "handle-incoming-email"
     assert envelope["event"]["event_id"] == "mail-1"
 
 
@@ -71,5 +71,5 @@ def test_dispatch_cli_can_durably_enqueue_normalized_event(tmp_path, monkeypatch
 
     envelope = json.loads(capsys.readouterr().out)
     persisted = json.loads(registry_path.read_text())
-    assert envelope["workflow"] == "prepare-interview"
+    assert envelope["stage"] == "prepare-interview"
     assert envelope["workload_id"] in persisted

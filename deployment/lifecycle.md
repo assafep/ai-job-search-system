@@ -29,8 +29,8 @@ exports `AJSS_API_TOKEN`. Cloud deployment must map that name and fail if the
 token is absent. `/ready` currently confirms repository initialization, not a
 full database/Drive/authentication test.
 
-The application service is the API. Workflow instances execute in the separately
-hosted workflow runner and call that API over HTTP. The runner has a
+The application service is the API. Stage instances execute in the separately
+hosted stage runner and call that API over HTTP. The runner has a
 process/container lifecycle and an independently selected host.
 
 `services.orchestrator`, the workload/approval registries and
@@ -43,7 +43,7 @@ durable runner storage, or a PostgreSQL service.
 `services.onboarding` collects personal preferences and references to an existing
 Drive folder/journal. It does not perform Google browser OAuth, provision a
 service account, or create the journal. Infrastructure onboarding should finish
-before handing off to that profile workflow. Avoid prompting twice for values
+before handing off to that profile stage. Avoid prompting twice for values
 already present, and never overwrite existing profile or runtime configuration.
 
 ## Provider capabilities and required changes
@@ -95,16 +95,16 @@ in provider-owned state, not portable application configuration.
 | `stop_application` | existing application host | `ServiceState`: production unavailable, data retained | runner stopped/drained when managing both |
 | `provision_runner_host` | host spec with `execution_model=process` and durable storage requirements | runner `HostTarget` on a process/container host | preflight and authorization |
 | `deploy_runner` | runner host, immutable release, active application's stable endpoint/token; LLM/browser and optional email/calendar capabilities | runner `Deployment`, durable checkpoint location, triggers configured disabled | runner host, active application |
-| `start_runner` | runner deployment, active application, enabled workflow set | `ServiceState`: triggers/consumption enabled, heartbeat/claim verified | application ready, runner deployment |
+| `start_runner` | runner deployment, active application, enabled stage set | `ServiceState`: triggers/consumption enabled, heartbeat/claim verified | application ready, runner deployment |
 | `stop_runner` | existing runner host, drain deadline | `ServiceState`: no new claims, active work drained/checkpointed | existing binding; never provision on stop |
 
-Gmail/Calendar credentials, when those workflows are enabled, belong to the
+Gmail/Calendar credentials, when those stages are enabled, belong to the
 runner's external-system adapters and require separate consent. The runner needs
 more than an API URL/token for LLM/browser operations; it still gets no database
 or artifact-store credentials. Profiles/resume uploads, journal initialization
 and all business-state writes go through the application service after it starts,
-before workflow consumption. Provisioning may create infrastructure/folder ACLs;
-it must not import applications or manipulate workflow queues directly.
+before stage consumption. Provisioning may create infrastructure/folder ACLs;
+it must not import applications or manipulate stage queues directly.
 
 The `up` plan is host → database → schema → Drive → application release →
 application activation → runner host → runner release → runner activation.
@@ -192,7 +192,7 @@ production API readiness/authentication, REST/MCP reads, and Docker runner
 image/container/volume deployment. Dedicated
 Drive file-creation consent remains a separate gate. Record observed results in a readable PDF, with private
 machine checkpoints kept outside version control. Do not start job submission
-workflows merely to test infrastructure idempotency.
+stages merely to test infrastructure idempotency.
 
 
 ## Primary sources

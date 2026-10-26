@@ -10,7 +10,7 @@ from .scout_reading import PostingReadFailure, posting_from_model
 
 
 def configured_reader(provider=None):
-    """Read this workflow's own model and effort from config/runtime.json."""
+    """Read this stage's own model and effort from config/runtime.json."""
     if provider is not None:
         if not callable(provider) and not (hasattr(provider, 'generate') or hasattr(provider, 'generate_with_schema')):
             raise ValueError('Hosted bookmark reader needs an API-backed provider')

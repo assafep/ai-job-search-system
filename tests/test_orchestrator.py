@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 # Orchestrator tests for the scout pipeline need full rewriting
-# for the new bookmark workflow structure.
+# for the new bookmark stage structure.
 
 from adapters.job_boards.posting_details import posting_content_bytes
 from application_service.models import Application
@@ -54,7 +54,7 @@ def scout_provider(prompt, context):
     }]}
 
 
-@pytest.mark.skip(reason="scout pipeline tests need full rewrite for new bookmark workflow")
+@pytest.mark.skip(reason="scout pipeline tests need full rewrite for new bookmark stage")
 def test_scout_searches_job_boards_and_bookmarks_matches(monkeypatch, tmp_path):
     repository = MemoryRepository()
     repository.profile = {"job_search": {"countries": ["IL"], "search_terms": ["backend"]}}
@@ -73,7 +73,7 @@ def test_scout_searches_job_boards_and_bookmarks_matches(monkeypatch, tmp_path):
         assert context["source_names"] == ["freehire"]
         context["job_postings"] = postings
 
-    monkeypatch.setattr("services.workflow_runtime.WorkflowRuntime._enrich_discovery_context", staticmethod(enrich))
+    monkeypatch.setattr("services.stage_executor.StageExecutor._enrich_discovery_context", staticmethod(enrich))
 
     def provider(prompt, context):
         return {"candidates": [
@@ -104,7 +104,7 @@ def test_scout_searches_job_boards_and_bookmarks_matches(monkeypatch, tmp_path):
         orchestrator.close()
 
 
-@pytest.mark.skip(reason="scout pipeline tests need full rewrite for new bookmark workflow")
+@pytest.mark.skip(reason="scout pipeline tests need full rewrite for new bookmark stage")
 def test_scout_pipeline_bookmarks_replay_and_keeps_last_valid_allocation(monkeypatch, tmp_path):
     repository = MemoryRepository()
     application = repository.create_application("Example", "Backend", "https://example.test/job")
@@ -131,7 +131,7 @@ def test_scout_pipeline_bookmarks_replay_and_keeps_last_valid_allocation(monkeyp
         orchestrator.close()
 
 
-@pytest.mark.skip(reason="orchestrator pipeline tests need full rewrite for new workflow structure")
+@pytest.mark.skip(reason="orchestrator pipeline tests need full rewrite for new stage structure")
 def test_failed_replay_read_is_recorded_once_with_the_move_last(monkeypatch, tmp_path):
     repository = MemoryRepository()
     application = repository.create_application("Apono", "Backend", "https://example.test/unread")
@@ -157,7 +157,7 @@ def test_failed_replay_read_is_recorded_once_with_the_move_last(monkeypatch, tmp
         orchestrator.close()
 
 
-@pytest.mark.skip(reason="scout pipeline tests need full rewrite for new bookmark workflow")
+@pytest.mark.skip(reason="scout pipeline tests need full rewrite for new bookmark stage")
 def test_scout_system_exception_is_dead_lettered_once(tmp_path):
     repository = MemoryRepository()
     application = repository.create_application('Example', 'Backend', 'https://example.test/bug')
@@ -181,7 +181,7 @@ def test_scout_system_exception_is_dead_lettered_once(tmp_path):
         orchestrator.close()
 
 
-@pytest.mark.skip(reason="scout pipeline tests need full rewrite for new bookmark workflow")
+@pytest.mark.skip(reason="scout pipeline tests need full rewrite for new bookmark stage")
 def test_declined_scout_stays_in_replay_without_an_artifact(monkeypatch, tmp_path):
     repository = MemoryRepository()
     application = repository.create_application("Example", "Backend", "https://example.test/job")
@@ -200,7 +200,7 @@ def test_declined_scout_stays_in_replay_without_an_artifact(monkeypatch, tmp_pat
         orchestrator.close()
 
 
-@pytest.mark.skip(reason="scout pipeline tests need full rewrite for new bookmark workflow")
+@pytest.mark.skip(reason="scout pipeline tests need full rewrite for new bookmark stage")
 def test_artifact_save_failure_routes_to_dead_letters_without_another_scout(monkeypatch, tmp_path):
     repository = MemoryRepository()
     application = repository.create_application("Example", "Backend", "https://example.test/job")
@@ -228,7 +228,7 @@ def test_artifact_save_failure_routes_to_dead_letters_without_another_scout(monk
         orchestrator.close()
 
 
-@pytest.mark.skip(reason="orchestrator pipeline tests need full rewrite for new workflow structure")
+@pytest.mark.skip(reason="orchestrator pipeline tests need full rewrite for new stage structure")
 def test_preparation_promotes_saved_posting_without_fetching_it(monkeypatch, tmp_path, candidate_profile):
     repository = MemoryRepository()
     repository.save_profile(candidate_profile)
@@ -269,7 +269,7 @@ def test_preparation_promotes_saved_posting_without_fetching_it(monkeypatch, tmp
         orchestrator.close()
 
 
-@pytest.mark.skip(reason="orchestrator pipeline tests need full rewrite for new workflow structure")
+@pytest.mark.skip(reason="orchestrator pipeline tests need full rewrite for new stage structure")
 def test_one_worker_does_not_run_two_positions_together(monkeypatch, tmp_path):
     repository = MemoryRepository()
     first = repository.create_application("One", "Backend", "https://example.test/one")
@@ -294,7 +294,7 @@ def test_correspondence_completes_the_queued_source_workload(tmp_path):
     registry = WorkloadRegistry()
     source = registry.enqueue({
         "workload_id": "work-email-1",
-        "workflow": "handle-incoming-email",
+        "stage": "handle-incoming-email",
         "event": {"event_id": "email-1", "event_type": "incoming_email",
                   "payload": {"application_id": application.application_id, "subject": "Next step"}},
     })
@@ -308,7 +308,7 @@ def test_correspondence_completes_the_queued_source_workload(tmp_path):
         settle(orchestrator)
         assert source.status == "succeeded"
         assert application.status == "Applied"
-        pipelines = [record for record in registry.snapshot() if record.workflow.startswith("pipeline-")]
+        pipelines = [record for record in registry.snapshot() if record.stage.startswith("pipeline-")]
         assert len(pipelines) == 1 and pipelines[0].status == "succeeded"
     finally:
         orchestrator.close()
@@ -321,7 +321,7 @@ def stage_discovered(repository, application_id, url):
     return discovered
 
 
-@pytest.mark.skip(reason="scout pipeline tests need full rewrite for new bookmark workflow")
+@pytest.mark.skip(reason="scout pipeline tests need full rewrite for new bookmark stage")
 def test_scout_does_not_bookmark_a_posting_already_in_any_status(monkeypatch, tmp_path):
     repository = MemoryRepository()
     existing = repository.create_application("Example", "Backend", "https://Example.test/job?utm_source=board")
@@ -351,7 +351,7 @@ def test_scout_does_not_bookmark_a_posting_already_in_any_status(monkeypatch, tm
         orchestrator.close()
 
 
-@pytest.mark.skip(reason="scout pipeline tests need full rewrite for new bookmark workflow")
+@pytest.mark.skip(reason="scout pipeline tests need full rewrite for new bookmark stage")
 def test_bookmark_commit_rejects_a_duplicate_found_after_scout(tmp_path):
     repository = MemoryRepository()
     existing = repository.create_application("Kept", "Role", "https://example.test/job")
@@ -365,7 +365,7 @@ def test_bookmark_commit_rejects_a_duplicate_found_after_scout(tmp_path):
     try:
         registry.enqueue({
             "workload_id": workload_id,
-            "workflow": "pipeline-scout",
+            "stage": "pipeline-scout",
             "event": {"event_id": workload_id, "event_type": "pipeline_item", "payload": {
                 "pipeline": "scout", "spec": spec, "application_id": discovered.application_id}},
         })
@@ -400,7 +400,7 @@ def save_posting(repository, application, description):
         "application/json")
 
 
-@pytest.mark.skip(reason="scout pipeline tests need full rewrite for new bookmark workflow")
+@pytest.mark.skip(reason="scout pipeline tests need full rewrite for new bookmark stage")
 def test_scout_matches_company_role_and_content_only_against_handled_postings(monkeypatch, tmp_path):
     repository = MemoryRepository()
     handled = repository.create_application("Example", "Backend", "https://handled.example/job")
@@ -430,7 +430,7 @@ def test_scout_matches_company_role_and_content_only_against_handled_postings(mo
         orchestrator.close()
 
 
-@pytest.mark.skip(reason="scout pipeline tests need full rewrite for new bookmark workflow")
+@pytest.mark.skip(reason="scout pipeline tests need full rewrite for new bookmark stage")
 def test_scout_content_match_routes_to_duplicate_without_bookmarking(monkeypatch, tmp_path):
     repository = MemoryRepository()
     handled = repository.create_application("Handled Co", "Platform", "https://handled.example/job")
@@ -459,7 +459,7 @@ def test_scout_content_match_routes_to_duplicate_without_bookmarking(monkeypatch
         orchestrator.close()
 
 
-@pytest.mark.skip(reason="orchestrator pipeline tests need full rewrite for new workflow structure")
+@pytest.mark.skip(reason="orchestrator pipeline tests need full rewrite for new stage structure")
 def test_preparation_routes_content_duplicate_without_generating_package(monkeypatch, tmp_path):
     repository = MemoryRepository()
     handled = repository.create_application("Handled Co", "Platform", "https://handled.example/job")
@@ -488,7 +488,7 @@ def commit_outcome(orchestrator, registry, pipeline, spec, application, outcome)
     workload_id = "pipeline-{}-{}".format(pipeline, application.application_id)
     registry.enqueue({
         "workload_id": workload_id,
-        "workflow": "pipeline-" + pipeline,
+        "stage": "pipeline-" + pipeline,
         "event": {"event_id": workload_id, "event_type": "pipeline_item", "payload": {
             "pipeline": pipeline, "spec": spec, "application_id": application.application_id}},
     })
@@ -497,7 +497,7 @@ def commit_outcome(orchestrator, registry, pipeline, spec, application, outcome)
     orchestrator._commit(registry.get(workload_id))
 
 
-@pytest.mark.skip(reason="orchestrator pipeline tests need full rewrite for new workflow structure")
+@pytest.mark.skip(reason="orchestrator pipeline tests need full rewrite for new stage structure")
 def test_applied_or_rejected_moves_retire_duplicate_queue_items(tmp_path):
     repository = MemoryRepository()
     applied = repository.create_application("Example", "Backend", "https://example.test/applied")
@@ -544,7 +544,7 @@ def test_applied_or_rejected_moves_retire_duplicate_queue_items(tmp_path):
         orchestrator.close()
 
 
-@pytest.mark.skip(reason="orchestrator pipeline tests need full rewrite for new workflow structure")
+@pytest.mark.skip(reason="orchestrator pipeline tests need full rewrite for new stage structure")
 def test_paused_pipeline_does_not_admit_work_and_scale_is_checked(tmp_path):
     repository = MemoryRepository()
     application = repository.create_application("Example", "Backend", "https://example.test/job")

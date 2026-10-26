@@ -19,24 +19,25 @@ from OpenAPI `operationId` values; path/query parameters are top-level arguments
 and JSON bodies use `body`. Keyed writes require a non-empty `idempotency_key`.
 Start with the read-only `journalQueueCounts` tool and empty arguments.
 
-The endpoint exposes domain operations and the workflow tools `listWorkflows`, `listWorkflowRuns`,
-`startWorkflow`, `getWorkflowRun`, and `getWorkflowRunReport`. `startWorkflow` admits a durable scope. `validate-bookmarked` and `submit-prepared`
+The endpoint exposes domain operations and the stage tools `listStages`, `listStageTasks`,
+`startStageTask`, `getStageTask`, and `getStageTaskReport`. `startStageTask` admits a durable scope. `validate-bookmarked` and `submit-prepared`
 execute website interactions in ChatGPT native Browser/Computer Use via
-`nextChatGPTWorkflowTask` and the workflow result tools. Never delegate those
+`nextChatGPTStageTask` and the stage result tools. Never delegate those
 website interactions to a workstation, CLI agent, hosted browser or API model.
 The service validates their structured observations/results and owns all writes.
-Other workflows use the configured host reported by `listWorkflows`; Vercel
-Queues activation is explicit. See `getWorkflowExecutionReadiness`.
-Use `AJSS_MCP_TOOL_PROFILE=workflows` for ChatGPT workflow control without direct
+Other stages use the configured workstation host reported by `listStages`.
+Hosting the API on Vercel does not start stage consumers. See
+`getStageExecutionReadiness`.
+Use `AJSS_MCP_TOOL_PROFILE=stages` for ChatGPT stage control without direct
 state mutations. Omitted limits process all eligible postings; an application ID
 is resolved before execution. Never retry an interrupted/uncertain running claim;
-an operator must stop its worker and reconcile submissions first. Workflow
+an operator must stop its worker and reconcile submissions first. Stage
 agents remain stateless decision-makers and must not call MCP tools themselves.
 See [the endpoint reference](../../application_service/README.md#mcp-endpoint) and
 [connection setup](../../deployment/README.md#mcp-connections).
 
-For monitoring, use read-only `listWorkflowRuns` (`GET /workflow-runs`). Filter
-by exact `status` or `workflow`; pages default to 50 records (maximum 200).
+For monitoring, use read-only `listStageTasks` (`GET /stage-tasks`). Filter
+by exact `status` or `stage`; pages default to 50 records (maximum 200).
 Follow `next_cursor` with the same filters until null. This enumerates durable
 API-admitted requests, not legacy local workload registry entries. Check running
 records' `updated_at` for stale heartbeats; never claim or retry work to inspect it.
@@ -110,10 +111,10 @@ after the upload operation is accepted.
 
 Applicant profile data belongs at `Applicant/applicant_profile.json`
 and remains accessible through `/profile`. Store workload-owned internal files
-under `.ai-job-search-system/workloads-internal-state/<workflow>/` using `/files`.
+under `.ai-job-search-system/workloads-internal-state/<stage>/` using `/files`.
 Use `application_service.storage_layout.workload_state_path` to construct those paths.
 In hybrid installations explicitly configured with `AJSS_WORKLOAD_FILE_BACKEND=database`,
-these workflow-owned paths are stored in PostgreSQL behind the same `/files` API;
+these stage-owned paths are stored in PostgreSQL behind the same `/files` API;
 legacy Drive files remain readable. Never bypass the API or switch backends on
 an individual write failure.
 Use `POST /storage/migrate-internal` only for an explicitly requested migration.
@@ -131,7 +132,7 @@ For side-effect-free validation, use the targeted contract runners:
 
 ```bash
 python3 -m services.test_runner agent <agent> --fixture <input.json> [--output <result.json>]
-python3 -m services.workload_runner <workflow> --fixture <input.json> [--agent-results <results.json>]
+python3 -m services.workload_runner <stage> --fixture <input.json> [--agent-results <results.json>]
 ```
 
 These commands must not contact Drive or mutate application state. Use
@@ -144,27 +145,27 @@ Use `ApplicationServiceClient.bulk_update_items` for multiple explicit item
 updates. `POST /bulk-updates` accepts up to 25 typed operations with one
 idempotency key per item; the client chunks larger lists without limiting the
 requested scope. Inspect all per-item results even when HTTP status is 200.
-`services.bulk_updates.require_success` raises a workflow error on any failed or
+`services.bulk_updates.require_success` raises a stage error on any failed or
 uncertain item. Reuse item keys and the same payload on retries. Never bypass an
 uncertain item with a new key before manual reconciliation.
 
-Workflows 8, 9, and 10 use this interface for their item writes. Terminal cleanup
+Stages 8, 9, and 10 use this interface for their item writes. Terminal cleanup
 must select from `/journal/terminal-items`, which excludes archived entries.
 Ghosting completion carries the observed activity timestamp and expected state;
 Gmail notice acknowledgement carries the grant expiry observed before sending.
 
 ## Native ChatGPT website tasks
 
-The ChatGPT workflow orchestrator may use its native browser for the two named
-workflows; stateless decision contracts still receive serialized context only.
+The ChatGPT stage orchestrator may use its native browser for the two named
+stages; stateless decision contracts still receive serialized context only.
 Read the task's supplied agent contracts and exact admitted posting URL.
 Validation extracts the live role description and checks a strong candidate match;
 `completeChatGPTValidation` reuses the deployed parser and persistence planner.
 Before final submission, call `beginChatGPTSubmission`. Only its first
 `may_submit: true` permits a final click; replay never authorizes another click.
 Record the observed confirmation with `completeChatGPTSubmission`.
-Use `pauseChatGPTWorkflowTask` for specific CAPTCHA, login, upload or missing
+Use `pauseChatGPTStageTask` for specific CAPTCHA, login, upload or missing
 native-browser interaction. Never substitute a backend browser. If a begun
 attempt loses its confirmation, record an unconfirmed result for manual
 reconciliation instead of resubmitting. Continue the admitted scope until
-`nextChatGPTWorkflowTask` reports completion and retrieve the PDF activity report.
+`nextChatGPTStageTask` reports completion and retrieve the PDF activity report.

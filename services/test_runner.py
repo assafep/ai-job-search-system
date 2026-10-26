@@ -32,15 +32,8 @@ def resolve(path):
     return path if os.path.isabs(path) else os.path.join(ROOT, path)
 
 
-# Compatibility for existing callers of the dry-run runner. Definition loading
-# belongs to the stage layer rather than the test infrastructure.
 from .stage_definitions import discover_stages, parse_stage, STAGES
 
-parse_workflow = parse_stage
-discover_workflows = discover_stages
-
-
-WORKFLOWS = STAGES
 
 
 def validate_output(value, schema, path="output"):
@@ -107,10 +100,10 @@ def agent_test(agent_name, fixture_path, output_path=None):
     return 0, result
 
 
-def workload_test(workflow_name, fixture_path):
+def workload_test(stage_name, fixture_path):
     fixture = read_json(resolve(fixture_path))
     from .workload_runner import build_plan
-    result = build_plan(workflow_name, fixture)
+    result = build_plan(stage_name, fixture)
     result["fixture"] = fixture
     result["valid"] = bool(result.get("outcomes"))
     return 0 if result["valid"] else 1, result
@@ -119,7 +112,7 @@ def workload_test(workflow_name, fixture_path):
 def list_items():
     return {
         "agents": sorted(AGENTS),
-        "workflows": sorted(WORKFLOWS),
+        "stages": sorted(STAGES),
         "examples": {
             "agent": "python3 -m services.test_runner agent read-posting --fixture tests/fixtures/agents/read-posting/input.json",
             "agent_with_output": "python3 -m services.test_runner agent read-posting --fixture tests/fixtures/agents/read-posting/input.json --output tests/fixtures/agents/read-posting/output.json",
@@ -139,7 +132,7 @@ def main(argv=None):
     agent.add_argument("--output")
 
     workload = subparsers.add_parser("workload")
-    workload.add_argument("name", choices=sorted(WORKFLOWS))
+    workload.add_argument("name", choices=sorted(STAGES))
     workload.add_argument("--fixture", required=True)
 
     args = parser.parse_args(argv)

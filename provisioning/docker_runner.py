@@ -124,7 +124,7 @@ WORKDIR /app
 COPY . /app
 RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/* && pip install --no-cache-dir -r requirements.txt && install -m 755 /app/grok /usr/local/bin/grok && rm /app/grok
 ENV PYTHONUNBUFFERED=1 HOME=/var/lib/ajss CODEX_HOME=/var/lib/ajss/.codex GROK_DISABLE_AUTOUPDATER=1
-CMD ["python3", "-m", "services.worker_main", "--poll-seconds", "30", "--poll-workflows"]
+CMD ["python3", "-m", "services.worker_main", "--poll-seconds", "30", "--poll-stages"]
 '''
         digest = hashlib.sha256(base['Id'].encode() + context(files)).hexdigest()
         tag = 'ajss-runner:' + digest[:20]

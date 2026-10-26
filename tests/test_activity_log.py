@@ -58,7 +58,7 @@ def test_environment_overrides_runtime_log_settings(tmp_path, monkeypatch):
         configure(False, None)
 
 
-@pytest.mark.skip(reason="activity log test needs rewrite for new bookmark workflow")
+@pytest.mark.skip(reason="activity log test needs rewrite for new bookmark stage")
 def test_workers_log_start_and_finish_for_each_consumed_posting(monkeypatch, tmp_path):
     path = tmp_path / "activity.log"
     configure(True, str(path))

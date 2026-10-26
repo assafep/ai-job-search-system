@@ -341,7 +341,7 @@ def test_repository_finds_legacy_posting_url_before_first_date():
         paragraphs=[
             ("https://example.test/legacy", False),
             ("2026-10-12", False),
-            ("Applied via legacy workflow", True),
+            ("Applied via legacy stage", True),
         ],
     )
     state["childTabs"] = [application]
@@ -517,7 +517,7 @@ def test_google_journal_idempotency_marker_survives_process_restart():
         parent="state-bookmarked",
         paragraphs=[
             ("2026-10-12", False),
-            ("Added by workflow", True),
+            ("Added by stage", True),
             ("Operation idempotency key: operation-1", True),
         ],
     )
@@ -526,7 +526,7 @@ def test_google_journal_idempotency_marker_survives_process_restart():
     event = repository._idempotent_event(application, "app-1", "operation-1")
 
     assert event is not None
-    assert event.data["bullets"] == ["Added by workflow"]
+    assert event.data["bullets"] == ["Added by stage"]
 
 
 def test_store_artifact_does_not_duplicate_journal_reference_after_retry(monkeypatch):

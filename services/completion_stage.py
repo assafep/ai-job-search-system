@@ -16,7 +16,7 @@ def application_id(application):
     return application.application_id if hasattr(application, 'application_id') else application.get('application_id')
 
 
-def run_completion_workflow(applications, complete, remove):
+def run_completion_stage(applications, complete, remove):
     results = []
     for application in applications:
         status = application_status(application)

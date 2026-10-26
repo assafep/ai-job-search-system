@@ -1,7 +1,7 @@
-from services.gmail_grant_workflow import execute
+from services.gmail_grant_stage import execute
 
 
-def test_workflow_sends_the_notice_and_does_not_keep_the_access_token():
+def test_stage_sends_the_notice_and_does_not_keep_the_access_token():
     calls = []
 
     class Client:
@@ -37,7 +37,7 @@ def test_workflow_sends_the_notice_and_does_not_keep_the_access_token():
     assert calls == ['https://gmail.googleapis.com/gmail/v1/users/me/messages/send', 'ack']
 
 
-def test_workflow_does_not_send_when_the_grant_is_current():
+def test_stage_does_not_send_when_the_grant_is_current():
     class Client:
         def prepare_gmail_grant(self):
             return {'status': 'current'}
@@ -62,7 +62,7 @@ def test_missing_grant_is_installed_through_bulk(monkeypatch):
     assert 'private' not in str(result)
 
 
-def test_failed_bulk_ack_is_a_workflow_failure():
+def test_failed_bulk_ack_is_a_stage_failure():
     from services.application_service_client import BulkUpdateError
     import pytest
     class Client:

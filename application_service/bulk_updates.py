@@ -75,7 +75,7 @@ def apply(repository, item):
         return plain(repository.append_event(identity, data['event_type'], data.get('data'), item['idempotency_key']))
     if operation == 'complete_application':
         if 'inactive_before' in data:
-            from services.ghosting_workflow import last_activity, _stamp
+            from services.ghosting_stage import last_activity, _stamp
             cutoff = _stamp(data['inactive_before'])
             if cutoff is None:
                 raise ValueError('inactive_before must be an ISO timestamp')
@@ -142,7 +142,7 @@ def execute(repository, data):
         if item['operation'] == 'transition_application' and item['data']['target'] not in ALL_STATES:
             raise ValueError('Invalid transition target')
         if item['operation'] == 'complete_application' and 'inactive_before' in item['data']:
-            from services.ghosting_workflow import _stamp
+            from services.ghosting_stage import _stamp
             if _stamp(item['data']['inactive_before']) is None:
                 raise ValueError('inactive_before must be an ISO timestamp')
     results = []

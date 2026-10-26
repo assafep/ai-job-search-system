@@ -29,7 +29,7 @@ def test_worker_marks_readiness_and_drains_on_sigterm(tmp_path, monkeypatch):
     runtime = SimpleNamespace(registry=SimpleNamespace(snapshot=lambda: []))
     monkeypatch.setattr(worker_main, 'runtime_from_environment', lambda: runtime)
     previous = signal.getsignal(signal.SIGTERM)
-    def run_forever(self, seconds, stop_event=None, poll_workflows=False):
+    def run_forever(self, seconds, stop_event=None, poll_stages=False):
         assert json.loads(ready.read_text())['pid'] == os.getpid()
         signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
         assert stop_event.is_set()

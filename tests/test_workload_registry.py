@@ -8,7 +8,7 @@ from services.event_dispatcher import dispatch
 from services.application_service_client import ApplicationServiceClient
 from services.runtime_config import OnboardingRequired
 from services.workload_registry import WorkloadRegistry, registry_from_environment
-from services.workflow_runtime import WorkflowRuntime, runtime_from_environment
+from services.stage_executor import StageExecutor, runtime_from_environment
 from services.approval_registry import ApprovalRegistry
 from application_service import main as persistence_main
 from application_service.repository import MemoryRepository
@@ -33,7 +33,7 @@ def test_registry_loads_records_saved_before_result_checkpoints(tmp_path):
     path = tmp_path / "workloads.json"
     path.write_text(json.dumps({"work_1": {
         "workload_id": "work_1",
-        "workflow": "discover",
+        "stage": "discover",
         "event": {"event_id": "event-1", "event_type": "pipeline_item", "payload": {}},
         "status": "succeeded",
         "attempts": 1,
@@ -83,7 +83,7 @@ def test_reconciliation_runtime_recovers_interrupted_workloads_before_claiming()
     class FakeClient:
         pass
 
-    result = WorkflowRuntime(registry, FakeClient()).run(reconcile.workload_id, {})
+    result = StageExecutor(registry, FakeClient()).run(reconcile.workload_id, {})
 
     assert result["status"] == "succeeded"
     assert registry.get(interrupted.workload_id).status == "queued"
@@ -96,7 +96,7 @@ def test_reconciliation_runtime_reports_pending_approvals():
     approvals.request("send_recruitment_email", "work-pending-approval")
     reconcile = registry.enqueue(dispatch("reconciliation_schedule", {}, "reconcile-approval-report"))
 
-    result = WorkflowRuntime(registry, object(), approvals).run(reconcile.workload_id, {})
+    result = StageExecutor(registry, object(), approvals).run(reconcile.workload_id, {})
 
     assert result["approval_report"]["counts"]["pending"] == 1
 
@@ -110,7 +110,7 @@ def test_runtime_rejects_malformed_approval_actions():
     ))
 
     try:
-        WorkflowRuntime(registry, object()).run(record.workload_id, {})
+        StageExecutor(registry, object()).run(record.workload_id, {})
     except ValueError as error:
         assert "non-empty strings" in str(error)
     else:
@@ -144,7 +144,7 @@ def test_registry_from_environment_configures_durable_storage(monkeypatch, tmp_p
     assert registry.max_attempts == 5
 
 
-def test_workflow_runtime_claims_executes_and_completes_workload():
+def test_stage_executor_claims_executes_and_completes_workload():
     registry = WorkloadRegistry()
     record = registry.enqueue(dispatch(
         "calendar_event",
@@ -162,7 +162,7 @@ def test_workflow_runtime_claims_executes_and_completes_workload():
         def append_event(self, *args):
             return {"event_id": "event-1"}
 
-    result = WorkflowRuntime(registry, FakeClient()).run(
+    result = StageExecutor(registry, FakeClient()).run(
         record.workload_id,
         {"interview-prep": {"briefing": "Discuss reliability."}},
     )
@@ -171,7 +171,7 @@ def test_workflow_runtime_claims_executes_and_completes_workload():
     assert registry.records[record.workload_id].status == "succeeded"
 
 
-def test_workflow_runtime_can_invoke_validated_stateless_agent_provider():
+def test_stage_executor_can_invoke_validated_stateless_agent_provider():
     registry = WorkloadRegistry()
     record = registry.enqueue(dispatch(
         "calendar_event",
@@ -209,7 +209,7 @@ def test_workflow_runtime_can_invoke_validated_stateless_agent_provider():
         calls.append((prompt, context))
         return {"briefing": "Discuss reliability."}
 
-    result = WorkflowRuntime(registry, FakeClient()).run(
+    result = StageExecutor(registry, FakeClient()).run(
         record.workload_id,
         agent_provider=provider,
     )
@@ -239,7 +239,7 @@ def test_provider_contract_failure_marks_workload_failed():
             raise AssertionError("persistence must not run after provider failure")
 
     try:
-        WorkflowRuntime(registry, UnexpectedClient()).run(
+        StageExecutor(registry, UnexpectedClient()).run(
             record.workload_id,
             agent_provider=lambda prompt, context: {"invalid": "result"},
         )
@@ -267,7 +267,7 @@ def test_runtime_persists_policy_approval_without_performing_external_action():
         def transition(self, *args):
             return {"status": "Interviewing"}
 
-    result = WorkflowRuntime(registry, FakeClient(), approvals).run(
+    result = StageExecutor(registry, FakeClient(), approvals).run(
         record.workload_id,
         {"correspondence": {
             "intent": "schedule_interview",
@@ -280,7 +280,7 @@ def test_runtime_persists_policy_approval_without_performing_external_action():
     assert approvals.pending()[0].action == "send_recruitment_email"
 
 
-def test_workflow_runtime_marks_failed_workload_for_reconciliation():
+def test_stage_executor_marks_failed_workload_for_reconciliation():
     registry = WorkloadRegistry()
     record = registry.enqueue(dispatch(
         "calendar_event",
@@ -289,7 +289,7 @@ def test_workflow_runtime_marks_failed_workload_for_reconciliation():
     ))
 
     try:
-        WorkflowRuntime(registry, object()).run(
+        StageExecutor(registry, object()).run(
             record.workload_id,
             {"interview-prep": {"briefing": 123}},
         )
@@ -340,7 +340,7 @@ def test_calendar_event_flows_through_runtime_and_http_persistence(monkeypatch):
             "calendar-end-to-end-1",
         ))
 
-        result = WorkflowRuntime(registry, client).run(
+        result = StageExecutor(registry, client).run(
             record.workload_id,
             {"interview-prep": {"briefing": "Discuss reliability."}},
         )

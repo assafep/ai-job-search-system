@@ -1,4 +1,4 @@
-from services.completion_workflow import run_completion_workflow
+from services.completion_stage import run_completion_stage
 
 
 def test_rejected_and_invalidated_use_completion_and_duplicates_are_removed():
@@ -10,7 +10,7 @@ def test_rejected_and_invalidated_use_completion_and_duplicates_are_removed():
     ]
     completed = []
     removed = []
-    results = run_completion_workflow(
+    results = run_completion_stage(
         apps,
         lambda application_id, reason: completed.append((application_id, reason)),
         lambda application_id: removed.append(application_id),
@@ -25,9 +25,9 @@ if __name__ == '__main__':
     print('ok')
 
 
-def test_terminal_workflow_failure_does_not_regress_terminal_application_states():
-    from services.test_runner import discover_workflows, parse_workflow
-    from services.workload_runner import validate_workflow_outcomes
-    definition = parse_workflow(discover_workflows()['complete-journal'])
-    validate_workflow_outcomes('complete-journal', definition)
+def test_terminal_stage_failure_does_not_regress_terminal_application_states():
+    from services.test_runner import discover_stages, parse_stage
+    from services.workload_runner import validate_stage_outcomes
+    definition = parse_stage(discover_stages()['complete-journal'])
+    validate_stage_outcomes('complete-journal', definition)
     assert definition['outcomes'].get('system_error') is None

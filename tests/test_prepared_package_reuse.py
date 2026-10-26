@@ -1,6 +1,6 @@
 from dataclasses import asdict
 
-from services.workflow_runtime import WorkflowRuntime
+from services.stage_executor import StageExecutor
 from services.document_generator import generate_application_pdf
 from services.workload_registry import WorkloadRegistry
 from services.event_dispatcher import dispatch
@@ -25,7 +25,7 @@ def test_review_hold_does_not_gate_successfully_saved_package_or_call_llm():
     registry = WorkloadRegistry()
     workload = dispatch('application_package_schedule', {'application_id': app.application_id}, 'test-reuse', registry)
     def forbidden(*args): raise AssertionError('saved package must not be regenerated')
-    result = WorkflowRuntime(registry, Client()).run(workload['workload_id'], agent_provider=forbidden)
+    result = StageExecutor(registry, Client()).run(workload['workload_id'], agent_provider=forbidden)
     assert result['status'] == 'succeeded'
     assert repository.get_application(app.application_id).status == 'Prepared'
     assert len(repository.list_artifacts(app.application_id)) == 1

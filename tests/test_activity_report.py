@@ -6,8 +6,8 @@ from services.activity_report import render_pdf
 
 
 def test_report_is_readable_pdf_with_counts_and_failure_reasons():
-    report = {'run_id': 'test', 'started_at': 'start', 'finished_at': 'finish',
-              'workload_results': [{'workflow': 'submit-prepared', 'application_id': 'app',
+    report = {'stage_task_id': 'test', 'started_at': 'start', 'finished_at': 'finish',
+              'workload_results': [{'stage': 'submit-prepared', 'application_id': 'app',
                                     'result': {'status': 'Blocked', 'blockers': ['Human verification required']}}],
               'final_application_counts': {'Manual Apply Required': 1}}
     content = render_pdf(report)

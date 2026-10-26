@@ -9,11 +9,11 @@ from application_service import main
 from application_service.repository import MemoryRepository
 from services.event_dispatcher import dispatch
 from services.application_service_client import ApplicationServiceClient
-from services.workflow_runtime import WorkflowRuntime
+from services.stage_executor import StageExecutor
 from services.workload_registry import WorkloadRegistry
 
 
-@pytest.mark.skip(reason="persistence api server test needs rewrite for new workflow structure")
+@pytest.mark.skip(reason="persistence api server test needs rewrite for new stage structure")
 def test_application_service_server_round_trip(monkeypatch, candidate_profile):
     monkeypatch.setattr(main, "repository", MemoryRepository())
     monkeypatch.setenv("APPLICATION_SERVICE_TOKEN", "integration-token")
@@ -64,25 +64,25 @@ def test_application_service_server_round_trip(monkeypatch, candidate_profile):
         assert stored_file["path"] == "integration/notes.txt"
         assert client.read_file("integration/notes.txt")["content"] == b"connected"
 
-        workflow_application = client.create_application(
-            "Workflow Co", "Platform Engineer", "https://example.test/workflow"
+        stage_application = client.create_application(
+            "Stage Co", "Platform Engineer", "https://example.test/stage"
         )
-        workflow_id = workflow_application["application_id"]
-        client.transition(workflow_id, "Prepared")
-        client.transition(workflow_id, "Applied")
+        stage_id = stage_application["application_id"]
+        client.transition(stage_id, "Prepared")
+        client.transition(stage_id, "Applied")
         registry = WorkloadRegistry()
         record = registry.enqueue(dispatch(
-            "calendar_event", {"application_id": workflow_id}, "integration-calendar-1"
+            "calendar_event", {"application_id": stage_id}, "integration-calendar-1"
         ))
-        workflow_result = WorkflowRuntime(registry, client).run(
+        stage_result = StageExecutor(registry, client).run(
             record.workload_id,
             agent_provider=lambda prompt, context: {
                 "briefing": "Ask about ownership and incident response."
             },
         )
-        assert workflow_result["status"] == "succeeded"
-        assert client.get_application(workflow_id)["status"] == "Interviewing"
-        assert client.list_research(workflow_id)[0]["title"] == (
+        assert stage_result["status"] == "succeeded"
+        assert client.get_application(stage_id)["status"] == "Interviewing"
+        assert client.list_research(stage_id)[0]["title"] == (
             "Research — Interview Briefing"
         )
 
@@ -97,7 +97,7 @@ def test_application_service_server_round_trip(monkeypatch, candidate_profile):
             "incoming_email", {"application_id": rejection_id, "message_id": "integration-rejection"},
             "integration-rejection-workload",
         ))
-        rejection_result = WorkflowRuntime(rejection_registry, client).run(
+        rejection_result = StageExecutor(rejection_registry, client).run(
             rejection_record.workload_id,
             agent_provider=lambda prompt, context: {
                 "intent": "rejection", "proposed_action": "record rejection"
@@ -118,7 +118,7 @@ def test_application_service_server_round_trip(monkeypatch, candidate_profile):
             "incoming_email", {"application_id": offer_id, "message_id": "integration-offer"},
             "integration-offer-workload",
         ))
-        offer_result = WorkflowRuntime(offer_registry, client).run(
+        offer_result = StageExecutor(offer_registry, client).run(
             offer_record.workload_id,
             agent_provider=lambda prompt, context: {
                 "intent": "offer", "proposed_action": "record offer"
@@ -147,7 +147,7 @@ def test_application_service_server_round_trip(monkeypatch, candidate_profile):
                 "posting_url": "https://example.test/discovered",
             }]}
 
-        discovery_result = WorkflowRuntime(discovery_registry, client).run(
+        discovery_result = StageExecutor(discovery_registry, client).run(
             discovery_record.workload_id, agent_provider=discovery_provider
         )
         assert discovery_result["status"] == "succeeded"

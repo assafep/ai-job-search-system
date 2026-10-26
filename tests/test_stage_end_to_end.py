@@ -1,7 +1,7 @@
 from application_service.repository import MemoryRepository
 from services.event_dispatcher import dispatch
 from services.workload_registry import WorkloadRegistry
-from services.workflow_runtime import WorkflowRuntime
+from services.stage_executor import StageExecutor
 
 
 def applied_application(repository):
@@ -23,7 +23,7 @@ def test_interview_preparation_runtime_persists_research_and_state():
         "interview-e2e-1",
     ))
 
-    result = WorkflowRuntime(registry, repository).run(
+    result = StageExecutor(registry, repository).run(
         record.workload_id,
         agent_provider=lambda prompt, context: {
             "briefing": "Ask about incident response and ownership."
@@ -47,7 +47,7 @@ def test_rejection_correspondence_runtime_updates_application_state():
         "correspondence-e2e-1",
     ))
 
-    result = WorkflowRuntime(registry, repository).run(
+    result = StageExecutor(registry, repository).run(
         record.workload_id,
         agent_provider=lambda prompt, context: {
             "intent": "rejection",
@@ -74,7 +74,7 @@ def test_offer_correspondence_runtime_reaches_offer_from_interviewing():
         "correspondence-offer-e2e-1",
     ))
 
-    result = WorkflowRuntime(registry, repository).run(
+    result = StageExecutor(registry, repository).run(
         record.workload_id,
         agent_provider=lambda prompt, context: {
             "intent": "offer",
@@ -102,7 +102,7 @@ def test_correspondence_uses_legacy_personal_calendly_profile_field():
         "correspondence-legacy-calendly-1",
     ))
 
-    result = WorkflowRuntime(registry, repository).run(
+    result = StageExecutor(registry, repository).run(
         record.workload_id,
         agent_provider=lambda prompt, context: {
             "intent": "request_interview",

@@ -130,7 +130,7 @@ def main(argv=None):
         print('Provisioning report: ' + str(report))
         return 0 if results and all(item.outcome.value in ('changed', 'unchanged') for _, item in results) else 2
     print('Lifecycle contract: {} / {} / {}'.format(setup.name, setup.drive_mode, args.action))
-    print('Plan only. No resources, credentials, runtime config or workflows are changed.')
+    print('Plan only. No resources, credentials, runtime config or stages are changed.')
     print('Before execution: validate the whole plan, authorize providers and acquire the installation lock.')
     for index, task in enumerate(plan(setup, args.action), 1):
         print('{}. {} [{}]'.format(index, task.name, task.provider))

@@ -14,7 +14,7 @@ from .event_dispatcher import dispatch
 from .application_package import cover_matches_application
 from .application_service_client import ApplicationServiceClient, ApplicationServiceError
 from .runtime_config import load
-from .workload_effort import effort_for_workflow
+from .workload_effort import effort_for_stage
 from .workload_registry import registry_from_environment
 
 
@@ -102,7 +102,7 @@ class ReadySubmission:
                 ['Application submitted successfully.', 'Confirmation: ' + str(confirmation)],
                 attempt),
             'attempt': attempt,
-            'source': 'submission workflow',
+            'source': 'submission stage',
         }, 'submission-confirmed-' + application_id)
         if application['status'] in {'Prepared', 'Manual Apply Required'}:
             self.persistence.transition(application_id, 'Applied', {
@@ -143,7 +143,7 @@ class ReadySubmission:
                 if receipt['status'] == 'Blocked':
                     receipt['failure_kind'] = 'system_error'
                 receipt["attempt"] = describe_attempt(
-                    receipt, effort_for_workflow("submit-prepared"),
+                    receipt, effort_for_stage("submit-prepared"),
                     ["Started auto-submit for a Prepared application."])
                 self.persistence.store_file(self.receipt_path(application_id), json.dumps(receipt).encode(), 'application/json')
                 self._record_manual_required(application_id, receipt)
@@ -227,7 +227,7 @@ class ReadySubmission:
         if not cover_matches_application(cover, app):
             raise ValueError('cover letter does not match the employer and role')
         digest = hashlib.sha256(content).hexdigest()
-        effort = effort_for_workflow('submit-prepared')
+        effort = effort_for_stage('submit-prepared')
         prior_logic = [
             "Checked that one combined PDF exists, every page has text, and the cover letter matches the employer and role.",
         ]
@@ -263,7 +263,7 @@ def main(argv=None):
     parser.add_argument('--application-id', help='Run exactly this application')
     parser.add_argument('--limit', type=int, default=1)
     parser.parse_args(argv)
-    parser.error('Use the submit-prepared MCP workflow task tools in ChatGPT native browser; this CLI cannot substitute for it')
+    parser.error('Use the submit-prepared MCP stage task tools in ChatGPT native browser; this CLI cannot substitute for it')
 
 
 if __name__ == '__main__':

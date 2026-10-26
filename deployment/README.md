@@ -4,7 +4,7 @@ One entry point with separate deployment and activation commands:
 
 1. **Provision** — make resources exist: a host, a database, a Drive folder.
 2. **Deploy** — install one release onto a host that already exists.
-3. **Start** — activate the deployed Docker workflow runner with `start`.
+3. **Start** — activate the deployed Docker stage runner with `start`.
 
 `up` provisions and deploys the API and a stopped runner. `start`, `stop`, and `status` operate on that existing Docker runner; they do not provision resources or pause the Application Service.
 
@@ -115,7 +115,7 @@ image. `AGENT_PROVIDER`, `CODING_AGENT`, and model overrides pass through the
 launcher. The image and stopped container are reused when their configuration
 is unchanged. Running containers are never replaced automatically. Persistent
 workload/approval state lives in an installation-specific Docker volume. Queue
-activation remains a separate operation; native ChatGPT website workflows do
+activation remains a separate operation; native ChatGPT website stages do
 not execute in this container.
 
 For OAuth, the server needs database connectivity, a service token, and
@@ -124,9 +124,9 @@ sets the issuer from its saved production URL. Preserve the database-backed
 OAuth records across releases. If the service token rotates, reconnect OAuth
 clients. Regenerate the handoff after URL, token, or API changes.
 
-MCP's `workflows` profile exposes workflow requests and related reads; the
+MCP's `stages` profile exposes stage requests and related reads; the
 `domain` profile also exposes direct domain mutations. MCP does not provision or
-start workers. See the [native-browser protocol and remaining-workflow host setup](chatgpt-workflows.md) for a
+start workers. See the [native-browser protocol and remaining-stage host setup](chatgpt-stages.md) for a
 supervised local consumer. Docker runner deployment is separate from activation; it creates a stopped container
 and never starts job processing during provisioning.
 
@@ -159,12 +159,12 @@ provisioning/bootstrap/        imported Vercel and Neon adapter
 | `drive` | Live. Binds an existing Drive folder and updates `config/runtime.json`. |
 | `drive-login` | Live. Opens browser OAuth consent for Google Drive. |
 | `up` — provision host & database | Live via the local Vercel/Neon adapter. Idempotent on the existing Vercel project and Neon database. |
-| `up` — bind Drive | Live. Runs `provision_drive` step. |
+| `up` — bind Drive | Live. StageTasks `provision_drive` step. |
 | `up` — prepare applicant | Live. Extracts profile from résumé and verifies `Applicant/applicant_profile.json`. |
 | `up` — deploy application | Live. Uploads the Python Application Service to Vercel when source or settings change. |
 | `up` — prepare MCP connection | Live. Verifies REST/MCP reads and writes private connection files; remote client setup remains manual. |
 | `up` — provision runner host | Builds an image with Codex/Grok and creates a persistent volume and stopped runner container. |
-| `connect` | Live. Runs deploy, MCP verification, and Codex registration. |
+| `connect` | Live. StageTasks deploy, MCP verification, and Codex registration. |
 | `chatgpt` | Live. Verifies REST/MCP reads and regenerates private connection files. |
 | `codex` | Live. Registers the local stdio launcher in the host's Codex CLI. |
 | `mcp-stdio` | Live. Starts the stdio transport for an MCP client. |
@@ -177,7 +177,7 @@ provisioning/bootstrap/        imported Vercel and Neon adapter
 ./deployment/ctl.sh stop --timeout 120
 ```
 
-`start` checks the deployed runner's ownership, API readiness, authenticated queue reads, and that hosted Vercel workflows are disabled before activating the container. It waits for worker readiness. Repeating `start` rechecks readiness without starting a second consumer. After updating to this version, run `up` once to deploy the runner's graceful lifecycle support.
+`start` checks the deployed runner's ownership, API readiness, authenticated queue reads, and the stage API is reachable before activating the container. It waits for worker readiness. Repeating `start` rechecks readiness without starting a second consumer. After updating to this version, run `up` once to deploy the runner's graceful lifecycle support.
 
 The worker polls scheduled and application-state queues at their declared cadence and consumes pending workloads. Gmail/Calendar external events still need their separately configured adapters. `validate-bookmarked` and `submit-prepared` remain on the native ChatGPT host and are never claimed by this CLI worker. A shared file lock prevents another local registry writer from running alongside this installation's Docker executor. Interrupted running workloads block restart until manually reconciled.
 
@@ -185,11 +185,10 @@ The worker polls scheduled and application-state queues at their declared cadenc
 
 ## Other host shapes
 
-Docker, Kubernetes, and Cloud Run run the Application Service as a long-lived process. The Vercel profile serves the API as functions, provides a managed Queue subscriber for eleven workflows, and reserves validation/submission website interaction for ChatGPT native browser. Cloud activation is explicit. The worker path is:
+Docker, Kubernetes, and Cloud Run can host the Application Service as a long-lived process. Vercel hosts its HTTP API as functions. This source does not provision managed stage consumers there. Validation and submission website interaction belongs to ChatGPT native browser; other stages use the separately activated workstation worker. The worker path is:
 
-```text
-adapter event → workload registry → services.workflow_runtime → Application Service
-```
+Adapter events enter the workload registry; `services.stage_executor` executes
+the stage through the Application Service.
 
 ```bash
 python3 -m services.worker_main --poll-seconds 30
@@ -197,9 +196,9 @@ python3 -m services.worker_main --poll-seconds 30
 
 Keep Google credentials and `APPLICATION_SERVICE_TOKEN` in the host's secret manager. Worker registries (`WORKLOAD_REGISTRY_PATH`, and `APPROVAL_REGISTRY_PATH` when approvals are on) need durable storage. They hold scheduler and approval bookkeeping. Application state stays in the Application Service. For a cloud worker, set `AGENT_PROVIDER`. The default provider expects a local Codex login.
 
-## Run workflows from ChatGPT
+## Run stages from ChatGPT
 
-See [ChatGPT workflow execution](chatgpt-workflows.md) for the MCP workflow tools,
+See [ChatGPT stage execution](chatgpt-stages.md) for the MCP stage tools,
 durable background worker, scoped requests, PDF reports, and reconciliation.
 
 ## Applicant onboarding dependency

@@ -1,7 +1,7 @@
-"""Daily workflow: mail the applicant when the Gmail grant is near expiry.
+"""Daily stage: mail the applicant when the Gmail grant is near expiry.
 
 The Application Service stores the grant and builds the renewal links.
-This workflow sends the notice. It does not publish environment variables.
+This stage sends the notice. It does not publish environment variables.
 """
 import os
 
@@ -26,7 +26,7 @@ def execute(client, opener=None):
             require_success(client.bulk_update_items([item('install_gmail_grant', data=grant)]))
             prepared = client.prepare_gmail_grant()
     if prepared.get('status') != 'due':
-        return {'workflow': 'renew-gmail-grant', 'status': prepared.get('status', 'current')}
+        return {'stage': 'renew-gmail-grant', 'status': prepared.get('status', 'current')}
     expiry = prepared.get('refresh_expires_at')
     if expiry is None:
         raise ValueError('Due Gmail notice is missing refresh_expires_at')
@@ -35,7 +35,7 @@ def execute(client, opener=None):
     response = client.bulk_update_items([item('acknowledge_gmail_notice', data={'refresh_expires_at': expiry})])
     acknowledged = require_success(response)[0]['result']
     return {
-        'workflow': 'renew-gmail-grant',
+        'stage': 'renew-gmail-grant',
         'status': 'notice_sent',
         'connect_url': message.get('connect_url'),
         'renew_url': message.get('renew_url'),

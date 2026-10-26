@@ -44,11 +44,11 @@ def prepare(repo=REPO, onboarding=ONBOARDING, opener=None, mcp_verifier=None):
             'Read current state before writing. All mutations must be explicit, validated, '
             'and retry-safe using deterministic idempotency keys where supported. '
             'Never access Google Drive, Gmail, Calendar, or browser APIs directly. '
-            'Use listWorkflows, startWorkflow, getWorkflowRun and getWorkflowRunReport for execution. '
-            'startWorkflow queues existing Python workflows; omitted limits mean all eligible positions. '
+            'Use listStages, startStageTask, getStageTask and getStageTaskReport for execution. '
+            'startStageTask queues existing Python stages; omitted limits mean all eligible positions. '
             'Reuse the same idempotency_key on retries, and never retry an uncertain running claim. '
             'Return readable PDF reports. Prepared queue membership '
-            'authorizes automatic submission by the workflow runtime; do not introduce '
+            'authorizes automatic submission by the stage runtime; do not introduce '
             'a human approval gate. Unconfirmed submissions require manual reconciliation.\n'
         )
         guide = (

@@ -101,7 +101,7 @@ def _run_grok(executable, model, request_text, schema, directory, read_url, env,
         command.extend(["--model", model])
     if read_url:
         # A page read should stay a short turn. The agent's high default spends
-        # most of its time rewriting the posting. The bookmark workflow effort
+        # most of its time rewriting the posting. The bookmark stage effort
         # overrides this, then CODING_AGENT_REASONING, then low.
         effort = str(reasoning_effort or env.get("CODING_AGENT_REASONING") or "low").strip()
         command.extend(["--tools", "web_search,web_fetch", "--always-approve", "--reasoning-effort", effort])

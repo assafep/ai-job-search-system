@@ -30,7 +30,7 @@ def test_registry_defer_does_not_consume_an_attempt(tmp_path):
     registry = WorkloadRegistry(storage_path=str(tmp_path / "workloads.json"))
     record = registry.enqueue({
         "workload_id": "pipeline-1",
-        "workflow": "pipeline-prepare",
+        "stage": "pipeline-prepare",
         "event": {"event_id": "pipeline-1", "event_type": "pipeline_item", "payload": {}},
     })
     registry.claim(record.workload_id)
@@ -64,7 +64,7 @@ def _prepare_workload(repository, registry, application_id):
     }
     record = registry.enqueue({
         "workload_id": "pipeline-prepare-1",
-        "workflow": "pipeline-prepare",
+        "stage": "pipeline-prepare",
         "event": {
             "event_id": "pipeline-prepare-1",
             "event_type": "pipeline_item",

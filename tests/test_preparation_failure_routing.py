@@ -4,7 +4,7 @@ import pytest
 
 from application_service.repository import MemoryRepository
 from services.event_dispatcher import dispatch
-from services.workflow_runtime import WorkflowRuntime
+from services.stage_executor import StageExecutor
 from services.workload_registry import WorkloadRegistry
 
 
@@ -36,7 +36,7 @@ def make_runtime(profile):
     client.application.status = 'Validated'
     registry = WorkloadRegistry()
     envelope = dispatch('application_package_schedule', {'application_id': client.application.application_id}, 'failure-routing', registry)
-    return client, registry, WorkflowRuntime(registry, client), envelope['workload_id']
+    return client, registry, StageExecutor(registry, client), envelope['workload_id']
 
 
 @pytest.mark.parametrize('phase', ['retrieval', 'generation', 'storage', 'agent'])

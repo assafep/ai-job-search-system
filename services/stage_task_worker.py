@@ -1,6 +1,6 @@
 """Durable ChatGPT run consumer. Never launch this inside an HTTP request.
 
-Run on the configured workflow host, exclusively with other registry writers.
+Run on the configured stage host, exclusively with other registry writers.
 A lost/crashed claim blocks admission until an operator reconciles it; neither
 this worker nor the HTTP service retries running submissions automatically.
 """
@@ -24,21 +24,21 @@ def revision():
 
 
 def execute(record, persistence):
-    from application_service.workflow_execution import CHATGPT_WORKFLOWS
-    if record['request']['workflow'] in CHATGPT_WORKFLOWS:
-        raise ValueError('This workflow requires ChatGPT native browser execution through MCP task tools')
+    from application_service.stage_execution import CHATGPT_STAGES
+    if record['request']['stage'] in CHATGPT_STAGES:
+        raise ValueError('This stage requires ChatGPT native browser execution through MCP task tools')
     from .concurrent_queues import run as run_queues
     from .polling import definitions, enqueue_scheduled
     from .workload_registry import registry_from_environment
-    from .workflow_runtime import runtime_from_environment
-    from .workflow_runner import _get_provider
+    from .stage_executor import runtime_from_environment
+    from .stage_runner import _get_provider
     from .activity_report import publish
-    from application_service.workflow_runs import timestamp
+    from application_service.stage_tasks import timestamp
     registry = registry_from_environment()
     runtime = runtime_from_environment(persistence_client=persistence)
     runtime.registry = registry
-    name = record['request']['workflow']
-    from application_service.workflow_runs import blueprint_digest
+    name = record['request']['stage']
+    from application_service.stage_tasks import blueprint_digest
     if blueprint_digest(name) != record['blueprint_digest']:
         raise ValueError('Worker blueprint differs from the admitting service; align deployments')
     definition = definitions()[name]
@@ -48,8 +48,8 @@ def execute(record, persistence):
         # An explicit provider keeps all posting workers in this process, sharing
         # the synchronized client and registries rather than spawning writers.
         return run_queues(persistence, registry, runtime, _get_provider(name),
-                          workflows=[name], application_ids=record['application_ids'], run_id=record['run_id'], code_revision=revision())
-    report = dict(run_id=record['run_id'], started_at=record['started_at'],
+                          stages=[name], application_ids=record['application_ids'], stage_task_id=record['stage_task_id'], code_revision=revision())
+    report = dict(stage_task_id=record['stage_task_id'], started_at=record['started_at'],
                   workload_results=[], code_revision=revision())
     if definition['trigger']['poll_kind'] == 'scheduled':
         admitted = enqueue_scheduled(registry, names=[name])
@@ -58,8 +58,8 @@ def execute(record, persistence):
             report['remaining_requirements'] = ['Existing workload is active or failed; reconcile it before requesting another execution.']
     else:
         from .external_event_polling import poll
-        report['external_event_polling'] = poll(persistence, registry, workflows=[name])
-        ids = {item.workload_id for item in registry.pending() if item.workflow == name and item.status == 'queued'}
+        report['external_event_polling'] = poll(persistence, registry, stages=[name])
+        ids = {item.workload_id for item in registry.pending() if item.stage == name and item.status == 'queued'}
     for workload_id in sorted(ids):
         report['workload_results'].append(runtime.run(workload_id, agent_provider=_get_provider(name)))
     report['finished_at'] = timestamp()
@@ -68,10 +68,10 @@ def execute(record, persistence):
 
 
 def consume_once(client, worker_id, executor=execute):
-    record = client._request('POST', '/workflow-runs/claim', {'worker_id': worker_id})['run']
+    record = client._request('POST', '/stage-tasks/claim', {'worker_id': worker_id})['task']
     if record is None:
         return False
-    path = '/workflow-runs/' + record['run_id'] + '/worker-update'
+    path = '/stage-tasks/' + record['stage_task_id'] + '/worker-update'
     token = record['claim_token']
     stop = threading.Event()
     def heartbeat():
@@ -98,7 +98,7 @@ def consume_once(client, worker_id, executor=execute):
                       summary={'reason': 'Worker interrupted or execution failed. Reconcile application and submission state before any new run.'})
         try:
             from .activity_report import publish
-            result['report'] = publish(client, dict(run_id=record['run_id'],
+            result['report'] = publish(client, dict(stage_task_id=record['stage_task_id'],
                 started_at=record['started_at'], remaining_requirements=[result['summary']['reason']]))
         except Exception:
             pass

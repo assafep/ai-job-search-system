@@ -17,3 +17,18 @@ credentials must not own these objects or perform DDL.
 
 These tables are not connected to the current application service yet. Adding
 them does not migrate the Google Docs journal or enable PostgreSQL persistence.
+
+## Stage task cutover
+
+`004_stage_identity.sql` is a historical, already-applied metadata migration.
+`005_stage_task_names.sql` performs the breaking cutover to the stage/task
+contract. It renames the operational request resource, recursively converts its
+identity fields and preserves task IDs, claims, statuses and archived records.
+Old names appear only as migration inputs, not as runtime API or loader aliases.
+
+Stop execution, deploy the new code with execution disabled, apply the numbered
+migration, verify task counts and identities, refresh MCP tools, and only then
+activate execution. See [the cutover procedure](../docs/stage-task-cutover.md).
+The migration needs SELECT/UPDATE on `installation_resources` and the existing
+ledger permissions. It performs no DDL and does not alter applications, events,
+artifacts, completed snapshots, or the Google journal.

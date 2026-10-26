@@ -1,11 +1,11 @@
-"""Consume all application queues driven by workflow blueprints.
+"""Consume all application queues driven by stage blueprints.
 
 Single-consumer architecture: the main thread reads from the Application Service,
 enriches context, dispatches agent work to a capped thread pool, and writes
 results back. Worker threads never touch the Application Service.
 
-Discovers queue-driven workflows from their blueprints (non-empty input_states),
-builds a state-to-workflow map, and processes each pipeline stage with eight
+Discovers queue-driven stages from their blueprints (non-empty input_states),
+builds a state-to-stage map, and processes each pipeline stage with eight
 posting workers and serialized storage.
 
 Pipeline order (from blueprint prefixes):
@@ -30,12 +30,12 @@ from .application_service_client import ApplicationServiceClient
 from .report_checkpoint import ReportCheckpoint
 from .runtime_config import load, ROOT
 from .stage_definitions import discover_stages, parse_stage
-from .workflow_runtime import runtime_from_environment
-from .workflow_runner import run_one
+from .stage_executor import runtime_from_environment
+from .stage_runner import run_one
 from .workload_registry import registry_from_environment
 
 
-def _discover_queue_workflows():
+def _discover_queue_stages():
     """Discover stages that consume from application states.
 
     Returns a dict mapping state name to stage definition, sorted by
@@ -54,28 +54,28 @@ def _discover_queue_workflows():
             continue
         for state in input_states:
             result[state] = {
-                "workflow": name,
+                "stage": name,
                 "event_type": event_type,
                 "outcomes": definition.get("outcomes", {}),
             }
     return result
 
 
-def run(persistence, registry, runtime, agent_provider, workers=8, *, workflows=None, application_ids=None, limit=None, run_id=None, code_revision=None):
+def run(persistence, registry, runtime, agent_provider, workers=8, *, stages=None, application_ids=None, limit=None, stage_task_id=None, code_revision=None):
     if workers != 8:
         raise ValueError('this queue runner requires exactly eight posting workers')
 
-    queue_workflows = _discover_queue_workflows()
-    queue_workflows = {state: info for state, info in queue_workflows.items()
-                       if workflows is None or info["workflow"] in workflows}
+    queue_stages = _discover_queue_stages()
+    queue_stages = {state: info for state, info in queue_stages.items()
+                       if stages is None or info["stage"] in stages}
     if limit is not None and (type(limit) is not int or limit < 1):
         raise ValueError("limit must be a positive integer")
-    if not queue_workflows:
-        raise ValueError("no queue-driven workflows found in blueprints")
+    if not queue_stages:
+        raise ValueError("no queue-driven stages found in blueprints")
 
-    # Snapshot all applications in states that have consuming workflows
+    # Snapshot all applications in states that have consuming stages
     snapshot = persistence.list_applications()
-    initial = [a for a in snapshot if a["status"] in queue_workflows]
+    initial = [a for a in snapshot if a["status"] in queue_stages]
     # Defensive deduplication: a posting can never be assigned twice.
     initial = list({a["application_id"]: a for a in initial}.values())
 
@@ -84,13 +84,13 @@ def run(persistence, registry, runtime, agent_provider, workers=8, *, workflows=
         initial = [a for a in initial if a["application_id"] in selected]
     if limit is not None:
         initial = initial[:limit]
-    run_id = run_id or datetime.now(timezone.utc).strftime('queues-%Y%m%dT%H%M%S%fZ')
+    stage_task_id = stage_task_id or datetime.now(timezone.utc).strftime('queues-%Y%m%dT%H%M%S%fZ')
     report = {
-        "run_id": run_id,
+        "stage_task_id": stage_task_id,
         "code_revision": code_revision,
         "started_at": datetime.now(timezone.utc).isoformat(),
         "workers": workers,
-        "queue_workflows": {state: info["workflow"] for state, info in queue_workflows.items()},
+        "queue_stages": {state: info["stage"] for state, info in queue_stages.items()},
         "initial_applications": [
             {"application_id": a["application_id"], "company": a["company"],
              "role": a["role"], "state": a["status"]}
@@ -99,7 +99,7 @@ def run(persistence, registry, runtime, agent_provider, workers=8, *, workflows=
         "workload_results": [],
         "posting_results": [],
     }
-    state_path = workload_state_path('system-run', run_id + '.json')
+    state_path = workload_state_path('system-run', stage_task_id + '.json')
     checkpoint = ReportCheckpoint(persistence, state_path, report)
     print_lock = Lock()
 
@@ -118,14 +118,14 @@ def run(persistence, registry, runtime, agent_provider, workers=8, *, workflows=
             "state": state,
         })
 
-        # Resolve workflow for this application's state
-        if state not in queue_workflows:
+        # Resolve stage for this application's state
+        if state not in queue_stages:
             final = persistence.get_application(app_id)
             emit({
                 "activity": "skipped",
                 "application_id": app_id,
                 "state": state,
-                "reason": "no consuming workflow",
+                "reason": "no consuming stage",
             })
             return {
                 "application_id": app_id,
@@ -133,17 +133,17 @@ def run(persistence, registry, runtime, agent_provider, workers=8, *, workflows=
                 "workload_results": [],
             }
 
-        queue_info = queue_workflows[state]
-        workflow_name = queue_info["workflow"]
+        queue_info = queue_stages[state]
+        stage_name = queue_info["stage"]
 
         result = run_one(
             persistence,
             registry,
             runtime,
             application,
-            workflow_name=workflow_name,
+            stage_name=stage_name,
             agent_provider=agent_provider,
-            run_id=run_id + ":" + workflow_name + ":" + app_id,
+            stage_task_id=stage_task_id + ":" + stage_name + ":" + app_id,
         )
 
         final_state = result.get("final_state", "unknown")
@@ -152,7 +152,7 @@ def run(persistence, registry, runtime, agent_provider, workers=8, *, workflows=
             "activity": "finished" if status_label != "failed" else "error",
             "application_id": app_id,
             "company": application["company"],
-            "workflow": workflow_name,
+            "stage": stage_name,
             "status": final_state,
         })
 
@@ -166,10 +166,10 @@ def run(persistence, registry, runtime, agent_provider, workers=8, *, workflows=
 
     checkpoint.save(force=True)
     emit({
-        "run_id": run_id,
+        "stage_task_id": stage_task_id,
         "workers": workers,
         "states": dict(Counter(a["status"] for a in initial)),
-        "queue_workflows": {state: info["workflow"] for state, info in queue_workflows.items()},
+        "queue_stages": {state: info["stage"] for state, info in queue_stages.items()},
     })
     try:
         with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="posting") as pool:
@@ -188,7 +188,7 @@ def run(persistence, registry, runtime, agent_provider, workers=8, *, workflows=
     report["finished_at"] = datetime.now(timezone.utc).isoformat()
     report["processed_postings"] = len(report["posting_results"])
     report["final_application_counts"] = dict(Counter(a["status"] for a in persistence.list_applications()))
-    report["workload_counts"] = dict(Counter(r.get("workflow", "unknown") for r in report["workload_results"]))
+    report["workload_counts"] = dict(Counter(r.get("stage", "unknown") for r in report["workload_results"]))
     report["storage_synchronization"] = persistence.storage_statistics()
     report["checkpoint_uploads"] = checkpoint.uploads + 1
     report["activity_report_pdf"] = publish(persistence, report)
@@ -206,7 +206,7 @@ def run(persistence, registry, runtime, agent_provider, workers=8, *, workflows=
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.parse_args(argv)
-    parser.error('Use the ChatGPT native-browser MCP task tools for Bookmarked and Prepared; this CLI cannot execute those workflows')
+    parser.error('Use the ChatGPT native-browser MCP task tools for Bookmarked and Prepared; this CLI cannot execute those stages')
 
 
 if __name__ == '__main__':

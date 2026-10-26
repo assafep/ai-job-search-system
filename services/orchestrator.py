@@ -24,7 +24,7 @@ from .application_service_client import ApplicationServiceError
 from .pipeline_agents import PipelineAgents, plain, read_posting
 from .runtime_config import ROOT, load as load_runtime
 from .workload_registry import WorkloadRegistry
-from .polling import PollingSchedule, enqueue_scheduled, maintenance_names, POLL_SECONDS, discovery_capacity, workflow_poll_seconds
+from .polling import PollingSchedule, enqueue_scheduled, maintenance_names, POLL_SECONDS, discovery_capacity, stage_poll_seconds
 
 PREFIX = 'pipeline-'
 DEFAULT_STATUS = os.path.join(ROOT, 'config', 'orchestrator-status.json')
@@ -197,7 +197,7 @@ class Orchestrator:
         # Recover checkpoints, not side effects. A submission handler reads its
         # durable receipt before any possible external submission retry.
         for record in registry.snapshot():
-            if record.workflow.startswith(PREFIX) and record.status == 'running':
+            if record.stage.startswith(PREFIX) and record.status == 'running':
                 registry.fail(record.workload_id, 'Orchestrator interrupted; resume durable result or receipt')
 
     def _apply_worker_overrides(self):
@@ -486,11 +486,11 @@ class Orchestrator:
         return True
 
     def _poll_maintenance(self, name):
-        from .workflow_runtime import WorkflowRuntime
+        from .stage_executor import StageExecutor
         enqueue_scheduled(self.registry, names=[name])
-        runtime = WorkflowRuntime(self.registry, self.persistence)
+        runtime = StageExecutor(self.registry, self.persistence)
         for record in self.registry.pending():
-            if record.workflow == name:
+            if record.stage == name:
                 runtime.run(record.workload_id, agent_results={}, recover_incomplete=False)
                 break
 
@@ -518,7 +518,7 @@ class Orchestrator:
             }
 
     def _collect_postings(self, profile, sources=None, max_postings=None):
-        from services.workflow_runtime import WorkflowRuntime
+        from services.stage_executor import StageExecutor
         job_search = profile.get('job_search') if isinstance(profile, dict) else None
         job_search = job_search or {}
         merged = []
@@ -539,7 +539,7 @@ class Orchestrator:
             }
             try:
                 # Terms are already resolved, so a source fetch must not call the model again.
-                WorkflowRuntime._enrich_discovery_context(context, profile, None)
+                StageExecutor._enrich_discovery_context(context, profile, None)
             except Exception as error:
                 errors.append('{}: {}'.format(name, error))
                 continue
@@ -662,17 +662,17 @@ class Orchestrator:
                     self.last_error = str(error)
                 del self.inflight[future]
                 self.last_scan = float('-inf')
-        self.schedule.run('workflows', POLL_SECONDS, self._poll_workflows)
+        self.schedule.run('stages', POLL_SECONDS, self._poll_stages)
         self.write_status()
 
-    def _poll_workflows(self):
+    def _poll_stages(self):
         if not self._free_workers():
             return
         records = self.registry.snapshot()
         # Resume a persisted output before considering fresh work for that item.
         pending_ids = set()
         for record in records:
-            if not record.workflow.startswith(PREFIX):
+            if not record.stage.startswith(PREFIX):
                 continue
             payload = record.event['payload']
             if record.status in {'queued', 'failed', 'running', 'awaiting_input'}:
@@ -685,16 +685,16 @@ class Orchestrator:
             self.applications = [plain(app) for app in self.persistence.list_applications()]
             self.last_scan = monotonic()
         if self.event_poller:
-            for workflow, event_type in [('handle-incoming-email', 'incoming_email'),
+            for stage, event_type in [('handle-incoming-email', 'incoming_email'),
                                          ('prepare-interview', 'calendar_event')]:
                 sources = [spec for spec in enabled.values() if spec.get('event_type') == event_type]
                 if sources:
-                    interval = min(spec.get('event_poll_seconds', workflow_poll_seconds(workflow))
+                    interval = min(spec.get('event_poll_seconds', stage_poll_seconds(stage))
                                    for spec in sources)
-                    self.schedule.admit('external-' + workflow, interval,
-                        lambda workflow=workflow: self._launch_background(workflow,
-                            lambda workflow=workflow: self.event_poller(
-                                self.persistence, self.registry, workflows=[workflow])))
+                    self.schedule.admit('external-' + stage, interval,
+                        lambda stage=stage: self._launch_background(stage,
+                            lambda stage=stage: self.event_poller(
+                                self.persistence, self.registry, stages=[stage])))
         self._maybe_discover()
         requirements = {'renew-gmail-grant': 'prepare_gmail_grant',
                         'identify-ghosting': 'bulk_update_items',
@@ -713,13 +713,13 @@ class Orchestrator:
                 if app['status'] not in spec['states'] or app_id in pending_ids or any(value['application_id'] == app_id for value in self.inflight.values()):
                     continue
                 if spec.get('event_type'):
-                    sources = [record for record in records if not record.workflow.startswith(PREFIX)
+                    sources = [record for record in records if not record.stage.startswith(PREFIX)
                                and record.status in {'queued', 'failed'}
                                and record.event.get('event_type') == spec['event_type']
                                and (record.event.get('payload') or {}).get('application_id') == app_id]
                 else:
                     sources = [None]
-                    if any(record.workflow == PREFIX + name and record.status == 'succeeded'
+                    if any(record.stage == PREFIX + name and record.status == 'succeeded'
                            and record.event['payload']['application_id'] == app_id
                            and (record.result or {}).get('observed_version') == version(app) for record in records):
                         continue
@@ -738,7 +738,7 @@ class Orchestrator:
                     payload = {'pipeline': name, 'spec': deepcopy(spec), 'application_id': app_id,
                                'input_version': version(app), 'source_event': source.event if source else None,
                                'origin_workload_id': source.workload_id if source else None}
-                    record = self.registry.enqueue({'workload_id': workload_id, 'workflow': PREFIX + name,
+                    record = self.registry.enqueue({'workload_id': workload_id, 'stage': PREFIX + name,
                                                     'event': {'event_id': workload_id, 'event_type': 'pipeline_item', 'payload': payload}})
                     if self._launch(record):
                         pending_ids.add(app_id)

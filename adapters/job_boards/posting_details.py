@@ -13,7 +13,7 @@ import urllib.request
 
 
 def posting_content_bytes(details):
-    """Serialize the normalized posting so later workflows need no network."""
+    """Serialize the normalized posting so later stages need no network."""
     saved = {
         'posting_url': details['posting_url'],
         'source_url': details.get('source_url') or details['posting_url'],

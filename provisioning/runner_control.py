@@ -18,15 +18,15 @@ def check_application(container):
     token = values.get('APPLICATION_SERVICE_TOKEN')
     if not url.startswith(('https://', 'http://')) or not token:
         raise ProvisioningFailure('Runner application URL or credential is missing; rerun ctl.sh up.')
-    for path in ('/ready', '/journal/queues', '/workflows/readiness'):
+    for path in ('/ready', '/journal/queues', '/stages/readiness'):
         request = urllib.request.Request(url + path, headers={'Authorization': 'Bearer ' + token})
         try:
             with urllib.request.urlopen(request, timeout=15) as response:
                 body = json.loads(response.read())
                 if response.status != 200 or (path == '/ready' and (not isinstance(body, dict) or body.get('ok') is not True)):
                     raise ProvisioningFailure('Application readiness check failed for ' + path)
-                if path == '/workflows/readiness':
-                    pass  # Readiness check is handled by the workflow execution config
+                if path == '/stages/readiness':
+                    pass  # Readiness check is handled by the stage execution config
         except (OSError, ValueError) as exc:
             raise ProvisioningFailure('Application readiness check failed for ' + path) from None
 
@@ -80,7 +80,7 @@ def control(action, repo=REPO, engine=None, timeout=60, check=check_application)
                     raise ProvisioningFailure('Runner exited during startup (exit code %s). Inspect Docker logs; no automatic retry was made.' % state.get('ExitCode'))
                 if (state.get('Health') or {}).get('Status') == 'healthy':
                     return TaskResult(Outcome.CHANGED if changed else Outcome.UNCHANGED, None,
-                                      ('Runner is running and ready: ' + name, 'Native browser workflows still require the ChatGPT host.'))
+                                      ('Runner is running and ready: ' + name, 'Native browser stages still require the ChatGPT host.'))
             if time.monotonic() >= deadline:
                 return TaskResult(Outcome.BLOCKED, None,
                                   (('Runner is still draining; it was not force-killed.' if action == 'stop' else 'Runner started but readiness is not confirmed.'),),

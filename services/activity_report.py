@@ -47,7 +47,7 @@ def render_pdf(report):
                     (report.get('initial_bookmarked_applications') or []) + (report.get('initial_ready_applications') or [])}
     groups = {}
     for item in results:
-        groups.setdefault(item.get('workflow', 'unknown'), []).append(item)
+        groups.setdefault(item.get('stage', 'unknown'), []).append(item)
     names = ['discover', 'bookmark-discovered', 'validate-bookmarked', 'prepare-validated', 'submit-prepared', 'handle-incoming-email', 'prepare-interview', 'reconcile']
     for name in dict.fromkeys(names + list(groups)):
         items = groups.get(name, [])
@@ -100,6 +100,6 @@ def render_pdf(report):
 
 def publish(persistence, report):
     from application_service.storage_layout import workload_state_path
-    path = workload_state_path('system-run', 'reports/Activity Report - {}.pdf'.format(report['run_id']))
+    path = workload_state_path('system-run', 'reports/Activity Report - {}.pdf'.format(report['stage_task_id']))
     saved = persistence.store_file(path, render_pdf(report), 'application/pdf')
     return dict(saved, path=path)

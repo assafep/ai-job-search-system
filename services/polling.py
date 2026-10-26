@@ -1,7 +1,7 @@
-"""Shared clock and blueprint-driven admission for all workflow runners.
+"""Shared clock and blueprint-driven admission for all stage runners.
 
 Events are internal work envelopes, not scheduling triggers. Polling callbacks
-read queues or adapters; scheduled workflows use durable UTC minute-bucket IDs.
+read queues or adapters; scheduled stages use durable UTC minute-bucket IDs.
 """
 
 from datetime import datetime, timezone
@@ -25,12 +25,12 @@ def definitions():
     return {name: parse_stage(path) for name, path in discover_stages().items()}
 
 
-def workflow_poll_seconds(name):
-    """Default automatic polling interval declared by the workflow blueprint."""
+def stage_poll_seconds(name):
+    """Default automatic polling interval declared by the stage blueprint."""
     cadence = definitions()[name]['trigger'].get('cadence', 'minute')
     intervals = {'minute': POLL_SECONDS, 'day': 86400}
     if cadence not in intervals:
-        raise ValueError('Unsupported workflow cadence: ' + str(cadence))
+        raise ValueError('Unsupported stage cadence: ' + str(cadence))
     return intervals[cadence]
 
 
@@ -66,9 +66,9 @@ def enqueue_scheduled(registry, *, names=None, payloads=None, now=None):
         if definition['trigger']['poll_kind'] != 'scheduled' or (names is not None and name not in names):
             continue
         active = next((record for record in registry.snapshot()
-                       if record.workflow == name and record.status in {'queued', 'running', 'failed'}), None)
+                       if record.stage == name and record.status in {'queued', 'running', 'failed'}), None)
         if active is not None:
-            created.append({'workload_id': active.workload_id, 'workflow': name,
+            created.append({'workload_id': active.workload_id, 'stage': name,
                             'event': active.event, 'status': active.status})
             continue
         envelope = dispatch(definition['trigger']['event_type'], (payloads or {}).get(name, {}),
@@ -92,7 +92,7 @@ def enqueue_queues(persistence, registry, names=None):
             for application in persistence.list_applications(status=state) or []:
                 identity = application['application_id']
                 # An item is never assigned twice while its prior work is active.
-                if any(record.workflow == name and record.status in {'queued', 'running', 'failed', 'awaiting_input'}
+                if any(record.stage == name and record.status in {'queued', 'running', 'failed', 'awaiting_input'}
                        and record.event['payload'].get('application_id') == identity
                        for record in registry.snapshot()):
                     continue

@@ -50,7 +50,7 @@ def test_busy_pool_skips_work_and_released_slot_waits_until_next_minute(tmp_path
         service.tick()
         assert len(service.pool.calls) == 1
         assert len(service.inflight) == 1
-        # Remaining workflows must not queue behind the occupied slot.
+        # Remaining stages must not queue behind the occupied slot.
         assert service.registry.snapshot() == []
         clock[0] = 119
         service.tick()

@@ -1,4 +1,4 @@
-"""Lifecycle boundary between queued workloads and stateless workflow execution."""
+"""Lifecycle boundary between queued workloads and stateless stage execution."""
 
 import argparse
 import json
@@ -16,7 +16,7 @@ from application_service.profile import calendly_url as profile_calendly_url
 from application_service.state_machine import ALLOWED_TRANSITIONS
 
 
-class WorkflowRuntime:
+class StageExecutor:
     """Claim, execute, and settle one workload registry record.
 
     Agent results are supplied by the caller after the stateless agent has run.
@@ -32,7 +32,7 @@ class WorkflowRuntime:
 
     def _record_preparation_failure(self, record, error):
         """Route preparation failures through the data layer, with retry-safe history."""
-        if record.workflow != 'prepare-validated':
+        if record.stage != 'prepare-validated':
             return
         application_id = (record.event.get('payload') or {}).get('application_id')
         if not application_id:
@@ -49,7 +49,7 @@ class WorkflowRuntime:
         if application is None:
             return
         state = application.get('status') if isinstance(application, dict) else application.status
-        outcome, target = failure_outcome(record.workflow, error)
+        outcome, target = failure_outcome(record.stage, error)
         if state != target and target not in ALLOWED_TRANSITIONS.get(state, set()):
             return  # Never regress a submitted or closed application.
         from .event_attempt import with_attempt
@@ -65,14 +65,14 @@ class WorkflowRuntime:
         try:
             self._record_preparation_failure(record, error)
         except Exception as routing_error:
-            _outcome, target = failure_outcome(record.workflow, error)
+            _outcome, target = failure_outcome(record.stage, error)
             raise RuntimeError('Preparation failed: {}. Recording {} also failed: {}'.format(
                 error, target, routing_error)) from routing_error
 
-    def prepare_context(self, workflow, context, agent_provider=None):
-        """Read all persistence data needed for a workflow and return enriched context.
+    def prepare_context(self, stage, context, agent_provider=None):
+        """Read all persistence data needed for a stage and return enriched context.
 
-        This is the ONLY method that reads from the Application Service for workflow
+        This is the ONLY method that reads from the Application Service for stage
         execution. It must be called by the main consumer thread before dispatching
         to worker threads.
         """
@@ -83,16 +83,16 @@ class WorkflowRuntime:
             enriched["applicant_profile"] = profile
             if not enriched.get("calendly_url"):
                 enriched["calendly_url"] = profile_calendly_url(profile)
-        if workflow == 'discover':
+        if stage == 'discover':
             from .polling import discovery_capacity
             enriched['max_postings'] = discovery_capacity(self.persistence_client)
             if not enriched['max_postings']:
                 enriched['job_postings'] = []
                 return enriched
             enriched['results_per_page'] = min(enriched.get('results_per_page', 20), enriched['max_postings'])
-        if workflow in ("discover", "validate-bookmarked"):
+        if stage in ("discover", "validate-bookmarked"):
             self._enrich_discovery_context(enriched, profile, agent_provider)
-        if workflow == "prepare-validated":
+        if stage == "prepare-validated":
             enriched["source_resume_path"] = (profile or {}).get("source_resume", {}).get("path")
             if not enriched["source_resume_path"]:
                 raise ValueError("original onboarding resume PDF is required to prepare an application package")
@@ -103,7 +103,7 @@ class WorkflowRuntime:
         if hasattr(self.persistence_client, "get_application"):
             application = self.persistence_client.get_application(application_id)
             enriched["application"] = asdict(application) if is_dataclass(application) else application
-        if workflow == "prepare-validated":
+        if stage == "prepare-validated":
             from adapters.job_boards.posting_details import read_posting_artifact
             from pypdf import PdfReader
             from io import BytesIO
@@ -116,29 +116,29 @@ class WorkflowRuntime:
             enriched["source_resume_base64"] = base64.b64encode(resume).decode("ascii")
             enriched["resume_text"] = '\n'.join(
                 page.extract_text() or '' for page in PdfReader(BytesIO(resume)).pages)
-        if workflow == "bookmark-discovered":
+        if stage == "bookmark-discovered":
             application = enriched.get("application") or {}
             if not enriched.get("posting_url") and not enriched.get("read_posting_url"):
                 enriched["posting_url"] = application.get("posting_url")
-        if workflow == "validate-bookmarked":
+        if stage == "validate-bookmarked":
             from adapters.job_boards.posting_details import read_posting_artifact
             application = enriched.get("application") or {}
             enriched["posting_content"] = read_posting_artifact(
                 self.persistence_client, application_id, application.get('posting_url', ''))
         if hasattr(self.persistence_client, "list_events"):
             enriched["application_events"] = self.persistence_client.list_events(application_id)
-        if workflow == "prepare-interview" and hasattr(self.persistence_client, "list_research"):
+        if stage == "prepare-interview" and hasattr(self.persistence_client, "list_research"):
             enriched["existing_research"] = self.persistence_client.list_research(application_id)
         return enriched
 
-    def run_agent(self, workflow, enriched_context, agent_provider):
-        """Invoke the workflow's agent(s) on pre-enriched context.
+    def run_agent(self, stage, enriched_context, agent_provider):
+        """Invoke the stage's agent(s) on pre-enriched context.
 
         This is a stateless operation: no persistence reads or writes.
         It is safe to call from worker threads.
         """
         from .workload_runner import _get_agents
-        if workflow == "bookmark-discovered":
+        if stage == "bookmark-discovered":
             # Retrieval is an adapter concern, not an LLM capability. Fetch
             # and validate the exact posting before invoking any agent. This
             # handles SPA shells and ATS-specific public data endpoints and
@@ -158,20 +158,15 @@ class WorkflowRuntime:
                 result["bookmark_attempt"] = attempt
             return result
         agent_results = {}
-        for agent_name in _get_agents(workflow):
+        for agent_name in _get_agents(stage):
             agent_context = {key: value for key, value in enriched_context.items()
                              if key != "source_resume_base64"}
             if hasattr(agent_provider, "with_reasoning_effort"):
-                from .workload_effort import effort_for_workflow
-                agent_context["reasoning_effort"] = effort_for_workflow(workflow)
+                from .workload_effort import effort_for_stage
+                agent_context["reasoning_effort"] = effort_for_stage(stage)
                 agent_provider = agent_provider.with_reasoning_effort(agent_context["reasoning_effort"])
             agent_results[agent_name] = run_agent(agent_name, agent_context, agent_provider)
         return agent_results
-
-    def _enrich_agent_context(self, workflow, context, agent_provider=None, application_snapshot=None):
-        """Legacy: delegate to prepare_context for backward compatibility."""
-        return self.prepare_context(workflow, context, agent_provider)
-
 
     @staticmethod
     def _enrich_discovery_context(context, profile=None, agent_provider=None):
@@ -309,24 +304,24 @@ class WorkflowRuntime:
         # reconciliation workload itself; application mutations remain under
         # the Application Service.
         record = self.registry.get(workload_id)
-        if record.workflow in {'identify-ghosting', 'renew-gmail-grant', 'complete-journal'}:
-            from .ghosting_workflow import execute as execute_ghosting
-            from .gmail_grant_workflow import execute as execute_grant
-            from .completion_workflow import execute as execute_completion
+        if record.stage in {'identify-ghosting', 'renew-gmail-grant', 'complete-journal'}:
+            from .ghosting_stage import execute as execute_ghosting
+            from .gmail_grant_stage import execute as execute_grant
+            from .completion_stage import execute as execute_completion
             handlers = {'identify-ghosting': execute_ghosting,
                         'renew-gmail-grant': execute_grant,
                         'complete-journal': execute_completion}
             self.registry.claim(workload_id)
             try:
-                results = handlers[record.workflow](self.persistence_client)
+                results = handlers[record.stage](self.persistence_client)
             except Exception as exc:
                 self.registry.fail(workload_id, str(exc))
                 raise
             self.registry.complete(workload_id)
-            return {'workload_id': workload_id, 'workflow': record.workflow,
+            return {'workload_id': workload_id, 'stage': record.stage,
                     'status': 'succeeded', 'results': results}
         previous_error = record.error
-        if record.workflow == 'prepare-validated' and agent_results is None and hasattr(self.persistence_client, 'list_artifacts'):
+        if record.stage == 'prepare-validated' and agent_results is None and hasattr(self.persistence_client, 'list_artifacts'):
             from .application_package import saved_package, promote_saved_package
             self.registry.claim(workload_id)
             try:
@@ -334,18 +329,18 @@ class WorkflowRuntime:
                 if app is not None and not isinstance(app, dict):
                     app = asdict(app)
                 if app['status'] != 'Validated':
-                    _outcome, target = failure_outcome(record.workflow, previous_error or RuntimeError('preparation failed'))
+                    _outcome, target = failure_outcome(record.stage, previous_error or RuntimeError('preparation failed'))
                     if app['status'] == target and previous_error:
                         self._record_preparation_failure(record, previous_error)
                     self.registry.complete(workload_id)
-                    return {'workflow': record.workflow, 'workload_id': workload_id, 'status': 'succeeded',
+                    return {'stage': record.stage, 'workload_id': workload_id, 'status': 'succeeded',
                             'application_id': app['application_id'],
                             'activity': 'Application is already {}; no package regeneration is needed.'.format(app['status'])}
                 artifact = saved_package(self.persistence_client, app)
                 if artifact:
                     result = promote_saved_package(self.persistence_client, app, artifact)
                     self.registry.complete(workload_id)
-                    return {'workflow': record.workflow, 'workload_id': workload_id, 'status': 'succeeded',
+                    return {'stage': record.stage, 'workload_id': workload_id, 'status': 'succeeded',
                             'application_id': app['application_id'], 'activity': 'Reused saved package and promoted automatically.',
                             'package_reference': artifact['reference'], 'application': result}
                 # Continue the normal generation path without a second claim.
@@ -355,7 +350,7 @@ class WorkflowRuntime:
                 raise
         else:
             preclaimed = False
-        if record.workflow == 'submit-prepared':
+        if record.stage == 'submit-prepared':
             from .ready_submission import ReadySubmission
             self.registry.claim(workload_id)
             runner = ReadySubmission(self.persistence_client, self.registry)
@@ -366,14 +361,14 @@ class WorkflowRuntime:
                     self.registry.complete(workload_id)
                 else:
                     self.registry.wait_for_input(workload_id, '; '.join(outcome.get('blockers') or [outcome['status']]))
-                return {'workload_id': workload_id, 'workflow': 'submit-prepared',
+                return {'workload_id': workload_id, 'stage': 'submit-prepared',
                         'status': self.registry.get(workload_id).status, 'submission': outcome}
             except Exception as exc:
                 self.registry.fail(workload_id, str(exc))
                 raise
         registry_report = None
         approval_report = None
-        if record.workflow == "reconcile":
+        if record.stage == "reconcile":
             if recover_incomplete:
                 self.registry.recover_incomplete()
             registry_report = self.registry.report()
@@ -394,15 +389,12 @@ class WorkflowRuntime:
                 if agent_provider is None:
                     raise ValueError("agent_results or agent_provider is required")
                 if hasattr(agent_provider, "with_reasoning_effort"):
-                    from .workload_effort import effort_for_workflow
-                    context["reasoning_effort"] = effort_for_workflow(record.workflow)
+                    from .workload_effort import effort_for_stage
+                    context["reasoning_effort"] = effort_for_stage(record.stage)
                     agent_provider = agent_provider.with_reasoning_effort(context["reasoning_effort"])
-                # Reuse only the posting read by this runtime's package check,
-                # never an application object supplied in an event payload.
-                context = self._enrich_agent_context(record.workflow, context, agent_provider,
-                                                     application_snapshot=app if preclaimed else None)
+                context = self.prepare_context(record.stage, context, agent_provider)
                 agent_results = {}
-                for agent_name in _get_agents(record.workflow):
+                for agent_name in _get_agents(record.stage):
                     agent_context = {key: value for key, value in context.items()
                                      if key != "source_resume_base64"}
                     agent_results[agent_name] = run_agent(agent_name, agent_context, agent_provider)
@@ -419,12 +411,12 @@ class WorkflowRuntime:
                     request = self.approval_registry.request(
                         outcome["action"],
                         record.workload_id,
-                        {"workflow": record.workflow, "context": context},
+                        {"stage": record.stage, "context": context},
                         "{}:approval:{}".format(record.workload_id, outcome["action"]),
                     )
                     outcome["request"] = asdict(request)
             result = execute(
-                record.workflow,
+                record.stage,
                 context,
                 agent_results,
                 self.persistence_client,
@@ -435,7 +427,7 @@ class WorkflowRuntime:
         self.registry.complete(workload_id)
         result = {
             "workload_id": workload_id,
-            "workflow": record.workflow,
+            "stage": record.stage,
             "status": "succeeded",
             "execution": result,
         }
@@ -457,7 +449,7 @@ def runtime_from_environment(persistence_client=None, require_configuration=True
     if persistence_client is None:
         from .application_service_client import ApplicationServiceClient
         persistence_client = ApplicationServiceClient()
-    return WorkflowRuntime(
+    return StageExecutor(
         registry_from_environment(),
         persistence_client,
         approval_registry_from_environment(),
@@ -466,7 +458,7 @@ def runtime_from_environment(persistence_client=None, require_configuration=True
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Execute one queued workflow workload")
+    parser = argparse.ArgumentParser(description="Execute one queued stage workload")
     parser.add_argument("--workload-id", required=True)
     parser.add_argument("--agent-results", required=True, help="JSON mapping of agent names to results")
     args = parser.parse_args(argv)

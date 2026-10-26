@@ -1,6 +1,6 @@
 # Job Search Automation
 
-This repository contains time-driven polling workflows. Workflow
+This repository contains time-driven polling stages. Stage
 agents are stateless decision-makers: they read context, produce structured
 decisions, and do not directly create side effects. Workload instances use the
 Application Service to read and write state.
@@ -9,19 +9,19 @@ The portable persistence-boundary instructions are in
 `skills/application-service/SKILL.md`; `openapi.yaml` remains the authoritative
 request/response contract.
 
-Before running a workflow, ensure `config/runtime.json` exists. If it does not,
+Before running a stage, ensure `config/runtime.json` exists. If it does not,
 run the onboarding command described in `README.md`.
 
 ## Boundaries
 
 - Stateless decision agents may not call Google Drive, Gmail, Calendar, or browser APIs directly.
-- For `validate-bookmarked` and `submit-prepared`, the ChatGPT workflow orchestrator
+- For `validate-bookmarked` and `submit-prepared`, the ChatGPT stage orchestrator
   uses ChatGPT native Browser/Computer Use. MCP supplies context and accepts structured
   observations/results; the Application Service validates and persists them. Never
   substitute a local CLI, Playwright, API model, or hosted browser for these website
   interactions. Pause for specific CAPTCHA, sign-in or upload interaction when the
   host requires it. Native-browser availability and CAPTCHA success are not guaranteed.
-- Adapters expose external systems to workflow runtimes.
+- Adapters expose external systems to stage runtimes.
 - The Application Service is the only owner of application-state mutations.
 - Every write must be explicit, validated, and idempotent where retries are possible.
 - Prepared queue membership authorizes automatic submission; do not
@@ -32,10 +32,10 @@ run the onboarding command described in `README.md`.
 
 - For bookmarking discovered positions, run `python3 -m services.run_single Discovered`
   (with the configured runtime environment). To read a single posting URL without
-  any workflow, use `python3 -m services.agent_cli read-posting --url https://...`.
+  any stage, use `python3 -m services.agent_cli read-posting --url https://...`.
 - When the user requests a particular workload or queue without specifying a
   count, process all eligible positions in that requested scope. "Only
-  auto-apply" limits the workflow, not the number of positions. Do not interpret
+  auto-apply" limits the stage, not the number of positions. Do not interpret
   a command's default limit as a user-requested count. If the user names a
   specific position, keep execution scoped to that position; honor any explicit
   count or instruction to stop or not run.
@@ -57,11 +57,11 @@ run the onboarding command described in `README.md`.
   workload/approval registries. Native ChatGPT tasks use durable per-item claims for Bookmarked/Prepared;
   never assign the same posting to two executors. `services.concurrent_queues`
   remains an isolated legacy/test utility, not the live entry point for these
-  native-browser workflows. Never run a separate registry writer alongside
-  an installation’s active workflow executor.
+  native-browser stages. Never run a separate registry writer alongside
+  an installation’s active stage executor.
 
 ## Testing
 
 Use `python3 -m services.test_runner` to test one agent contract or one
-workflow in dry-run mode. The test runner does not require `config/runtime.json`
+stage in dry-run mode. The test runner does not require `config/runtime.json`
 and does not call external adapters.

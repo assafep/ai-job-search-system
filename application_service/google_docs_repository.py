@@ -688,7 +688,7 @@ class GoogleDocsRepository(Repository):
         # into the preceding list item.
         start = max(1, tab_end_index(tab) - 1)
         persisted_bullets = list(bullets)
-        # Package preparation is idempotent at the workflow boundary: the
+        # Package preparation is idempotent at the stage boundary: the
         # runner checks for an existing package-prepared event and artifact.
         # Do not expose an implementation idempotency key in that user-facing
         # event; it made the journal noisy.
@@ -1168,22 +1168,22 @@ class GoogleDocsRepository(Repository):
         self.artifacts.migrate_profile()
         return self.artifacts.save_path(PROFILE_PATH, raw, 'application/json')
 
-    def get_workflow_execution(self):
+    def get_stage_execution(self):
         if not self.artifacts:
             return None
-        from .storage_layout import WORKFLOW_EXECUTION_PATH
+        from .storage_layout import STAGE_EXECUTION_PATH
         try:
-            result = self.artifacts.read_path(WORKFLOW_EXECUTION_PATH)
+            result = self.artifacts.read_path(STAGE_EXECUTION_PATH)
             return json.loads(result['content'].decode('utf-8'))
         except KeyError:
             return None
 
-    def set_workflow_execution(self, config):
+    def set_stage_execution(self, config):
         if not self.artifacts:
             raise RuntimeError("artifact root is not configured")
-        from .storage_layout import WORKFLOW_EXECUTION_PATH
+        from .storage_layout import STAGE_EXECUTION_PATH
         raw = json.dumps(config, indent=2).encode("utf-8")
-        self.artifacts.save_path(WORKFLOW_EXECUTION_PATH, raw, 'application/json')
+        self.artifacts.save_path(STAGE_EXECUTION_PATH, raw, 'application/json')
         return config
 
     def migrate_internal_storage(self):

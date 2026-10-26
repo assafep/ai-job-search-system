@@ -1,4 +1,4 @@
-"""Common logic for running a workflow on one or more applications.
+"""Common logic for running a stage on one or more applications.
 
 Architecture: single-consumer with a capped thread pool.
 
@@ -6,7 +6,7 @@ Architecture: single-consumer with a capped thread pool.
   Application Service. It lists applications, enriches context, and executes
   persistence writes.
 - Worker threads are stateless: they receive pre-enriched context, invoke the
-  workflow's agent(s), and return the results. They never touch the persistence
+  stage's agent(s), and return the results. They never touch the persistence
   API.
 - A bounded ``queue.Queue`` feeds work to the thread pool. As soon as a worker
   returns, the main consumer hands it a new item.
@@ -28,23 +28,23 @@ from time import monotonic
 from .event_dispatcher import dispatch
 from .application_service_client import ApplicationServiceClient, ApplicationServiceError
 from .stage_definitions import discover_stages, parse_stage
-from .workflow_runtime import runtime_from_environment
+from .stage_executor import runtime_from_environment
 from .workload_executor import execute_persistence_writes, plan_persistence_writes
 from .workload_registry import registry_from_environment
 from .workload_runner import failure_outcome
 
 
-def _run_with_workflow_python(python, application, workflow_name, run_id, root):
-    """Execute this workload in the workflow virtualenv and return its result."""
+def _run_with_stage_python(python, application, stage_name, stage_task_id, root):
+    """Execute this workload in the stage virtualenv and return its result."""
     env = dict(os.environ)
-    env["WORKFLOW_VENV_DELEGATED"] = "1"
+    env["STAGE_VENV_DELEGATED"] = "1"
     env["PYTHONPATH"] = root + os.pathsep + env.get("PYTHONPATH", "")
     completed = subprocess.run(
-        [python, "-m", "services.workflow_venv"],
+        [python, "-m", "services.stage_venv"],
         input=json.dumps({
             "application": application,
-            "workflow_name": workflow_name,
-            "run_id": run_id,
+            "stage_name": stage_name,
+            "stage_task_id": stage_task_id,
         }),
         text=True,
         capture_output=True,
@@ -52,10 +52,10 @@ def _run_with_workflow_python(python, application, workflow_name, run_id, root):
         env=env,
     )
     if completed.returncode != 0:
-        detail = (completed.stderr or completed.stdout or "workflow virtualenv failed").strip()
+        detail = (completed.stderr or completed.stdout or "stage virtualenv failed").strip()
         return {
             "application_id": application.get("application_id"),
-            "workflow": workflow_name,
+            "stage": stage_name,
             "initial_state": application.get("status"),
             "final_state": application.get("status"),
             "status": "failed",
@@ -64,8 +64,8 @@ def _run_with_workflow_python(python, application, workflow_name, run_id, root):
     return json.loads(completed.stdout)
 
 
-def _workflow_for_state(state):
-    """Find the workflow that consumes a given state from its input_states."""
+def _stage_for_state(state):
+    """Find the stage that consumes a given state from its input_states."""
     results = []
     for name, path in discover_stages().items():
         definition = parse_stage(path)
@@ -82,10 +82,10 @@ def _workflow_for_state(state):
     return results[0]
 
 
-def _get_provider(workflow_name):
-    """Load the appropriate LLM provider for the workflow's agent."""
+def _get_provider(stage_name):
+    """Load the appropriate LLM provider for the stage's agent."""
     definition = parse_stage(next(
-        path for name, path in discover_stages().items() if name == workflow_name
+        path for name, path in discover_stages().items() if name == stage_name
     ))
     agent = definition.get("agent")
     if agent in ("read-posting", "validate"):
@@ -95,13 +95,13 @@ def _get_provider(workflow_name):
     return load_provider()
 
 
-def _agent_worker(runtime, workflow_name, enriched_context, agent_provider):
+def _agent_worker(runtime, stage_name, enriched_context, agent_provider):
     """Worker function: invoke agent(s) on pre-enriched context.
 
     This runs in a worker thread. It does NOT touch the Application Service.
     """
     try:
-        agent_results = runtime.run_agent(workflow_name, enriched_context, agent_provider)
+        agent_results = runtime.run_agent(stage_name, enriched_context, agent_provider)
         return {"status": "ok", "agent_results": agent_results}
     except Exception as exc:
         return {"status": "error", "error": exc}
@@ -128,11 +128,11 @@ def run_one(
     registry,
     runtime,
     application,
-    workflow_name=None,
+    stage_name=None,
     agent_provider=None,
-    run_id=None,
+    stage_task_id=None,
 ):
-    """Run a single application through its consuming workflow.
+    """Run a single application through its consuming stage.
 
     The caller (main thread) handles all persistence reads and writes.
     Agent invocation is dispatched to a single worker thread.
@@ -140,54 +140,54 @@ def run_one(
     Args:
         persistence: ApplicationServiceClient instance.
         registry: WorkloadRegistry instance.
-        runtime: WorkflowRuntime instance.
+        runtime: StageExecutor instance.
         application: Dict with application_id, company, role, status.
-        workflow_name: Optional override; auto-detected from state if omitted.
+        stage_name: Optional override; auto-detected from state if omitted.
         agent_provider: LLM provider callable.
-        run_id: Run identifier for workload naming.
+        stage_task_id: Run identifier for workload naming.
 
     Returns:
-        Dict with application_id, workflow, initial_state, final_state, status.
+        Dict with application_id, stage, initial_state, final_state, status.
     """
     app_id = application["application_id"]
     company = application.get("company", "")
     role = application.get("role", "")
     initial_state = application["status"]
 
-    # Resolve workflow from state if not explicitly provided
-    if workflow_name is None:
-        workflow_name, definition = _workflow_for_state(initial_state)
-        if workflow_name is None:
+    # Resolve stage from state if not explicitly provided
+    if stage_name is None:
+        stage_name, definition = _stage_for_state(initial_state)
+        if stage_name is None:
             return {
                 "application_id": app_id,
-                "workflow": None,
+                "stage": None,
                 "initial_state": initial_state,
                 "final_state": initial_state,
                 "status": "skipped",
-                "reason": "no consuming workflow",
+                "reason": "no consuming stage",
             }
     else:
-        workflows = discover_stages()
-        if workflow_name not in workflows:
-            raise ValueError("unknown workflow: " + workflow_name)
-        definition = parse_stage(workflows[workflow_name])
+        stages = discover_stages()
+        if stage_name not in stages:
+            raise ValueError("unknown stage: " + stage_name)
+        definition = parse_stage(stages[stage_name])
 
-    if agent_provider is None and os.environ.get("WORKFLOW_VENV_DELEGATED") != "1":
-        from .workflow_venv import ROOT, ensure_workflow_python
-        python = ensure_workflow_python(workflow_name)
+    if agent_provider is None and os.environ.get("STAGE_VENV_DELEGATED") != "1":
+        from .stage_venv import ROOT, ensure_stage_python
+        python = ensure_stage_python(stage_name)
         if python and os.path.realpath(python) != os.path.realpath(sys.executable):
-            return _run_with_workflow_python(python, application, workflow_name, run_id, ROOT)
+            return _run_with_stage_python(python, application, stage_name, stage_task_id, ROOT)
 
     event_type = definition.get("trigger", {}).get("event_type")
     if event_type is None:
-        raise ValueError("workflow {} has no event type".format(workflow_name))
+        raise ValueError("stage {} has no event type".format(stage_name))
 
     # Resolve agent provider if not provided
     if agent_provider is None:
         agent = definition.get("agent")
-        agent_provider = _get_provider(workflow_name) if agent else None
+        agent_provider = _get_provider(stage_name) if agent else None
 
-    identity = run_id or "single-{}-{}".format(
+    identity = stage_task_id or "single-{}-{}".format(
         datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ"),
         app_id,
     )
@@ -210,7 +210,7 @@ def run_one(
         if "404" in str(exc):
             return {
                 "application_id": app_id,
-                "workflow": workflow_name,
+                "stage": stage_name,
                 "initial_state": initial_state,
                 "final_state": "unknown",
                 "status": "skipped",
@@ -222,7 +222,7 @@ def run_one(
     if current_state != initial_state:
         return {
             "application_id": app_id,
-            "workflow": workflow_name,
+            "stage": stage_name,
             "initial_state": initial_state,
             "final_state": current_state,
             "status": "skipped",
@@ -232,7 +232,7 @@ def run_one(
 
     # Enrich context from persistence (main thread only)
     enriched_context = runtime.prepare_context(
-        workflow_name, payload, agent_provider
+        stage_name, payload, agent_provider
     )
     enriched_context["workload_id"] = identity
 
@@ -244,18 +244,18 @@ def run_one(
         # --- Worker thread: stateless agent invocation ---
         if definition.get("agent"):
             agent_result = _agent_worker(
-                runtime, workflow_name, enriched_context, agent_provider
+                runtime, stage_name, enriched_context, agent_provider
             )
             if agent_result["status"] == "error":
                 error = agent_result["error"]
                 raise error if isinstance(error, BaseException) else RuntimeError(str(error))
             agent_results = agent_result["agent_results"]
         else:
-            # No agent (e.g., discover workflow) — agent_results is empty
+            # No agent (e.g., discover stage) — agent_results is empty
             agent_results = {}
 
         # --- Main thread: plan and execute persistence writes ---
-        operations = plan_persistence_writes(workflow_name, enriched_context, agent_results)
+        operations = plan_persistence_writes(stage_name, enriched_context, agent_results)
         execute_persistence_writes(operations, persistence, dry_run=False)
 
         registry.claim(workload_id)
@@ -264,7 +264,7 @@ def run_one(
         final_state = final.get("status") if isinstance(final, dict) else final.status
         return {
             "application_id": app_id,
-            "workflow": workflow_name,
+            "stage": stage_name,
             "initial_state": initial_state,
             "final_state": final_state,
             "status": "succeeded",
@@ -278,19 +278,19 @@ def run_one(
             # Workload was already completed or not in running state
             pass
         return _handle_failure(
-            persistence, app_id, workflow_name, initial_state, exc, started
+            persistence, app_id, stage_name, initial_state, exc, started
         )
 
 
-def _failure_note(workflow_name, error):
-    outcome, target = failure_outcome(workflow_name, error if isinstance(error, BaseException) else RuntimeError(str(error)))
+def _failure_note(stage_name, error):
+    outcome, target = failure_outcome(stage_name, error if isinstance(error, BaseException) else RuntimeError(str(error)))
     label = "System error" if outcome == "system_error" else outcome
     return outcome, target, label + ": " + str(error)
 
 
-def _handle_failure(persistence, app_id, workflow_name, initial_state, error, started):
+def _handle_failure(persistence, app_id, stage_name, initial_state, error, started):
     """Move the posting to the failure state declared by its blueprint."""
-    _outcome, target, note = _failure_note(workflow_name, error)
+    _outcome, target, note = _failure_note(stage_name, error)
     from .event_attempt import with_attempt
     bullets = with_attempt([note], getattr(error, "attempt", None))
     try:
@@ -298,11 +298,11 @@ def _handle_failure(persistence, app_id, workflow_name, initial_state, error, st
             app_id,
             target,
             {
-                "source": workflow_name + " workflow",
+                "source": stage_name + " stage",
                 "bullets": bullets,
                 "attempt": getattr(error, "attempt", None) or {},
             },
-            "workflow-failure-" + app_id,
+            "stage-failure-" + app_id,
         )
         final_state = target
     except Exception:
@@ -314,7 +314,7 @@ def _handle_failure(persistence, app_id, workflow_name, initial_state, error, st
 
     return {
         "application_id": app_id,
-        "workflow": workflow_name,
+        "stage": stage_name,
         "initial_state": initial_state,
         "final_state": final_state,
         "status": "failed",
@@ -325,14 +325,14 @@ def _handle_failure(persistence, app_id, workflow_name, initial_state, error, st
 
 def run_all(
     state,
-    workflow_name=None,
+    stage_name=None,
     workers=8,
     agent_provider=None,
     print_progress=True,
     application_id=None,
     limit=None,
 ):
-    """Run all applications in a state through their consuming workflow.
+    """Run all applications in a state through their consuming stage.
 
     Single-consumer architecture:
     - Main thread lists applications, enriches context, and executes writes.
@@ -341,7 +341,7 @@ def run_all(
 
     Args:
         state: Application state/queue name (e.g. "Bookmarked").
-        workflow_name: Optional workflow override.
+        stage_name: Optional stage override.
         workers: Number of parallel worker threads (default 8).
         agent_provider: Optional LLM provider; auto-loaded if omitted.
         print_progress: Print JSON progress events per item.
@@ -349,9 +349,9 @@ def run_all(
     Returns:
         List of result dicts, one per application.
     """
-    from application_service.workflow_execution import CHATGPT_WORKFLOWS
-    if agent_provider is None and (state in {'Bookmarked', 'Prepared'} or workflow_name in CHATGPT_WORKFLOWS):
-        raise ValueError('Validation and submission require ChatGPT native browser execution through MCP workflow task tools')
+    from application_service.stage_execution import CHATGPT_STAGES
+    if agent_provider is None and (state in {'Bookmarked', 'Prepared'} or stage_name in CHATGPT_STAGES):
+        raise ValueError('Validation and submission require ChatGPT native browser execution through MCP stage task tools')
     from .report_checkpoint import ReportCheckpoint
     from .runtime_config import load
     from application_service.storage_layout import workload_state_path
@@ -365,20 +365,20 @@ def run_all(
     runtime = runtime_from_environment(persistence_client=persistence)
     runtime.registry = registry
 
-    # Resolve workflow
-    if workflow_name is None:
-        workflow_name, definition = _workflow_for_state(state)
-        if workflow_name is None:
-            raise ValueError("no workflow consumes state: " + state)
+    # Resolve stage
+    if stage_name is None:
+        stage_name, definition = _stage_for_state(state)
+        if stage_name is None:
+            raise ValueError("no stage consumes state: " + state)
     else:
-        workflows = discover_stages()
-        if workflow_name not in workflows:
-            raise ValueError("unknown workflow: " + workflow_name)
-        definition = parse_stage(workflows[workflow_name])
+        stages = discover_stages()
+        if stage_name not in stages:
+            raise ValueError("unknown stage: " + stage_name)
+        definition = parse_stage(stages[stage_name])
 
     # --- Main thread: list applications ---
     if state not in definition.get("input_states", []):
-        raise ValueError("workflow does not consume requested state")
+        raise ValueError("stage does not consume requested state")
     applications = persistence.list_applications(status=state)
     if application_id is not None:
         applications = [a for a in applications if a["application_id"] == application_id]
@@ -403,19 +403,19 @@ def run_all(
     # Resolve agent provider
     if agent_provider is None:
         agent = definition.get("agent")
-        agent_provider = _get_provider(workflow_name) if agent else None
+        agent_provider = _get_provider(stage_name) if agent else None
 
-    run_id = datetime.now(timezone.utc).strftime("wf-%Y%m%dT%H%M%S%fZ")
+    stage_task_id = datetime.now(timezone.utc).strftime("wf-%Y%m%dT%H%M%S%fZ")
     report = {
-        "run_id": run_id,
+        "stage_task_id": stage_task_id,
         "started_at": datetime.now(timezone.utc).isoformat(),
         "state": state,
-        "workflow": workflow_name,
+        "stage": stage_name,
         "workers": workers,
         "initial_count": len(applications),
         "results": [],
     }
-    state_path = workload_state_path("workflow-run", run_id + ".json")
+    state_path = workload_state_path("stage-run", stage_task_id + ".json")
     checkpoint = ReportCheckpoint(persistence, state_path, report)
     print_lock = threading.Lock()
 
@@ -430,7 +430,7 @@ def run_all(
     checkpoint.save(force=True)
     emit({
         "activity": "run_started",
-        "workflow": workflow_name,
+        "stage": stage_name,
         "state": state,
         "count": len(applications),
         "workers": workers,
@@ -449,7 +449,7 @@ def run_all(
         try:
             if definition.get("agent"):
                 agent_result = _agent_worker(
-                    runtime, workflow_name, enriched_context, agent_provider
+                    runtime, stage_name, enriched_context, agent_provider
                 )
                 if agent_result["status"] == "error":
                     error = agent_result["error"]
@@ -459,7 +459,7 @@ def run_all(
                 agent_results = {}
 
             # Plan persistence writes (no execution yet)
-            operations = plan_persistence_writes(workflow_name, enriched_context, agent_results)
+            operations = plan_persistence_writes(stage_name, enriched_context, agent_results)
             return {
                 "application_id": app_id,
                 "company": company,
@@ -501,7 +501,7 @@ def run_all(
                     if "404" in str(exc):
                         emit({
                             "activity": "skipped",
-                            "workflow": workflow_name,
+                            "stage": stage_name,
                             "application_id": app_id,
                             "company": company,
                             "role": role,
@@ -509,7 +509,7 @@ def run_all(
                         })
                         report["results"].append({
                             "application_id": app_id,
-                            "workflow": workflow_name,
+                            "stage": stage_name,
                             "initial_state": initial_state,
                             "final_state": "unknown",
                             "status": "skipped",
@@ -521,7 +521,7 @@ def run_all(
                 if current_state != initial_state:
                     emit({
                         "activity": "skipped",
-                        "workflow": workflow_name,
+                        "stage": stage_name,
                         "application_id": app_id,
                         "company": company,
                         "role": role,
@@ -529,7 +529,7 @@ def run_all(
                     })
                     report["results"].append({
                         "application_id": app_id,
-                        "workflow": workflow_name,
+                        "stage": stage_name,
                         "initial_state": initial_state,
                         "final_state": current_state,
                         "status": "skipped",
@@ -546,9 +546,9 @@ def run_all(
                     payload["role"] = role
 
                 enriched_context = runtime.prepare_context(
-                    workflow_name, payload, agent_provider
+                    stage_name, payload, agent_provider
                 )
-                enriched_context["workload_id"] = run_id + ":" + workflow_name + ":" + app_id
+                enriched_context["workload_id"] = stage_task_id + ":" + stage_name + ":" + app_id
 
                 # Dispatch to worker thread via bounded queue
                 future = pool.submit(worker_task, (app_id, enriched_context, initial_state))
@@ -578,18 +578,18 @@ def run_all(
                     # --- Main thread: handle failure ---
                     error = worker_result.get("error", "unknown")
                     _with_bookmark_attempt(error, worker_result.get("attempt"))
-                    _outcome, target, note = _failure_note(workflow_name, error)
+                    _outcome, target, note = _failure_note(stage_name, error)
                     from .event_attempt import with_attempt
                     try:
                         persistence.transition(
                             app_id,
                             target,
                             {
-                                "source": workflow_name + " workflow",
+                                "source": stage_name + " stage",
                                 "bullets": with_attempt([note], getattr(error, "attempt", None)),
                                 "attempt": getattr(error, "attempt", None) or {},
                             },
-                            "workflow-failure-" + app_id,
+                            "stage-failure-" + app_id,
                         )
                         final_state = target
                     except Exception:
@@ -601,7 +601,7 @@ def run_all(
 
                     emit({
                         "activity": "error",
-                        "workflow": workflow_name,
+                        "stage": stage_name,
                         "application_id": app_id,
                         "company": company,
                         "role": role,
@@ -609,7 +609,7 @@ def run_all(
                     })
                     report["results"].append({
                         "application_id": app_id,
-                        "workflow": workflow_name,
+                        "stage": stage_name,
                         "initial_state": worker_result.get("initial_state"),
                         "final_state": final_state,
                         "status": "failed",
@@ -628,7 +628,7 @@ def run_all(
 
                     emit({
                         "activity": "finished",
-                        "workflow": workflow_name,
+                        "stage": stage_name,
                         "application_id": app_id,
                         "company": company,
                         "role": role,
@@ -638,7 +638,7 @@ def run_all(
                     })
                     report["results"].append({
                         "application_id": app_id,
-                        "workflow": workflow_name,
+                        "stage": stage_name,
                         "initial_state": worker_result.get("initial_state"),
                         "final_state": final_state,
                         "status": "succeeded",
@@ -652,7 +652,7 @@ def run_all(
                             app_id,
                             "Dead Letters Queue",
                             {
-                                "source": workflow_name + " workflow",
+                                "source": stage_name + " stage",
                                 "bullets": with_attempt(
                                     ["Persistence error: " + str(exc)], getattr(exc, "attempt", None)),
                                 "attempt": getattr(exc, "attempt", None) or {},
@@ -665,7 +665,7 @@ def run_all(
 
                     emit({
                         "activity": "error",
-                        "workflow": workflow_name,
+                        "stage": stage_name,
                         "application_id": app_id,
                         "company": company,
                         "role": role,
@@ -673,7 +673,7 @@ def run_all(
                     })
                     report["results"].append({
                         "application_id": app_id,
-                        "workflow": workflow_name,
+                        "stage": stage_name,
                         "initial_state": worker_result.get("initial_state"),
                         "final_state": final_state,
                         "status": "failed",
@@ -695,7 +695,7 @@ def run_all(
 
     emit({
         "activity": "run_complete",
-        "workflow": workflow_name,
+        "stage": stage_name,
         "processed": len(report["results"]),
         "succeeded": report["success_count"],
         "failed": report["failure_count"],

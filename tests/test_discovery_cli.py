@@ -9,4 +9,4 @@ def test_discovery_fixture_is_accepted(tmp_path, capsys):
         "discover",
         "--fixture", str(fixture),
     ]) == 0
-    assert "workflow" in capsys.readouterr().out
+    assert "stage" in capsys.readouterr().out

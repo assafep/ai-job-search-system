@@ -18,7 +18,7 @@ from .agent_runner import run as run_agent
 from .application_package import saved_package
 from .document_generator import generate_application_pdf
 from .ready_submission import ReadySubmission
-from .workload_effort import effort_for_workflow
+from .workload_effort import effort_for_stage
 
 
 def plain(value):
@@ -47,14 +47,14 @@ class PipelineAgents:
         self.discovery_provider = discovery_provider or provider
         self.submission = ReadySubmission(persistence, registry, submission_adapter, manage_state=False)
 
-    def invoke(self, name, context, workflow):
+    def invoke(self, name, context, stage):
         if name in ("read-posting", "validate"):
             from .worker_main import load_discovery_provider
             provider = load_discovery_provider()
         else:
             provider = self.provider
         if hasattr(provider, "with_reasoning_effort"):
-            provider = provider.with_reasoning_effort(effort_for_workflow(workflow))
+            provider = provider.with_reasoning_effort(effort_for_stage(stage))
         return run_agent(name, context, provider)
 
     def __call__(self, spec, application, workload_id, event=None):

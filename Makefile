@@ -29,9 +29,9 @@ test-agent:
 	@$(PYTHON) -m services.test_runner agent "$(AGENT)" --fixture "$(FIXTURE)" $(if $(OUTPUT),--output "$(OUTPUT)",)
 
 test-workload:
-	@test -n "$(WORKFLOW)" || (echo "usage: make test-workload WORKFLOW=prepare-interview FIXTURE=tests/fixtures/workloads/prepare-interview.json [AGENT_RESULTS=...]" && exit 2)
-	@test -n "$(FIXTURE)" || (echo "usage: make test-workload WORKFLOW=... FIXTURE=... [AGENT_RESULTS=...]" && exit 2)
-	@$(PYTHON) -m services.workload_runner "$(WORKFLOW)" --fixture "$(FIXTURE)" $(if $(AGENT_RESULTS),--agent-results "$(AGENT_RESULTS)",)
+	@test -n "$(STAGE)" || (echo "usage: make test-workload STAGE=prepare-interview FIXTURE=tests/fixtures/workloads/prepare-interview.json [AGENT_RESULTS=...]" && exit 2)
+	@test -n "$(FIXTURE)" || (echo "usage: make test-workload STAGE=... FIXTURE=... [AGENT_RESULTS=...]" && exit 2)
+	@$(PYTHON) -m services.workload_runner "$(STAGE)" --fixture "$(FIXTURE)" $(if $(AGENT_RESULTS),--agent-results "$(AGENT_RESULTS)",)
 
 journal-status:
 	@$(PYTHON) -m services.journal_cli status
@@ -83,7 +83,7 @@ dry-run-reconcile:
 		--fixture tests/fixtures/workloads/reconcile.json
 
 run-workload:
-	@$(PYTHON) -m services.workflow_runtime \
+	@$(PYTHON) -m services.stage_executor \
 		--workload-id "$(WORKLOAD_ID)" \
 		--agent-results "$(AGENT_RESULTS)"
 

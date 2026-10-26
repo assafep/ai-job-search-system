@@ -1,6 +1,6 @@
 """Persistent operational registries owned by the hosted Application Service.
 
-Construct only while holding the installation workflow-execution lock. Files in
+Construct only while holding the installation stage-execution lock. Files in
 /tmp and process-local dictionaries are never the authoritative hosted registry.
 """
 from dataclasses import asdict

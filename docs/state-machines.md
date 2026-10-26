@@ -80,12 +80,12 @@ Dead Letters Queue. These policy rules narrow the API transition graph.
 Journal completion/archive and duplicate removal are storage operations, not extra
 lifecycle states. Completed application snapshots remain separate from active queues.
 
-## Durable workflow requests
+## Durable stage requests
 
-Source: [`application_service/workflow_runs.py`](../application_service/workflow_runs.py).
+Source: [`application_service/stage_tasks.py`](../application_service/stage_tasks.py).
 These are execution requests from MCP/REST, not application statuses. A request
 can select a named stage and snapshot its eligible application IDs. Existing
-workflow API names remain unchanged.
+stage API names remain unchanged.
 
 ```mermaid
 stateDiagram-v2
@@ -110,9 +110,8 @@ changing its payload conflicts.
 
 Source: [`services/workload_registry.py`](../services/workload_registry.py).
 Each workload registry record tracks a task for a named stage, distinct from a
-whole execution request and from an application lifecycle state. The code and
-persisted fields retain `WorkloadRegistry`, `workload_id`, and `workflow` for
-compatibility; `workflow` identifies the stage for that task.
+whole execution request and from an application lifecycle state. A `WorkloadRegistry` entry has a `workload_id` and a `stage` identifying its
+processing definition. The durable API command has a separate `stage_task_id`.
 
 ```mermaid
 stateDiagram-v2
@@ -139,8 +138,8 @@ policy and submission reconciliation checks still apply.
 
 ## Native ChatGPT task lifecycle
 
-Source: [`chatgpt_workflows.py`](../application_service/chatgpt_workflows.py).
-These are tasks within one admitted workflow request, not application states.
+Source: [`chatgpt_tasks.py`](../application_service/chatgpt_tasks.py).
+These are tasks within one admitted stage request, not application states.
 
 ```mermaid
 stateDiagram-v2

@@ -1,8 +1,8 @@
-"""Tests for workflow outcome validation against the state machine."""
+"""Tests for stage outcome validation against the state machine."""
 
 import pytest
 from services.scout_reading import PostingReadFailure
-from services.workload_runner import failure_outcome, validate_workflow_outcomes
+from services.workload_runner import failure_outcome, validate_stage_outcomes
 
 
 def test_valid_discover():
@@ -14,7 +14,7 @@ def test_valid_discover():
             "system_error": "Dead Letters Queue",
         },
     }
-    validate_workflow_outcomes("discover", definition)
+    validate_stage_outcomes("discover", definition)
 
 
 def test_valid_read_posting():
@@ -26,7 +26,7 @@ def test_valid_read_posting():
             "system_error": "Dead Letters Queue",
         },
     }
-    validate_workflow_outcomes("bookmark-discovered", definition)
+    validate_stage_outcomes("bookmark-discovered", definition)
 
 
 def test_valid_validate():
@@ -39,7 +39,7 @@ def test_valid_validate():
             "system_error": "Dead Letters Queue",
         },
     }
-    validate_workflow_outcomes("validate-bookmarked", definition)
+    validate_stage_outcomes("validate-bookmarked", definition)
 
 
 def test_valid_prepare():
@@ -52,7 +52,7 @@ def test_valid_prepare():
             "system_error": "Dead Letters Queue",
         },
     }
-    validate_workflow_outcomes("prepare-validated", definition)
+    validate_stage_outcomes("prepare-validated", definition)
 
 
 def test_valid_submit_ready():
@@ -66,7 +66,7 @@ def test_valid_submit_ready():
             "system_error": "Dead Letters Queue",
         },
     }
-    validate_workflow_outcomes("submit-prepared", definition)
+    validate_stage_outcomes("submit-prepared", definition)
 
 
 def test_valid_handle_incoming_email():
@@ -81,7 +81,7 @@ def test_valid_handle_incoming_email():
             "system_error": "Dead Letters Queue",
         },
     }
-    validate_workflow_outcomes("handle-incoming-email", definition)
+    validate_stage_outcomes("handle-incoming-email", definition)
 
 
 def test_valid_prepare_interview():
@@ -93,12 +93,12 @@ def test_valid_prepare_interview():
             "system_error": "Dead Letters Queue",
         },
     }
-    validate_workflow_outcomes("prepare-interview", definition)
+    validate_stage_outcomes("prepare-interview", definition)
 
 
 def test_missing_outcomes_raises():
     with pytest.raises(ValueError, match="must declare outcomes"):
-        validate_workflow_outcomes("missing-outcomes", {"input_states": ["Bookmarked"]})
+        validate_stage_outcomes("missing-outcomes", {"input_states": ["Bookmarked"]})
 
 
 def test_invalid_target_state_raises():
@@ -107,7 +107,7 @@ def test_invalid_target_state_raises():
         "outcomes": {"accepted": "NonExistentState", "system_error": "Dead Letters Queue"},
     }
     with pytest.raises(ValueError, match="invalid state"):
-        validate_workflow_outcomes("bad-target", definition)
+        validate_stage_outcomes("bad-target", definition)
 
 
 def test_system_error_must_route_to_dead_letters():
@@ -116,7 +116,7 @@ def test_system_error_must_route_to_dead_letters():
         "outcomes": {"prepared": "Prepared", "system_error": "Manual Apply Required"},
     }
     with pytest.raises(ValueError, match="system_error must route to Dead Letters Queue"):
-        validate_workflow_outcomes("bad-system-error", definition)
+        validate_stage_outcomes("bad-system-error", definition)
 
 
 def test_invalid_transition_from_input_state_raises():
@@ -126,7 +126,7 @@ def test_invalid_transition_from_input_state_raises():
         "outcomes": {"accepted": "Applied", "system_error": "Dead Letters Queue"},
     }
     with pytest.raises(ValueError, match="not allowed from input state"):
-        validate_workflow_outcomes("bad-transition", definition)
+        validate_stage_outcomes("bad-transition", definition)
 
 
 def test_null_outcome_is_skipped_during_transition_check():
@@ -139,11 +139,11 @@ def test_null_outcome_is_skipped_during_transition_check():
             "system_error": "Dead Letters Queue",
         },
     }
-    validate_workflow_outcomes("null-outcome", definition)
+    validate_stage_outcomes("null-outcome", definition)
 
 
 def test_empty_input_states_skips_transition_validation():
-    # Workflows like reconcile have no single input queue
+    # Stages like reconcile have no single input queue
     definition = {
         "input_states": [],
         "outcomes": {
@@ -152,7 +152,7 @@ def test_empty_input_states_skips_transition_validation():
             "system_error": "Dead Letters Queue",
         },
     }
-    validate_workflow_outcomes("no-input-states", definition)
+    validate_stage_outcomes("no-input-states", definition)
 
 
 def test_multiple_input_states_all_validated():
@@ -165,7 +165,7 @@ def test_multiple_input_states_all_validated():
             "system_error": "Dead Letters Queue",
         },
     }
-    validate_workflow_outcomes("multi-state", definition)
+    validate_stage_outcomes("multi-state", definition)
 
 
 def test_runner_failure_uses_the_declared_outcome():
@@ -206,4 +206,4 @@ def test_multiple_input_states_one_invalid_raises():
         },
     }
     with pytest.raises(ValueError, match="not allowed from input state 'Rejected'"):
-        validate_workflow_outcomes("one-invalid-state", definition)
+        validate_stage_outcomes("one-invalid-state", definition)

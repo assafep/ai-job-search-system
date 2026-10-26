@@ -46,9 +46,9 @@ curl --fail http://localhost:8080/ready
 ```
 
 The Python-runtime Queue subscriber is not registered by this container.
-Provisioning rejects `workflow_execution.vercel_enabled=true` until that
+Provisioning rejects `stage_execution.vercel_enabled=true` until that
 subscriber is migrated. Do not directly deploy the container over a project
-with hosted queue execution enabled. The native ChatGPT workflows stay on
+with hosted queue execution enabled. The native ChatGPT stages stay on
 their existing host.
 
 Regenerate the lock deliberately after reviewing dependency updates:

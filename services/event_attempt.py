@@ -1,4 +1,4 @@
-"""One event layout for every workflow outcome."""
+"""One event layout for every stage outcome."""
 
 
 def attempt_lines(attempt=None):

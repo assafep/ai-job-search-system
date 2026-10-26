@@ -23,7 +23,7 @@ def timestamp():
 @dataclass
 class WorkloadRecord:
     workload_id: str
-    workflow: str
+    stage: str
     event: dict
     status: str = "queued"
     attempts: int = 0
@@ -62,7 +62,7 @@ class WorkloadRegistry:
         payload = {
             workload_id: {
                 "workload_id": record.workload_id,
-                "workflow": record.workflow,
+                "stage": record.stage,
                 "event": record.event,
                 "status": record.status,
                 "attempts": record.attempts,
@@ -82,10 +82,11 @@ class WorkloadRegistry:
     @synchronized
     def enqueue(self, envelope):
         workload_id = envelope["workload_id"]
+        name = envelope['stage']
         existing = self.records.get(workload_id)
         if existing:
             return existing
-        record = WorkloadRecord(workload_id, envelope["workflow"], envelope["event"])
+        record = WorkloadRecord(workload_id, name, envelope["event"])
         self.records[workload_id] = record
         self._persist()
         return record
@@ -200,7 +201,7 @@ class WorkloadRegistry:
             counts[record.status] += 1
             item = {
                 "workload_id": record.workload_id,
-                "workflow": record.workflow,
+                "stage": record.stage,
                 "status": record.status,
                 "attempts": record.attempts,
                 "error": record.error,

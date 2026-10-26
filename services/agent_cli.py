@@ -19,7 +19,7 @@ import sys
 from .agent_runner import run as run_agent, contract, AgentContractError
 from .test_runner import AGENTS
 from .runtime_config import load, OnboardingRequired
-from .workload_effort import effort_for_workflow
+from .workload_effort import effort_for_stage
 
 
 def build_context_from_url(url, agent_name):
@@ -54,7 +54,7 @@ def load_provider(agent_name):
         from .worker_main import load_discovery_provider
         provider = load_discovery_provider()
         if hasattr(provider, "with_reasoning_effort"):
-            provider = provider.with_reasoning_effort(effort_for_workflow("bookmark-discovered"))
+            provider = provider.with_reasoning_effort(effort_for_stage("bookmark-discovered"))
         return provider
     from .worker_main import load_provider
     return load_provider()

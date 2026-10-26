@@ -16,7 +16,7 @@ drive:
 make test-agent AGENT=interview-prep \
   FIXTURE=tests/fixtures/agents/interview-prep/input.json
 
-make test-workload WORKFLOW=prepare-interview \
+make test-workload STAGE=prepare-interview \
   FIXTURE=tests/fixtures/workloads/prepare-interview.json \
   AGENT_RESULTS=tests/fixtures/workloads/prepare-interview-agent-results.json
 ```
@@ -64,7 +64,7 @@ python3 -m services.workload_runner prepare-interview \
 
 The results file must be an object keyed by agent name, for example
 `{"interview-prep": {"briefing": "..."}}`.
-The agent name must be one of the agents used by the selected workflow.
+The agent name must be one of the agents used by the selected stage.
 
 Live persistence is opt-in and requires completed onboarding plus a running
 Application Service:
@@ -87,7 +87,7 @@ JSON results.
 
 Run `make verify PYTHON=.venv/bin/python` (or use another Python 3.10+ interpreter)
 for the complete local pass, including the test suite,
-compilation, all four workflow dry-runs, and Compose configuration validation.
+compilation, all four stage dry-tasks, and Compose configuration validation.
 
-Live workflow execution must call `services.runtime_config.load()` first; this
+Live stage execution must call `services.runtime_config.load()` first; this
 raises an onboarding error when `config/runtime.json` is absent or incomplete.

@@ -1,10 +1,10 @@
-"""Continuous worker boundary for queued workflow workloads."""
+"""Continuous worker boundary for queued stage workloads."""
 
 import time
 
 
 class WorkloadWorker:
-    """Drain a registry through ``WorkflowRuntime`` with an injected provider."""
+    """Drain a registry through ``StageExecutor`` with an injected provider."""
 
     def __init__(self, runtime, agent_provider):
         if not callable(agent_provider) and not callable(getattr(agent_provider, "generate", None)):
@@ -16,7 +16,7 @@ class WorkloadWorker:
         if limit is not None and (not isinstance(limit, int) or isinstance(limit, bool) or limit < 1):
             raise ValueError("limit must be a positive integer")
         records = [record for record in self.runtime.registry.pending()
-                   if record.workflow not in {'validate-bookmarked', 'submit-prepared'}]
+                   if record.stage not in {'validate-bookmarked', 'submit-prepared'}]
         if limit is not None:
             records = records[:limit]
         results = []
@@ -33,14 +33,14 @@ class WorkloadWorker:
                 })
         return results
 
-    def run_forever(self, poll_seconds=60, stop_event=None, poll_workflows=False):
+    def run_forever(self, poll_seconds=60, stop_event=None, poll_stages=False):
         """Poll until ``stop_event`` is set; suitable for a scheduler process."""
         if not isinstance(poll_seconds, (int, float)) or isinstance(poll_seconds, bool) or poll_seconds < 0:
             raise ValueError("poll_seconds must be a non-negative number")
-        from .polling import PollingSchedule, definitions, enqueue_queues, enqueue_scheduled, workflow_poll_seconds
+        from .polling import PollingSchedule, definitions, enqueue_queues, enqueue_scheduled, stage_poll_seconds
         schedule = PollingSchedule()
         while stop_event is None or not stop_event.is_set():
-            if poll_workflows:
+            if poll_stages:
                 for name, definition in definitions().items():
                     if stop_event is not None and stop_event.is_set():
                         break
@@ -53,7 +53,7 @@ class WorkloadWorker:
                         callback = lambda name=name: enqueue_scheduled(self.runtime.registry, names=[name])
                     else:
                         continue  # Gmail/Calendar event adapters admit external events separately.
-                    schedule.run(name, workflow_poll_seconds(name), callback)
+                    schedule.run(name, stage_poll_seconds(name), callback)
             self.run_once(stop_event=stop_event)
             if stop_event is None:
                 time.sleep(poll_seconds)

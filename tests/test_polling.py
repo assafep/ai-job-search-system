@@ -9,13 +9,13 @@ from services.polling import PollingSchedule, definitions, enqueue_scheduled, en
 from services.workload_registry import WorkloadRegistry
 
 
-def test_all_workflows_declare_polling_and_supported_cadence():
-    workflows = definitions()
-    assert len(workflows) == 11
-    assert all(d['trigger']['type'] == 'polling' for d in workflows.values())
-    assert workflows['prepare-interview']['trigger']['cadence'] == 'day'
-    assert all(d['trigger']['cadence'] == 'minute' for name, d in workflows.items() if name != 'prepare-interview')
-    assert workflows['complete-journal']['input_states'] == ['Rejected', 'Invalidated', 'Duplicate']
+def test_all_stages_declare_polling_and_supported_cadence():
+    stages = definitions()
+    assert len(stages) == 11
+    assert all(d['trigger']['type'] == 'polling' for d in stages.values())
+    assert stages['prepare-interview']['trigger']['cadence'] == 'day'
+    assert all(d['trigger']['cadence'] == 'minute' for name, d in stages.items() if name != 'prepare-interview')
+    assert stages['complete-journal']['input_states'] == ['Rejected', 'Invalidated', 'Duplicate']
 
 
 def test_shared_clock_limits_failed_polls_without_delaying_other_polls():
@@ -43,7 +43,7 @@ def test_minute_admission_shared_across_restart_and_does_not_backlog_busy_work(t
     restarted = WorkloadRegistry(storage_path=registry_path)
     second = enqueue_scheduled(restarted, now=now + timedelta(seconds=30))
     assert {e['workload_id'] for e in first} == {e['workload_id'] for e in second}
-    assert {e['workflow'] for e in first} == {'discover', *maintenance_names()}
+    assert {e['stage'] for e in first} == {'discover', *maintenance_names()}
     assert {e['workload_id'] for e in enqueue_scheduled(restarted, now=now + timedelta(minutes=1))} == {e['workload_id'] for e in first}
     for record in restarted.pending():
         restarted.claim(record.workload_id)
@@ -85,9 +85,9 @@ def test_orchestrator_runs_all_maintenance_without_recovering_active_workers(mon
     def run(self, workload_id, **kwargs):
         assert kwargs['recover_incomplete'] is False
         record = registry.claim(workload_id)
-        calls.append(record.workflow)
+        calls.append(record.stage)
         registry.complete(workload_id)
-    monkeypatch.setattr('services.workflow_runtime.WorkflowRuntime.run', run)
+    monkeypatch.setattr('services.stage_executor.StageExecutor.run', run)
     orchestrator = Orchestrator(repository, registry, None, str(config_path))
     try:
         orchestrator.tick()
@@ -102,12 +102,12 @@ def test_orchestrator_runs_all_maintenance_without_recovering_active_workers(mon
 
 def test_runtime_reconciliation_does_not_reset_live_work_when_recovery_disabled():
     from services.event_dispatcher import dispatch
-    from services.workflow_runtime import WorkflowRuntime
+    from services.stage_executor import StageExecutor
     registry = WorkloadRegistry()
     active = dispatch('validate_schedule', {'application_id': 'live'}, 'live', registry)
     registry.claim(active['workload_id'])
     reconciliation = dispatch('reconciliation_schedule', {}, 'daily', registry)
-    WorkflowRuntime(registry, MemoryRepository()).run(
+    StageExecutor(registry, MemoryRepository()).run(
         reconciliation['workload_id'], agent_results={}, recover_incomplete=False)
     assert registry.get(active['workload_id']).status == 'running'
 
@@ -117,7 +117,7 @@ def test_terminal_journal_api_owns_cleanup_and_is_safe_to_repeat(monkeypatch):
     from threading import Thread
     from application_service import main
     from services.application_service_client import ApplicationServiceClient
-    from services.completion_workflow import execute
+    from services.completion_stage import execute
 
     class Journal:
         def __init__(self):
@@ -177,19 +177,19 @@ def test_daemon_leaves_native_browser_work_pending_without_busy_loop(monkeypatch
             self.registry = registry
         def run(self, workload_id, agent_provider=None):
             record = registry.claim(workload_id)
-            calls.append(record.workflow)
+            calls.append(record.stage)
             target = {'bookmark-discovered': 'Bookmarked', 'validate-bookmarked': 'Validated',
-                      'prepare-validated': 'Prepared', 'submit-prepared': 'Applied'}.get(record.workflow)
+                      'prepare-validated': 'Prepared', 'submit-prepared': 'Applied'}.get(record.stage)
             if target:
                 app['status'] = target
             registry.complete(workload_id)
-            return {'workflow': record.workflow, 'status': 'succeeded'}
+            return {'stage': record.stage, 'status': 'succeeded'}
     monkeypatch.setattr('services.external_event_polling.poll', lambda *args, **kwargs: {})
     daemon = AutomationDaemon(registry, Runtime(), Client(), lambda *args: {})
     daemon.run_cycle()
     assert app['status'] == 'Bookmarked'
     assert set(calls) == set(maintenance_names()) | {'discover', 'bookmark-discovered'}
-    assert {record.workflow for record in registry.pending()} == {'validate-bookmarked'}
+    assert {record.stage for record in registry.pending()} == {'validate-bookmarked'}
     prior = list(calls)
     daemon.run_cycle()
     assert calls == prior

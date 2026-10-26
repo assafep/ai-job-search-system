@@ -34,10 +34,10 @@ def test_system_run_submits_ready_snapshot_and_persists_complete_report(monkeypa
         approval_registry = object()
         def run(self, workload_id, agent_provider=None):
             record = registry.claim(workload_id)
-            if record.workflow == 'prepare':
+            if record.stage == 'prepare':
                 repository.transition(fresh.application_id, 'Prepared')
             registry.complete(workload_id)
-            return {'workflow': record.workflow, 'status': 'succeeded'}
+            return {'stage': record.stage, 'status': 'succeeded'}
 
     class Daemon:
         def __init__(self, *args): pass

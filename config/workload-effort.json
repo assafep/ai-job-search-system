@@ -1,6 +1,6 @@
 {
   "default": "medium",
-  "workflows": {
+  "stages": {
     "bookmark-discovered": "medium",
     "validate-bookmarked": "medium",
     "prepare-validated": "medium",

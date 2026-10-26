@@ -41,13 +41,13 @@ setting and lives in `Applicant` under the Drive root.
 
 Applicant profile operations use `GET /profile` and `PUT /profile`; the Google
 backend maps them to `Applicant/applicant_profile.json` and migrates
-previously misnamed files in place during profile writes. Workflow runtimes
+previously misnamed files in place during profile writes. Stage runtimes
 read the canonical `application_defaults.calendly_url` and fall back to the
 legacy `personal.calendly_url` field when present.
 
-Internal workflow state belongs under
-`.ai-job-search-system/workloads-internal-state/<workflow>/`. The `submit`
-workflow uses `submission-receipts/` for current receipts and `receipt-history/`
+Internal stage state belongs under
+`.ai-job-search-system/workloads-internal-state/<stage>/`. The `submit`
+stage uses `submission-receipts/` for current receipts and `receipt-history/`
 for older duplicate files. `POST /storage/migrate-internal` moves existing
 root-level profile and receipt files in place; repeating it is safe.
 
@@ -64,7 +64,7 @@ other files. The request carries `name`, optional `mime_type`, and
 application journal. Retryable uploads should include an `idempotency_key`.
 Use the matching `GET` endpoints to list artifacts or retrieve their content.
 
-For workflow files that are not tied to an application, use `POST /files` with
+For stage files that are not tied to an application, use `POST /files` with
 a root-relative `path` such as `shared/research/company-notes.md`. Use
 `GET /files?path=...` to read it back. Paths cannot be absolute or escape the
 configured Drive root; nested directories are created as needed by the Google
@@ -102,12 +102,12 @@ locking. Writes require an explicit requested operation, and tools whose body
 supports `idempotency_key` require a non-empty key. Reuse that key on retries;
 a transport failure can leave the outcome uncertain, so read state before retrying.
 The default catalog includes state-changing and destructive domain operations.
-For ChatGPT workflow control, set `AJSS_MCP_TOOL_PROFILE=workflows` to expose only
-workflow execution and relevant state reads. The workflow tools enqueue durable
-requests; execution remains in existing Python runtimes. Workflow agents receive
+For ChatGPT stage control, set `AJSS_MCP_TOOL_PROFILE=stages` to expose only
+stage execution and relevant state reads. The stage tools enqueue durable
+requests; execution remains in existing Python runtimes. Stage agents receive
 no direct access to these tools or external systems.
 
-See [ChatGPT workflow execution](../deployment/chatgpt-workflows.md) for worker
+See [ChatGPT stage execution](../deployment/chatgpt-stages.md) for worker
 setup, tool arguments, reporting, and interrupted-run reconciliation.
 
 ### Remote authentication
@@ -204,7 +204,7 @@ preparation and the adapter's message send keep their existing boundaries.
 The `complete-journal` stage reads `GET /journal/terminal-items` to select only terminal items in
 the main journal, excluding archived applications. The existing single-item
 and terminal-cleanup endpoints remain available. MCP exposes `bulkUpdateItems`
-in the domain tool profile; the workflow-only profile continues to exclude
+in the domain tool profile; the stage-only profile continues to exclude
 direct state mutation tools.
 
 ## Native ChatGPT browser execution
@@ -214,10 +214,24 @@ Use. MCP provides task context, deployed contracts and saved packages; its resul
 tools validate and persist observations. The service never launches a replacement
 browser or model for those tasks. `beginChatGPTSubmission` writes the submission
 intent before the final click, and replay does not authorize another click.
-See [the tool protocol and interruption rules](../deployment/chatgpt-workflows.md).
+See [the tool protocol and interruption rules](../deployment/chatgpt-stages.md).
 
 New Drive files can use the existing app-scoped owner login for creation and
 placement, while the service account reads/updates them through the shared
 directory. The hybrid backend durably allocates file IDs before creating them,
 preventing duplicate files after a lost create response. This does not request
 broader OAuth scopes. Existing files retain their IDs on replacement.
+
+## Stage tasks and application state
+
+`GET /stages` lists processing definitions. `POST /stage-tasks` accepts `stage`,
+`idempotency_key` and optional `application_id` or `limit`. The response exposes
+`stage_task_id`. `GET /stage-tasks` returns `tasks` and `next_cursor`, with status
+and stage filters. The task-specific routes handle claims, browser observations,
+reports and reconciliation. `openapi.yaml` defines the HTTP and MCP contract.
+
+The request registry in `installation_resources.stage_tasks` stores execution
+commands, not in-progress application records. Applications stay in the Google
+Docs journal until completion. PostgreSQL also holds installation metadata and
+completed application archives. Do not confuse a command's status or scope with
+an application's lifecycle state.

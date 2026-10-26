@@ -37,14 +37,14 @@ MAIL_SIGNAL = re.compile(
     re.I)
 
 
-def poll(persistence, registry, source=None, complete=None, workflows=None):
+def poll(persistence, registry, source=None, complete=None, stages=None):
     source = source or GoogleEventSource()
     applications = [a for a in persistence.list_applications() if a['status'] in MAIL_STATUSES]
     reports = {}
-    for kind, workflow in [('gmail', 'handle-incoming-email'), ('calendar', 'prepare-interview')]:
-        if workflows is not None and workflow not in workflows:
+    for kind, stage in [('gmail', 'handle-incoming-email'), ('calendar', 'prepare-interview')]:
+        if stages is not None and stage not in stages:
             continue
-        report = {'source': kind, 'workflow': workflow, 'observed_at': datetime.now(timezone.utc).isoformat(),
+        report = {'source': kind, 'stage': stage, 'observed_at': datetime.now(timezone.utc).isoformat(),
                   'scanned': 0, 'queued': 0, 'already_known': 0, 'unmatched_or_ambiguous': 0}
         try:
             values, truncated = source.gmail([a['company'] for a in applications]) if kind == 'gmail' else source.calendar()
@@ -73,9 +73,9 @@ def poll(persistence, registry, source=None, complete=None, workflows=None):
                 report['completed'] = len(scan_completions(values, applications, complete))
         except GoogleEventError as error:
             report.update(status='blocked', http_status=error.status, reason=error.reason, required_scope=SCOPES[kind])
-        reports[workflow] = report
+        reports[stage] = report
         content = json.dumps(report).encode()
-        persistence.store_file(workload_state_path(workflow, 'event-polling/latest.json'), content, 'application/json',
+        persistence.store_file(workload_state_path(stage, 'event-polling/latest.json'), content, 'application/json',
                                'event-poll-' + hashlib.sha256(content).hexdigest())
     return reports
 

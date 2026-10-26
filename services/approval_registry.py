@@ -1,6 +1,6 @@
 """Durable bookkeeping for human approval requests.
 
-Approval records are operational workflow state, not application state. They
+Approval records are operational stage state, not application state. They
 are kept separate from the Interviews Journal and never execute the approved
 external action themselves.
 """

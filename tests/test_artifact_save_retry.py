@@ -69,7 +69,7 @@ def test_dropped_artifact_connection_retries_without_dead_lettering(tmp_path):
     }
     registry.enqueue({
         "workload_id": "pipeline-bookmark-1",
-        "workflow": "pipeline-bookmark",
+        "stage": "pipeline-bookmark",
         "event": {
             "event_id": "pipeline-bookmark-1",
             "event_type": "pipeline_item",

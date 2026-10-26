@@ -99,10 +99,10 @@ def test_application_preflight_checks_readiness_authentication_and_execution_own
     runner_control.check_application(container)
     assert [request.full_url for request in requests] == [
         'https://ajss.example/ready', 'https://ajss.example/journal/queues',
-        'https://ajss.example/workflows/readiness']
+        'https://ajss.example/stages/readiness']
     assert all(request.get_header('Authorization') == 'Bearer private-token' for request in requests)
     cloud_enabled[0] = True
-    with pytest.raises(runner_control.ProvisioningFailure, match='Hosted workflows'):
+    with pytest.raises(runner_control.ProvisioningFailure, match='Hosted stages'):
         runner_control.check_application(container)
 
 

@@ -1,4 +1,4 @@
-"""Build stable item keys and propagate partial failures to workflow bookkeeping."""
+"""Build stable item keys and propagate partial failures to stage bookkeeping."""
 import hashlib
 import json
 

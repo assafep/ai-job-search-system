@@ -27,7 +27,7 @@ def test_read_posting_saves_posting_artifact(monkeypatch):
 
 @pytest.mark.parametrize("portable", [False, True])
 def test_preparation_uses_the_exact_scout_content_without_network(monkeypatch, candidate_profile, portable):
-    from services.workflow_runtime import WorkflowRuntime
+    from services.stage_executor import StageExecutor
     from services.workload_registry import WorkloadRegistry
     from services.event_dispatcher import dispatch
     repository = MemoryRepository()
@@ -85,7 +85,7 @@ def test_preparation_uses_the_exact_scout_content_without_network(monkeypatch, c
         assert 'source_resume_base64' not in context
         return {'cover_letter': 'Dear Acme Hiring Team,\n\nI build reliable backends.', 'proposed_action': 'Proceed'}
 
-    outcome = WorkflowRuntime(registry, client).run(envelope['workload_id'], agent_provider=provider)
+    outcome = StageExecutor(registry, client).run(envelope['workload_id'], agent_provider=provider)
     assert outcome['status'] == 'succeeded'
     assert app.status == 'Prepared'
     artifacts = repository.list_artifacts(app.application_id)

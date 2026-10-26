@@ -183,7 +183,7 @@ class RunnerRelease:
     application_url: str
     application_token: SecretRef
     durable_state_location: str
-    enabled_workflows: Tuple[str, ...]
+    enabled_stages: Tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -243,7 +243,7 @@ class LifecycleHooks(Protocol):
     def provision_runner_host(self, ctx: TaskContext, spec: HostSpec) -> TaskResult[HostTarget]:
         """Ensure a process/container host; require execution_model='process'.
 
-        Runner hosting is independent of the application API provider. Workflow
+        Runner hosting is independent of the application API provider. Stage
         instances call that API over HTTP.
         """
         ...

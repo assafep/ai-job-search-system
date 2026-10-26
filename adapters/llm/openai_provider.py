@@ -1,4 +1,4 @@
-"""Small OpenAI Responses API adapter for stateless workflow agents.
+"""Small OpenAI Responses API adapter for stateless stage agents.
 
 The adapter deliberately receives only prompt text and serialized context. It
 does not receive persistence clients or any other external-system handles.

@@ -1,7 +1,7 @@
 # Job-board adapters
 
 Read-only discovery adapters for job sources. Submission remains behind the
-application workflow and approval policy.
+application stage and approval policy.
 
 ## Greenhouse
 

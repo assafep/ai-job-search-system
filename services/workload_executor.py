@@ -1,7 +1,7 @@
 """Translate validated agent decisions into Application Service operations.
 
 This module is deliberately separate from agents. It contains the only
-workflow-side logic that turns an agent result into a state mutation, and it
+stage-side logic that turns an agent result into a state mutation, and it
 can be run in dry-run mode for test drives.
 """
 
@@ -119,10 +119,10 @@ def _normalize_company_name(posting: dict) -> str:
     return company
 
 
-def plan_persistence_writes(workflow_name, context, agent_results):
+def plan_persistence_writes(stage_name, context, agent_results):
     """Return explicit persistence operations without executing them."""
     operations = []
-    if workflow_name == "prepare-interview":
+    if stage_name == "prepare-interview":
         result = agent_results.get("interview-prep")
         if result is not None:
             _validate_agent_result("interview-prep", result)
@@ -153,7 +153,7 @@ def plan_persistence_writes(workflow_name, context, agent_results):
                 },
                 "idempotency_key": _idempotency_key(context, "interview-briefing"),
             })
-    elif workflow_name == "handle-incoming-email":
+    elif stage_name == "handle-incoming-email":
         result = agent_results.get("correspondence")
         if result is not None:
             _validate_agent_result("correspondence", result)
@@ -209,8 +209,8 @@ def plan_persistence_writes(workflow_name, context, agent_results):
                     "data": {"source": "recruitment correspondence", "intent": result["intent"]},
                     "idempotency_key": _idempotency_key(context, "correspondence-state"),
                 })
-    elif workflow_name == "discover":
-        # Discover workflow: no agent, just creates applications in Discovered state
+    elif stage_name == "discover":
+        # Discover stage: no agent, just creates applications in Discovered state
         # from job board sources. Filter by location to match applicant preferences.
         applicant_profile = context.get("applicant_profile") or {}
         preferred_countries = [
@@ -248,7 +248,7 @@ def plan_persistence_writes(workflow_name, context, agent_results):
                 "idempotency_key": _idempotency_key(
                     {"workload_id": posting_url}, "discovered-url"),
             })
-    elif workflow_name == "bookmark-discovered":
+    elif stage_name == "bookmark-discovered":
         # Canonical bookmarking only queues the link. Native ChatGPT validation
         # owns website reading. Captured legacy read-posting results remain
         # supported for replay and isolated contract tests.
@@ -258,7 +258,7 @@ def plan_persistence_writes(workflow_name, context, agent_results):
                 raise ValueError('bookmarking requires application_id')
             operations.append({
                 'operation': 'transition', 'application_id': context['application_id'], 'target': 'Bookmarked',
-                'data': {'source': 'bookmark workflow', 'bullets': [
+                'data': {'source': 'bookmark stage', 'bullets': [
                     'Bookmarked the discovered link. ChatGPT native browser will read and validate the role description.']},
                 'idempotency_key': _idempotency_key(context, 'bookmark-link'),
             })
@@ -308,7 +308,7 @@ def plan_persistence_writes(workflow_name, context, agent_results):
                 "idempotency_key": _idempotency_key(
                     {"workload_id": posting_url}, "read-to-bookmarked"),
             })
-    elif workflow_name == "validate-bookmarked":
+    elif stage_name == "validate-bookmarked":
         # Validate saved posting content against applicant profile
         result = agent_results.get("validate")
         if result is not None:
@@ -349,7 +349,7 @@ def plan_persistence_writes(workflow_name, context, agent_results):
                     "reason": "invalidated",
                     "idempotency_key": "invalidate-complete-" + application_id,
                 })
-    elif workflow_name == "prepare-validated":
+    elif stage_name == "prepare-validated":
         result = agent_results.get("application")
         if result is not None:
             _validate_agent_result("application", result)
@@ -436,11 +436,11 @@ def plan_persistence_writes(workflow_name, context, agent_results):
                     }
                     submission_operation.update(target)
                     operations.append(submission_operation)
-    elif workflow_name == "reconcile":
-        # Registry recovery is performed by WorkflowRuntime. If the
+    elif stage_name == "reconcile":
+        # Registry recovery is performed by StageExecutor. If the
         # reconciliation event is associated with an application, persist the
         # external-status observation through the same API boundary as every
-        # other workflow. A scheduled reconciliation with no application
+        # other stage. A scheduled reconciliation with no application
         # context remains a valid no-op after registry recovery.
         application_id = context.get("application_id")
         if application_id:
@@ -457,7 +457,7 @@ def plan_persistence_writes(workflow_name, context, agent_results):
                 "operation": "append_event",
                 "application_id": application_id,
                 "event_type": "reconciliation_completed",
-                "data": {"bullets": _with_attempt(bullets, result.get("attempt") if isinstance(result, dict) else None), "source": "reconciliation workflow"},
+                "data": {"bullets": _with_attempt(bullets, result.get("attempt") if isinstance(result, dict) else None), "source": "reconciliation stage"},
                 "idempotency_key": _idempotency_key(context, "reconciliation-event"),
             })
             target = result.get("target_status")
@@ -466,7 +466,7 @@ def plan_persistence_writes(workflow_name, context, agent_results):
                     "operation": "transition",
                     "application_id": application_id,
                     "target": target,
-                    "data": {"source": "reconciliation workflow"},
+                    "data": {"source": "reconciliation stage"},
                     "idempotency_key": _idempotency_key(context, "reconciliation-state"),
                 })
     return operations

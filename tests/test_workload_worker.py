@@ -1,6 +1,6 @@
 from services.event_dispatcher import dispatch
 from services.workload_registry import WorkloadRegistry
-from services.workflow_runtime import WorkflowRuntime
+from services.stage_executor import StageExecutor
 from services.workload_worker import WorkloadWorker
 
 
@@ -33,7 +33,7 @@ def test_worker_drains_pending_workload_with_agent_provider():
             return {"event_id": "event-1"}
 
     worker = WorkloadWorker(
-        WorkflowRuntime(registry, Client()),
+        StageExecutor(registry, Client()),
         lambda prompt, context: {"briefing": "Discuss reliability."},
     )
     results = worker.run_once()
@@ -48,7 +48,7 @@ def test_worker_reports_provider_failure_and_keeps_registry_failure_state():
         "calendar_event", {"application_id": "app-1"}, "worker-calendar-failure-1"
     ))
     worker = WorkloadWorker(
-        WorkflowRuntime(registry, object()),
+        StageExecutor(registry, object()),
         lambda prompt, context: {"invalid": "result"},
     )
 
@@ -81,8 +81,8 @@ def test_shutdown_finishes_current_item_and_leaves_next_unclaimed():
     from threading import Event
     stop = Event()
     seen = []
-    records = [SimpleNamespace(workload_id='first', workflow='discover'),
-               SimpleNamespace(workload_id='next', workflow='discover')]
+    records = [SimpleNamespace(workload_id='first', stage='discover'),
+               SimpleNamespace(workload_id='next', stage='discover')]
     class Runtime:
         registry = SimpleNamespace(pending=lambda: records)
         def run(self, workload_id, **kwargs):
@@ -94,9 +94,9 @@ def test_shutdown_finishes_current_item_and_leaves_next_unclaimed():
     assert seen == ['first']
 
 
-def test_cli_worker_leaves_native_browser_workflows_unclaimed():
+def test_cli_worker_leaves_native_browser_stages_unclaimed():
     from types import SimpleNamespace
-    records = [SimpleNamespace(workload_id=name, workflow=name)
+    records = [SimpleNamespace(workload_id=name, stage=name)
                for name in ('validate-bookmarked', 'submit-prepared', 'discover')]
     seen = []
     runtime = SimpleNamespace(registry=SimpleNamespace(pending=lambda: records),
@@ -105,7 +105,7 @@ def test_cli_worker_leaves_native_browser_workflows_unclaimed():
     assert seen == ['discover']
 
 
-def test_automatic_polling_respects_workflow_host_and_cadence(monkeypatch):
+def test_automatic_polling_respects_stage_host_and_cadence(monkeypatch):
     from threading import Event
     from types import SimpleNamespace
     from services import polling
@@ -114,7 +114,7 @@ def test_automatic_polling_respects_workflow_host_and_cadence(monkeypatch):
     specs = {'discover': 'scheduled', 'prepare-validated': 'queue',
              'validate-bookmarked': 'queue', 'submit-prepared': 'queue', 'prepare-interview': 'external'}
     monkeypatch.setattr(polling, 'definitions', lambda: {name: {'trigger': {'poll_kind': kind}} for name, kind in specs.items()})
-    monkeypatch.setattr(polling, 'workflow_poll_seconds', lambda name: 60)
+    monkeypatch.setattr(polling, 'stage_poll_seconds', lambda name: 60)
     monkeypatch.setattr(polling, 'enqueue_scheduled', lambda registry, names: admitted.extend(names))
     monkeypatch.setattr(polling, 'enqueue_queues', lambda client, registry, names: admitted.extend(names))
     runtime = SimpleNamespace(persistence_client=object(), registry=object())
@@ -125,5 +125,5 @@ def test_automatic_polling_respects_workflow_host_and_cadence(monkeypatch):
         if len(ticks) == 2:
             stop.set()
     monkeypatch.setattr(worker, 'run_once', run_once)
-    worker.run_forever(0, stop_event=stop, poll_workflows=True)
+    worker.run_forever(0, stop_event=stop, poll_stages=True)
     assert admitted == ['discover', 'prepare-validated']

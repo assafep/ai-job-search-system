@@ -55,7 +55,7 @@ def test_application_title_and_event_shape_match_journal():
     ], "tab-1")
     assert events[0]["date"] == "2026-09-22"
     assert events[0]["bullets"] == ["Applied through https://example.test/job"]
-    assert event_text("2026-10-12", ["Added by workflow"])
+    assert event_text("2026-10-12", ["Added by stage"])
 
 
 def test_application_title_accepts_asymmetric_separator_spacing():
@@ -90,8 +90,8 @@ def test_parse_events_recovers_date_attached_to_previous_bullet():
 
 
 def test_event_text_separates_events_without_an_empty_bullet():
-    assert event_text("2026-10-12", ["Added by workflow"]) == (
-        "2026-10-12\n\nAdded by workflow\n\n"
+    assert event_text("2026-10-12", ["Added by stage"]) == (
+        "2026-10-12\n\nAdded by stage\n\n"
     )
 
 

@@ -18,7 +18,7 @@ from .application_service_client import ApplicationServiceClient
 from .ready_submission import ReadySubmission
 from .report_checkpoint import ReportCheckpoint
 from .runtime_config import load
-from .workflow_runtime import runtime_from_environment
+from .stage_executor import runtime_from_environment
 from .workload_registry import registry_from_environment
 
 
@@ -28,32 +28,32 @@ def emit(value):
 
 def run(persistence, registry, runtime, agent_provider):
     started = datetime.now(timezone.utc).isoformat()
-    run_id = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
+    stage_task_id = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
     initial = persistence.list_applications(status='Prepared') or []
     outcomes = []
-    report = {'run_id': run_id, 'started_at': started,
+    report = {'stage_task_id': stage_task_id, 'started_at': started,
               'initial_ready_applications': initial, 'workload_results': outcomes}
-    state_path = workload_state_path('system-run', run_id + '.json')
+    state_path = workload_state_path('system-run', stage_task_id + '.json')
     checkpoint = ReportCheckpoint(persistence, state_path, report)
     checkpoint.save(force=True)
-    emit({'run_id': run_id, 'initial_ready_count': len(initial)})
+    emit({'stage_task_id': stage_task_id, 'initial_ready_count': len(initial)})
     daemon = AutomationDaemon(registry, runtime, persistence, agent_provider)
     submissions = ReadySubmission(persistence, registry)
     # Process the original queue first, even when unrelated generation fails.
     for application in initial:
         app_id = application['application_id']
-        emit({'workflow': 'submit-prepared', 'application_id': app_id, 'activity': 'starting'})
+        emit({'stage': 'submit-prepared', 'application_id': app_id, 'activity': 'starting'})
         try:
             result = submissions.run_one(app_id)
-            outcomes.append({'workflow': 'submit-prepared', 'application_id': app_id, 'result': result})
+            outcomes.append({'stage': 'submit-prepared', 'application_id': app_id, 'result': result})
         except Exception as exc:
-            outcomes.append({'workflow': 'submit-prepared', 'application_id': app_id, 'error': str(exc)})
+            outcomes.append({'stage': 'submit-prepared', 'application_id': app_id, 'error': str(exc)})
         emit(outcomes[-1])
         checkpoint.save()
 
     scheduled = enqueue_scheduled(registry, names=maintenance_names())
     # Recovery precedes new work; minute-bucket identity is shared with the daemon.
-    reconciliation = next(item for item in scheduled if item['workflow'] == 'reconcile')
+    reconciliation = next(item for item in scheduled if item['stage'] == 'reconcile')
     if registry.get(reconciliation['workload_id']).status in {'queued', 'failed'}:
         outcomes.append(runtime.run(reconciliation['workload_id'], agent_provider=agent_provider))
     from .external_event_polling import poll
@@ -70,11 +70,11 @@ def run(persistence, registry, runtime, agent_provider):
             if record.workload_id in attempted:
                 continue
             attempted.add(record.workload_id)
-            emit({'workflow': record.workflow, 'workload_id': record.workload_id, 'activity': 'starting'})
+            emit({'stage': record.stage, 'workload_id': record.workload_id, 'activity': 'starting'})
             try:
                 result = runtime.run(record.workload_id, agent_provider=agent_provider)
             except Exception as exc:
-                result = {'workflow': record.workflow, 'workload_id': record.workload_id,
+                result = {'stage': record.stage, 'workload_id': record.workload_id,
                           'status': 'failed', 'error': str(exc)}
             outcomes.append(result)
             emit(result)
@@ -90,10 +90,10 @@ def run(persistence, registry, runtime, agent_provider):
     drain()
     report['finished_at'] = datetime.now(timezone.utc).isoformat()
     report['initial_ready_final_states'] = [persistence.get_application(a['application_id']) for a in initial]
-    report['initial_ready_processed'] = len([r for r in outcomes if r.get('workflow') == 'submit-prepared'
+    report['initial_ready_processed'] = len([r for r in outcomes if r.get('stage') == 'submit-prepared'
                                             and r.get('application_id') in {a['application_id'] for a in initial}])
     report['final_application_counts'] = dict(Counter(a['status'] for a in persistence.list_applications()))
-    report['workload_counts'] = dict(Counter(r.get('workflow', 'unknown') for r in outcomes))
+    report['workload_counts'] = dict(Counter(r.get('stage', 'unknown') for r in outcomes))
     report['all_live_integrations_executed'] = all(
         item['status'] == 'ok' and not item.get('truncated') for item in report['external_event_polling'].values())
     report['registry'] = registry.report()

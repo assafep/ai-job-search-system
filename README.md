@@ -1,14 +1,14 @@
 # Job Search Automation
 
 This project implements an automated job-search system with time-driven polling
-workflows. The workflows are autonomous, and their agents are
+stages. The stages are autonomous, and their agents are
 stateless and side-effect free. A workload instance gathers context, asks an
 agent for a structured decision, and applies the decision through the
 Application Service.
 
 ## Overview
 
-The system polls queues and external sources to run these workflow groups:
+The system polls queues and external sources to run these stage groups:
 
 1. **Job discovery and bookmarking** — scheduled scans save postings as `Discovered`. Bookmarking queues their links as `Bookmarked`; ChatGPT reads the websites during validation.
 2. **Validation in ChatGPT** — open each bookmarked website in ChatGPT’s native browser, extract the role description, and compare it with the candidate’s experience to confirm a strong match. Matching postings move to `Validated` before preparation.
@@ -22,22 +22,22 @@ Each application follows this lifecycle:
 Discovered → Bookmarked → Validated → Prepared → Applied → Interviewing → Offer / Rejected
 ```
 
-All application-state mutations go through the Application Service; workflow agents never touch external systems directly. The current persistence implementation records state changes in a Google Docs journal. See [Architecture](#architecture) for the target component model.
+All application-state mutations go through the Application Service; stage agents never touch external systems directly. The current persistence implementation records state changes in a Google Docs journal. See [Architecture](#architecture) for the target component model.
 
 Automatic interview preparation polls Calendar once every 24 hours by default
-(`prepare-interview`, `cadence: day`). Other workflows retain minute polling.
+(`prepare-interview`, `cadence: day`). Other stages retain minute polling.
 The continuous scheduler checks due work on its shared 60-second clock;
 `poll_kind` distinguishes state queues, external sources, and scheduled checks.
 Set `pipelines.interview.event_poll_seconds` in `config/pipelines.json` to override
 the daily default (86400 seconds). The first poll runs when the scheduler starts;
 its timer resets on scheduler restart. This is an elapsed interval, not a fixed
-local time of day. Explicit CLI and ChatGPT workflow requests still run on demand.
+local time of day. Explicit CLI and ChatGPT stage requests still run on demand.
 
 The continuous orchestrator admits work only when a thread is free in its shared pool and a
-workflow has an available configured worker. It never queues tasks behind a
+stage has an available configured worker. It never queues tasks behind a
 full pool. Running work is harvested between polls, but newly freed slots wait
 until the next minute. Email, calendar, and maintenance checks use that pool too.
-The legacy daemon's continuous mode delegates to this same orchestrator.
+The daemon's continuous mode delegates to this same orchestrator.
 
 Discovery counts **all tabs in the main journal**, including state and research
 tabs. Its maximum new postings for that poll is `max(0, 100 - tab_count)`. That
@@ -65,8 +65,8 @@ stateless and application-state writes remain behind that API.
 
 Once configured, you can:
 
-- **Process Discovered queue** (bookmark workflow): `python3 -m services.run_single Discovered`
-- **Validate Bookmarked / submit Prepared**: use the AJSS MCP workflow tools with ChatGPT native Browser/Computer Use ([guide](deployment/chatgpt-workflows.md)).
+- **Process Discovered queue** (bookmark stage): `python3 -m services.run_single Discovered`
+- **Validate Bookmarked / submit Prepared**: use the AJSS MCP stage tools with ChatGPT native Browser/Computer Use ([guide](deployment/chatgpt-stages.md)).
 - **Run continuously**: `python3 -m services.orchestrator run`
 - **Monitor queues**: `python3 -m services.run --monitor`
 
@@ -78,7 +78,7 @@ The Application Service exposes **`<service-url>/mcp`** over
 Streamable HTTP. Remote MCP clients can connect with OAuth; the owner authorizes
 on the AJSS consent page using the existing service token. The tools mirror the
 OpenAPI domain operations and include reads and writes. Start with the read-only
-`journalQueueCounts` tool. For validation and submission, ChatGPT uses its own native browser through workflow-specific MCP task tools; MCP does not launch a different browser. The other nine workflows execute on the configured workflow runner. Check `listWorkflows` and `getWorkflowExecutionReadiness` for the live host and prerequisites.
+`journalQueueCounts` tool. For validation and submission, ChatGPT uses its own native browser through stage-specific MCP task tools; MCP does not launch a different browser. The other nine stages execute on the configured stage runner. Check `listStages` and `getStageExecutionReadiness` for the live host and prerequisites.
 
 `./deployment/ctl.sh chatgpt` verifies the endpoint and generates private
 connection files. `./deployment/ctl.sh codex` registers the local stdio launcher
@@ -90,15 +90,15 @@ for connection commands and provisioning behavior.
 
 ### Queue runners
 
-The supported browser-workflow entry point is [the ChatGPT MCP task protocol](deployment/chatgpt-workflows.md). Validation and submission must use ChatGPT native Browser/Computer Use. The local utilities below are legacy compatibility/debugging tools for the remaining workflows; they do not substitute for native ChatGPT website execution.
+The supported browser-stage entry point is [the ChatGPT MCP task protocol](deployment/chatgpt-stages.md). Validation and submission must use ChatGPT native Browser/Computer Use. The local utilities below are diagnostic tools for non-browser stages; they do not substitute for native ChatGPT website execution.
 
-**Bookmark workflow** — `python3 -m services.run_single Discovered` processes one position from the `Discovered` queue through the bookmark workflow. Add `--all` to process all positions. For a specific application: `--application-id <id>`. To read a posting URL without any workflow: `python3 -m services.agent_cli read-posting --url https://...`.
+**Bookmark stage** — `python3 -m services.run_single Discovered` processes one position from the `Discovered` queue through the bookmark stage. Add `--all` to process all positions. For a specific application: `--application-id <id>`. To read a posting URL without any stage: `python3 -m services.agent_cli read-posting --url https://...`.
 
-The canonical bookmark workflow only queues the link as Bookmarked. ChatGPT validation opens the website, extracts the complete posting and saves it as a `Job Posting - Company - Role.json` artifact through the Application Service. Preparation reads that artifact; missing or mismatched content stops preparation rather than re-fetching.
+The canonical bookmark stage only queues the link as Bookmarked. ChatGPT validation opens the website, extracts the complete posting and saves it as a `Job Posting - Company - Role.json` artifact through the Application Service. Preparation reads that artifact; missing or mismatched content stops preparation rather than re-fetching.
 
-**Prepared submission** — use `startWorkflow` for `submit-prepared` and the native-browser MCP task sequence. The local ready-submission CLI rejects live execution of this workflow.
+**Prepared submission** — use `startStageTask` for `submit-prepared` and the native-browser MCP task sequence. The local ready-submission CLI rejects live execution of this stage.
 
-**Concurrent queues** — the shared eight-thread implementation remains available for isolated legacy tests. Its CLI rejects a live Bookmarked/Prepared pass; use durable native-browser task claims in ChatGPT for those queues.
+**Concurrent queues** — the shared eight-thread implementation remains available for isolated tests. Its CLI rejects a live Bookmarked/Prepared pass; use durable native-browser task claims in ChatGPT for those queues.
 
 ### Continuous operation
 
@@ -132,7 +132,7 @@ python3 -m services.run --monitor --log --log-file activity.log --workers scout=
 
 **Performance** — Journal reads share a five-second snapshot. Drive folder/file identities cached for 60 seconds. Report checkpoints upload after 10 postings or 60 seconds. Tune cache, checkpoint, and HTTP timeout values in `.env.example`; restart the API after changes.
 
-**Profile storage** — Profile is at `Applicant/applicant_profile.json` in Drive. Internal workload files use `.ai-job-search-system/workloads-internal-state/<workflow>/`. Migration endpoint: `POST /storage/migrate-internal`.
+**Profile storage** — Profile is at `Applicant/applicant_profile.json` in Drive. Internal workload files use `.ai-job-search-system/workloads-internal-state/<stage>/`. Migration endpoint: `POST /storage/migrate-internal`.
 
 **Artifacts** — Upload via `POST /applications/{application_id}/artifacts` with filename, MIME type, and base64 content. Use `idempotency_key` for retryable uploads. List with `GET`, read as base64 by artifact ID. Generic root-relative endpoints (`POST /files`, `GET /files?path=...`) for non-application artifacts.
 
@@ -144,7 +144,7 @@ python3 -m services.run --monitor --log --log-file activity.log --workers scout=
 
 **Authentication** — Default provider is Codex CLI (`codex --login`). Google Drive requires OAuth: `GOOGLE_ACCESS_TOKEN` or `GOOGLE_REFRESH_TOKEN` with `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
 
-**Reasoning effort** — Configure per-workflow presets in `config/workload-effort.json` (`low`, `medium`, `high`, `xhigh`). Reloaded each workload — no restart needed. Override file path with `WORKLOAD_EFFORT_CONFIG_PATH`.
+**Reasoning effort** — Configure per-stage presets in `config/workload-effort.json` (`low`, `medium`, `high`, `xhigh`). Reloaded each workload — no restart needed. Override file path with `WORKLOAD_EFFORT_CONFIG_PATH`.
 
 **PDF dependencies** — `python3 -m pip install -r requirements.txt`. Application packages combine styled cover letter with original resume PDF from `source_resume.path`.
 
@@ -154,7 +154,7 @@ python3 -m services.run --monitor --log --log-file activity.log --workers scout=
 
 **Preparation batch** — `python3 -m services.prepare_bookmarked_batch --migrate-review-holds` migrates prior review holds and reconsumes Bookmarked. Saved packages are validated and reused. Preparation failures go to `Dead Letters Queue`.
 
-## Workflows
+## Stages
 
 ### A. Job discovery and application
 
@@ -211,8 +211,8 @@ recheck missed events
 
 ## Data layer
 
-The data layer is the only component allowed to mutate persistent workflow
-state. Agents and workflow instances use the API defined in `openapi.yaml`.
+The data layer is the only component allowed to mutate persistent stage
+state. Agents and stage instances use the API defined in `openapi.yaml`.
 Google Drive is a persistence implementation, not an agent-facing API.
 
 ### Job-posting/application states
@@ -271,57 +271,27 @@ journal event.
 
 ## Architecture
 
-See [workflow execution diagrams](docs/architecture.md) for the current deployment
-and the native ChatGPT/Vercel execution split, including activation prerequisites. See [state-machine diagrams](docs/state-machines.md)
-for application lifecycle, execution requests and task execution states.
+See [workflow, stage and task architecture](docs/architecture.md) and
+[application state machines](docs/state-machines.md).
 
-The target architecture separates workflow execution and ad hoc AI operations
-from the backend that owns application state:
+A **workflow** spans the job-search lifecycle. A **stage** defines one processing
+step, a **stage task** requests its execution, a **worker** executes tasks, and
+an **agent run** invokes stateless decision logic. Use
+`services.stage_executor.StageExecutor` and the `/stages` / `/stage-tasks` API.
+The public contract is `openapi.yaml`; MCP tool definitions are generated from it.
 
-```mermaid
-flowchart TB
-    subgraph Clients["Execution and interaction"]
-        Runner["Stage execution hosts: ChatGPT and activated Vercel workers"]
-        AI["AI Operations Client: ChatGPT or another agent using the API"]
-    end
+Active application state remains in Google Docs. PostgreSQL stores completed
+applications and, separately, operational execution commands, claims, and
+installation metadata. A queued execution command is not an active application
+stored in PostgreSQL. See [the cutover procedure](docs/stage-task-cutover.md)
+for database migration, deployment configuration and ChatGPT MCP refresh.
 
-    Service["Application Service: authenticated API, validation and state transitions"]
-
-    subgraph Persistence["Persistence"]
-        Postgres[("PostgreSQL: completed applications and durable execution records")]
-        Docs["Google Drive / Docs: journal, artifacts and applicant files"]
-    end
-
-    Runner <-->|"Stage context, outcomes and writes"| Service
-    AI <-->|"Ad hoc operations"| Service
-    Service <-->|"Applications and execution records"| Postgres
-    Service <-->|"Journal and artifacts"| Docs
-```
-
-| Component | Responsibility |
-| --- | --- |
-| **Stage execution hosts** | Execute tasks for stage definitions through the Application Service. ChatGPT owns native-browser stages; Vercel workers own the other nine stages when explicitly activated. Workstation execution is an explicit legacy option. |
-| **AI Operations Client** | Uses an AJSS skill and API token to perform ad hoc operations through the backend API. |
-| **Application Service** | The system of record in front of Google Drive and PostgreSQL. It validates operations, manages state transitions, and is the only component that writes application state. Runs as a container or standalone process. |
-| **Completed Applications Store** | Stores completed applications in PostgreSQL. |
-| **Application Drafts Document** | Stores incomplete applications in Google Docs. |
-
-ChatGPT can execute native-browser stage tasks and act as an AI Operations Client; these
-are distinct roles that can share an environment. Both roles access application
-state through the Application Service, which owns all application-state mutations.
-Agent definitions provide stateless decision logic invoked by stage tasks.
-
-The diagram describes the target architecture. The current implementation uses
-Google Docs for application state, including an optional separate completed
-applications document; the PostgreSQL store is planned. Application artifacts
-remain in Google Drive behind the API.
-
-### Workflow execution flow
+### Stage execution flow
 
 ```text
 event source
   → event dispatcher
-    → AJSS Workflow Runner
+    → AJSS Stage Runner
       → stateless agent
         → structured decision
       → Application Service
@@ -337,7 +307,7 @@ shapes.
 
 ### Runtime flow
 
-Workflow runtimes should use `services.application_service_client.ApplicationServiceClient`
+Stage runtimes should use `services.application_service_client.ApplicationServiceClient`
 for reads and writes. This keeps the Google Drive implementation behind the
 HTTP persistence boundary and prevents agents from acquiring external-system
 access.
@@ -356,7 +326,7 @@ validates agent results, produces explicit idempotent persistence operations,
 and can execute them through the client or return them unchanged in dry-run
 mode.
 
-It also handles workflow-specific artifact preparation:
+It also handles stage-specific artifact preparation:
 
 - When an application context includes `cv_html`, it plans a combined PDF
   artifact operation.
@@ -372,7 +342,7 @@ creating a second logical workload.
 
 `services.workload_registry.WorkloadRegistry` provides the corresponding
 queued/running/failed/succeeded lifecycle and bounded recovery loop for the
-reconciliation workflow.
+reconciliation stage.
 
 When a reconciliation workload is claimed:
 
@@ -446,12 +416,12 @@ agents would be invoked and which persistence actions are proposed. See
 `tests/README.md`.
 
 `--execute` is an explicit opt-in for applying persistence operations. It
-requires complete results for every agent in the selected workflow, completed
+requires complete results for every agent in the selected stage, completed
 onboarding, and a running Application Service; ordinary test
 drives remain side-effect free. If execute mode is used before onboarding, the
 runner stops without side effects and prints the onboarding command.
 
-For queued workload execution, use `python3 -m services.workflow_runtime` with
+For queued workload execution, use `python3 -m services.stage_executor` with
 `--workload-id` and an agent-results JSON file. This is the scheduler/container
 entrypoint; it claims and settles one durable workload record. The equivalent
 shortcut is `make run-workload WORKLOAD_ID=work_... AGENT_RESULTS=/path/results.json`.
@@ -499,9 +469,9 @@ Normalized workload payloads may declare external actions in
 `approval_actions`; the runtime records policy decisions and durable `ask`
 requests before an external adapter is allowed to act.
 
-Every live workflow entrypoint must load `services.runtime_config` before
+Every live stage entrypoint must load `services.runtime_config` before
 starting. Missing or incomplete configuration stops execution and directs the
-operator to onboarding. `services.workflow_runtime` is the current one-workload
+operator to onboarding. `services.stage_executor` is the current one-workload
 entrypoint; it can consume captured agent results or invoke agents through an
 injected provider.
 
@@ -532,11 +502,11 @@ services/     API, onboarding, approvals, generation, dispatch
 templates/    cover-letter, CV, and briefing templates
 schemas/      shared domain schemas
 skills/       portable runtime instructions for the Application Service
-tests/        contract and workflow tests
+tests/        contract and stage tests
 deployment/   deployment manifests and container materials
 ```
 
-## Run workflows from ChatGPT
+## Run stages from ChatGPT
 
-See [ChatGPT workflow execution](deployment/chatgpt-workflows.md) for the MCP workflow tools,
+See [ChatGPT stage execution](deployment/chatgpt-stages.md) for the MCP stage tools,
 durable background worker, scoped requests, PDF reports, and reconciliation.

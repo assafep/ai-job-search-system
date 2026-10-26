@@ -6,7 +6,7 @@ This package is the implementation behind [deployment/ctl.sh](../deployment/ctl.
 | --- | --- |
 | `lifecycle.py` | Names the steps for `plan`. |
 | `runner_control.py` | Starts, gracefully drains, and inspects the deployed Docker runner. |
-| `execute.py` | Runs the steps that exist for `up`. |
+| `execute.py` | StageTasks the steps that exist for `up`. |
 | `drive_folder.py` | Binds an existing Drive folder for `drive`. |
 | `drive_storage.py` | Drive, Cloud project, and service-account calls. |
 | `bootstrap/` | Repository-owned Vercel and Neon adapters used by the live provisioning hooks. |
@@ -23,7 +23,7 @@ Its transport, authentication, and tool contract are documented in the
 `deploy_application`, before runner provisioning. The stage verifies an
 authenticated REST queue read, performs a real MCP initialization and tool listing,
 and calls the read-only `journalQueueCounts` tool. Verification does not run
-workflows or mutate applications. `./deployment/ctl.sh chatgpt` regenerates this
+stages or mutate applications. `./deployment/ctl.sh chatgpt` regenerates this
 handoff independently after a URL, token, or API change; it requires an
 application-ready deployment checkpoint and does not provision or deploy anything.
 
@@ -64,7 +64,7 @@ This registers `ajss-application-service` with the host's Codex CLI using
 at startup. After `up`, `connect`, or `chatgpt`, the wrapper also attempts host registration
 when the connection stage wrote a fresh verification file and `codex` is installed,
 even if the later runner-provisioning stage is blocked. Registration changes host
-configuration; it does not configure a remote client or start workflow workers.
+configuration; it does not configure a remote client or start stage workers.
 
 The GPT Action fallback uses the generated OpenAPI schema with API key / Bearer
 authentication and the private token in `authentication.json`. The REST base URL

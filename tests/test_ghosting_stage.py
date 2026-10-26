@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from services.ghosting_workflow import execute, ghosting_reason
+from services.ghosting_stage import execute, ghosting_reason
 
 
 NOW = datetime(2026, 10, 25, tzinfo=timezone.utc)
@@ -44,11 +44,11 @@ class Client:
         return {'failed': 0, 'results': [{'status': 'succeeded'} for _ in items]}
 
 
-def test_workflow_completes_only_the_silent_matches():
+def test_stage_completes_only_the_silent_matches():
     client = Client()
     result = execute(client, now=NOW)
     assert client.completed == [('old', 'ghosted'), ('quiet-interview', 'expired')]
-    assert result['workflow'] == 'identify-ghosting'
+    assert result['stage'] == 'identify-ghosting'
 
 
 def test_ghosting_item_keys_are_stable_across_poll_times():
@@ -58,7 +58,7 @@ def test_ghosting_item_keys_are_stable_across_poll_times():
     assert first.items == second.items
 
 
-def test_bulk_failure_is_not_reported_as_a_completed_workflow():
+def test_bulk_failure_is_not_reported_as_a_completed_stage():
     import pytest
     from services.application_service_client import BulkUpdateError
     client = Client()

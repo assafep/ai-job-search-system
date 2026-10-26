@@ -14,19 +14,19 @@ from .event_dispatcher import dispatch
 from .application_service_client import ApplicationServiceClient
 from .report_checkpoint import ReportCheckpoint
 from .runtime_config import load
-from .workflow_runtime import runtime_from_environment
+from .stage_executor import runtime_from_environment
 from .workload_registry import registry_from_environment
 
 
 def run(persistence, registry, runtime, agent_provider, migrate_review_holds=False):
     initial = persistence.list_applications(status='Bookmarked') or []
-    run_id = datetime.now(timezone.utc).strftime('preparation-%Y%m%dT%H%M%S%fZ')
-    report = {'run_id': run_id, 'started_at': datetime.now(timezone.utc).isoformat(),
+    stage_task_id = datetime.now(timezone.utc).strftime('preparation-%Y%m%dT%H%M%S%fZ')
+    report = {'stage_task_id': stage_task_id, 'started_at': datetime.now(timezone.utc).isoformat(),
               'initial_bookmarked_applications': initial, 'migrations': [], 'migration_errors': [], 'workload_results': []}
-    state_path = workload_state_path('prepare-validated', 'batch-runs/' + run_id + '.json')
+    state_path = workload_state_path('prepare-validated', 'batch-runs/' + stage_task_id + '.json')
     checkpoint = ReportCheckpoint(persistence, state_path, report)
     checkpoint.save(force=True)
-    print(json.dumps({'run_id': run_id, 'bookmarked_count': len(initial)}), flush=True)
+    print(json.dumps({'stage_task_id': stage_task_id, 'bookmarked_count': len(initial)}), flush=True)
     if migrate_review_holds:
         for app in initial:
             try:
@@ -48,12 +48,12 @@ def run(persistence, registry, runtime, agent_provider, migrate_review_holds=Fal
         # Fresh explicit-run identity reconsumes every item, including prior
         # succeeded/dead-letter workloads, without resetting their history.
         envelope = dispatch('application_package_schedule', {'application_id': app['application_id']},
-                            run_id + ':' + app['application_id'], registry)
+                            stage_task_id + ':' + app['application_id'], registry)
         print(json.dumps({'activity': 'preparing', 'company': app['company'], 'application_id': app['application_id']}), flush=True)
         try:
             outcome = runtime.run(envelope['workload_id'], agent_provider=agent_provider)
         except Exception as exc:
-            outcome = {'workflow': 'prepare-validated', 'workload_id': envelope['workload_id'],
+            outcome = {'stage': 'prepare-validated', 'workload_id': envelope['workload_id'],
                        'application_id': app['application_id'], 'status': 'failed', 'error': str(exc)}
         outcome['application_id'] = app['application_id']
         report['workload_results'].append(outcome)

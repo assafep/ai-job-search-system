@@ -116,7 +116,7 @@ class HybridRepository:
         return normalized, enabled and normalized.startswith(WORKLOAD_STATE_DIRECTORY + '/')
 
     def store_file(self, path, content, mime_type=None, idempotency_key=None):
-        """Explicit database storage for workflow-owned files in hybrid installs.
+        """Explicit database storage for stage-owned files in hybrid installs.
 
         Journal/profile/application artifacts keep their configured storage. This
         is a configured backend, never a fallback after a failed Drive write.

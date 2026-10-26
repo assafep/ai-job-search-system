@@ -6,11 +6,11 @@ import sys
 import time
 
 from adapters.llm.codex_provider import provider
-from .polling import PollingSchedule, enqueue_scheduled, enqueue_queues, maintenance_names, workflow_poll_seconds
+from .polling import PollingSchedule, enqueue_scheduled, enqueue_queues, maintenance_names, stage_poll_seconds
 from .application_service_client import ApplicationServiceClient
 from .runtime_config import load
 from .workload_registry import registry_from_environment
-from .workflow_runtime import runtime_from_environment
+from .stage_executor import runtime_from_environment
 from .workload_worker import WorkloadWorker
 
 
@@ -35,8 +35,8 @@ class AutomationDaemon:
         from .external_event_polling import poll
         external_events = {}
         for name in ('handle-incoming-email', 'prepare-interview'):
-            external_events.update(self.schedule.run('external-' + name, workflow_poll_seconds(name),
-                lambda name=name: poll(self.persistence_client, self.registry, workflows=[name])) or {})
+            external_events.update(self.schedule.run('external-' + name, stage_poll_seconds(name),
+                lambda name=name: poll(self.persistence_client, self.registry, stages=[name])) or {})
         enqueue_scheduled(self.registry, names=maintenance_names())
         self.enqueue_discovery()
         discovery_results = self.worker.run_once()

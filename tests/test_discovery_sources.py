@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 from services.discovery_sources import select_live_postings, fetch_employer_boards
-from services.workflow_runtime import WorkflowRuntime
+from services.stage_executor import StageExecutor
 
 
 NOW = datetime(2026, 10, 18, tzinfo=timezone.utc)
@@ -69,7 +69,7 @@ def test_comeet_and_lever_runtimes_use_the_catalog_and_profile_filter(monkeypatc
     monkeypatch.setattr('adapters.job_boards.lever.LeverJobBoard', Board)
     for source in ('comeet', 'lever'):
         context = {'source_names': [source]}
-        WorkflowRuntime._enrich_discovery_context(context, PROFILE)
+        StageExecutor._enrich_discovery_context(context, PROFILE)
         assert len(context['job_postings']) == 1
         assert context['job_postings'][0]['countries'] == ['IL']
 
@@ -86,7 +86,7 @@ def test_himalayas_runtime_keeps_only_recent_israel_skill_matches(monkeypatch):
 
     monkeypatch.setattr('adapters.job_boards.himalayas.HimalayasJobBoard', Board)
     context = {'source_names': ['himalayas'], 'search_terms': ['backend']}
-    WorkflowRuntime._enrich_discovery_context(context, PROFILE)
+    StageExecutor._enrich_discovery_context(context, PROFILE)
     assert len(context['job_postings']) == 1
     assert context['job_postings'][0]['countries'] == ['IL']
 
@@ -102,7 +102,7 @@ def test_smartrecruiters_runtime_uses_the_catalog_and_profile_filter(monkeypatch
     monkeypatch.setattr('services.discovery_sources.source_boards', lambda source: {'example': 'Example'})
     monkeypatch.setattr('adapters.job_boards.smartrecruiters.SmartRecruitersJobBoard', Board)
     context = {'source_names': ['smartrecruiters']}
-    WorkflowRuntime._enrich_discovery_context(context, PROFILE)
+    StageExecutor._enrich_discovery_context(context, PROFILE)
     assert len(context['job_postings']) == 1
     assert context['job_postings'][0]['countries'] == ['IL']
 
@@ -119,7 +119,7 @@ def test_greenhouse_runtime_uses_catalog_and_filters_before_discovery(monkeypatc
     monkeypatch.setattr('services.discovery_sources.source_boards', lambda source: {'example': 'Example'})
     monkeypatch.setattr('adapters.job_boards.greenhouse.GreenhouseJobBoard', Board)
     context = {'source_names': ['greenhouse']}
-    WorkflowRuntime._enrich_discovery_context(context, PROFILE)
+    StageExecutor._enrich_discovery_context(context, PROFILE)
     assert len(context['job_postings']) == 1
     assert context['job_postings'][0]['countries'] == ['IL']
 

@@ -1,4 +1,4 @@
-"""One virtualenv per workflow that ships a requirements file.
+"""One virtualenv per stage that ships a requirements file.
 
 The file lives at ``stages/<stage name>/requirements.txt``. Its SHA-256
 is stored beside the virtualenv. A different hash deletes that virtualenv and
@@ -13,11 +13,11 @@ import subprocess
 import sys
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-VENV_ROOT = os.path.join(ROOT, ".onboarding", "workflow-venvs")
+VENV_ROOT = os.path.join(ROOT, ".onboarding", "stage-venvs")
 
 
-def requirements_path(workflow_name):
-    return os.path.join(ROOT, "stages", workflow_name, "requirements.txt")
+def requirements_path(stage_name):
+    return os.path.join(ROOT, "stages", stage_name, "requirements.txt")
 
 
 def _hash_file(path):
@@ -34,13 +34,13 @@ def _default_create(venv_dir, requirements):
     subprocess.check_call([python, "-m", "pip", "install", "-r", requirements])
 
 
-def ensure_workflow_python(workflow_name, create_venv=None):
-    """Return the workflow virtualenv's Python, or None when it has no requirements."""
-    requirements = requirements_path(workflow_name)
+def ensure_stage_python(stage_name, create_venv=None):
+    """Return the stage virtualenv's Python, or None when it has no requirements."""
+    requirements = requirements_path(stage_name)
     if not os.path.isfile(requirements):
         return None
     digest = _hash_file(requirements)
-    home = os.path.join(VENV_ROOT, workflow_name)
+    home = os.path.join(VENV_ROOT, stage_name)
     venv_dir = os.path.join(home, "venv")
     hash_path = os.path.join(home, "requirements.sha256")
     python = os.path.join(venv_dir, "bin", "python")
@@ -56,17 +56,17 @@ def ensure_workflow_python(workflow_name, create_venv=None):
         with open(hash_path, "w") as handle:
             handle.write(digest + "\n")
     if not os.path.isfile(python):
-        raise RuntimeError("workflow virtualenv did not produce " + python)
+        raise RuntimeError("stage virtualenv did not produce " + python)
     return python
 
 
 def main():
-    """Run one already-bootstrapped workflow. The parent process is the installer."""
-    os.environ["WORKFLOW_VENV_DELEGATED"] = "1"
+    """Run one already-bootstrapped stage. The parent process is the installer."""
+    os.environ["STAGE_VENV_DELEGATED"] = "1"
     request = json.load(sys.stdin)
     from .application_service_client import ApplicationServiceClient
-    from .workflow_runner import run_one
-    from .workflow_runtime import runtime_from_environment
+    from .stage_runner import run_one
+    from .stage_executor import runtime_from_environment
     from .workload_registry import registry_from_environment
     client = ApplicationServiceClient()
     registry = registry_from_environment()
@@ -74,7 +74,7 @@ def main():
     runtime.registry = registry
     result = run_one(
         client, registry, runtime, request["application"],
-        workflow_name=request.get("workflow_name"), run_id=request.get("run_id"))
+        stage_name=request.get("stage_name"), stage_task_id=request.get("stage_task_id"))
     json.dump(result, sys.stdout, default=str)
     sys.stdout.write("\n")
 

@@ -19,7 +19,7 @@ class PostingReadFailure(ValueError):
 
 
 def bookmark_attempt_lines(attempt):
-    """Same five lines as every other workflow outcome."""
+    """Same five lines as every other stage outcome."""
     from .event_attempt import attempt_lines
     return attempt_lines(attempt)
 

@@ -95,7 +95,7 @@ def test_empty_search_terms_are_derived_once(monkeypatch, tmp_path):
 
 
 def test_jobicy_searches_individual_terms_and_deduplicates(monkeypatch):
-    from services.workflow_runtime import WorkflowRuntime
+    from services.stage_executor import StageExecutor
     calls = []
     class Board:
         def search(self, **kwargs):
@@ -105,6 +105,6 @@ def test_jobicy_searches_individual_terms_and_deduplicates(monkeypatch):
     terms = ['Senior Backend Software Engineer', 'Distributed Systems Engineer']
     assert len(' OR '.join(terms)) > 50
     context = {'source_names': ['jobicy'], 'search_terms': terms, 'countries': ['IL']}
-    WorkflowRuntime._enrich_discovery_context(context)
+    StageExecutor._enrich_discovery_context(context)
     assert [call['query'] for call in calls] == terms
     assert len(context['job_postings']) == 1

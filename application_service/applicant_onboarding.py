@@ -1,7 +1,7 @@
 """Application Service storage boundary used before a live API is provisioned.
 
 Owner credentials create My Drive files; the scoped service account reads and
-updates them. Workflow agents never receive either storage client.
+updates them. Stage agents never receive either storage client.
 """
 import json
 from .google_drive_artifacts import FOLDER_MIME

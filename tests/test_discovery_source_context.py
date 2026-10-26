@@ -1,4 +1,4 @@
-from services.workflow_runtime import WorkflowRuntime
+from services.stage_executor import StageExecutor
 
 
 def test_adzuna_source_is_not_fetched_without_explicit_source(monkeypatch):
@@ -18,7 +18,7 @@ def test_adzuna_source_is_not_fetched_without_explicit_source(monkeypatch):
     monkeypatch.setattr("adapters.job_boards.greenhouse.GreenhouseJobBoard", Board)
     monkeypatch.setattr("adapters.job_boards.adzuna.AdzunaJobBoard", unexpected)
     context = {"source_names": ["greenhouse"]}
-    WorkflowRuntime._enrich_discovery_context(context)
+    StageExecutor._enrich_discovery_context(context)
     assert called == []
 
 
@@ -39,7 +39,7 @@ def test_adzuna_source_fetches_postings(monkeypatch):
         "search_terms": ["python", "backend"],
         "locations": ["Tel Aviv"],
     }
-    WorkflowRuntime._enrich_discovery_context(context)
+    StageExecutor._enrich_discovery_context(context)
     assert context["job_postings"][0]["company"] == "Example"
 
 
@@ -53,5 +53,5 @@ def test_discovery_uses_onboarded_profile_countries(monkeypatch):
     monkeypatch.setattr("adapters.job_boards.freehire.FreehireJobBoard", Client)
     context = {"source_names": ["freehire"]}
     profile = {"job_search": {"countries": ["IL", "US"], "search_terms": []}}
-    WorkflowRuntime._enrich_discovery_context(context, profile)
+    StageExecutor._enrich_discovery_context(context, profile)
     assert context["job_postings"] == []

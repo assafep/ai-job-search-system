@@ -27,16 +27,16 @@ INSTRUCTIONS = (
     'Mutations must be explicit and retry-safe; reuse the same idempotency_key on retries. '
     'Never access Drive, Gmail or Calendar directly. For validate-bookmarked and submit-prepared, '
     'ChatGPT itself must use its native browser; never delegate their website actions to a worker or browser adapter. '
-    'Use nextChatGPTWorkflowTask, the supplied agent contracts and the workflow result tools. '
+    'Use nextChatGPTStageTask, the supplied agent contracts and the stage result tools. '
     'Call beginChatGPTSubmission before the final submit click, then record observed confirmation. '
     'Pause for a specific CAPTCHA, login, upload or unavailable native-browser capability. '
-    'Do not claim CAPTCHA bypass. Workflow decision agents remain '
-    'stateless; workflow runtimes own execution. Prepared membership authorizes automatic '
+    'Do not claim CAPTCHA bypass. Stage decision agents remain '
+    'stateless; stage runtimes own execution. Prepared membership authorizes automatic '
     'submission by the runtime; do not add approval gates. Unconfirmed submissions need '
     'manual reconciliation. Migrations, repairs, rollback and deletion require an explicit '
-    'operator request. Use startWorkflow to admit the requested scope; listWorkflows reports its execution host. '
-    'poll getWorkflowRun and retrieve getWorkflowRunReport. Omitted limits mean all eligible '
-    'postings. Reuse the request key. Never assemble workflows with state mutation tools.'
+    'operator request. Use startStageTask to admit the requested scope; listStages reports its execution host. '
+    'poll getStageTask and retrieve getStageTaskReport. Omitted limits mean all eligible '
+    'postings. Reuse the request key. Never assemble stages with state mutation tools.'
 )
 
 
@@ -63,7 +63,7 @@ def _resolve(value, document):
 class Catalog:
     def __init__(self, contract=None, profile=None):
         profile = profile or os.environ.get('AJSS_MCP_TOOL_PROFILE', 'domain')
-        if profile not in ('domain', 'workflows'):
+        if profile not in ('domain', 'stages'):
             raise ValueError('Unknown MCP tool profile')
         document = yaml.safe_load((contract or ROOT / 'openapi.yaml').read_text())
         self.operations = {}
@@ -75,12 +75,12 @@ class Catalog:
                 if operation.get('x-mcp-expose') is False:
                     continue
                 name = operation['operationId']
-                if profile == 'workflows' and name not in {
-                    'listWorkflows', 'listWorkflowRuns', 'startWorkflow', 'getWorkflowRun', 'getWorkflowRunReport',
+                if profile == 'stages' and name not in {
+                    'listStages', 'listStageTasks', 'startStageTask', 'getStageTask', 'getStageTaskReport',
                     'journalQueueCounts', 'listApplications', 'getApplication',
                     'listApplicationEvents', 'getJournalStatus',
-                    'getWorkflowExecutionReadiness', 'nextChatGPTWorkflowTask', 'completeChatGPTValidation', 'beginChatGPTSubmission',
-                    'completeChatGPTSubmission', 'pauseChatGPTWorkflowTask', 'getChatGPTSubmissionPackage',
+                    'getStageExecutionReadiness', 'nextChatGPTStageTask', 'completeChatGPTValidation', 'beginChatGPTSubmission',
+                    'completeChatGPTSubmission', 'pauseChatGPTStageTask', 'getChatGPTSubmissionPackage',
                 }:
                     continue
                 properties, required, parameters = {}, [], []

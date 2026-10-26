@@ -16,15 +16,15 @@ import json
 import sys
 
 from .runtime_config import load
-from .workflow_runner import run_all
+from .stage_runner import run_all
 
 
 
 
-def run(state, application_id=None, all_items=False, workflow_name=None):
+def run(state, application_id=None, all_items=False, stage_name=None):
     """Process one or more applications from the given state."""
     return run_all(
-        state, workflow_name=workflow_name,
+        state, stage_name=stage_name,
         workers=1,
         print_progress=True, application_id=application_id,
     )
@@ -46,14 +46,14 @@ def main(argv=None):
         help="Process all eligible applications (also the default; retained for compatibility)"
     )
     parser.add_argument(
-        "--workflow",
-        help="Workflow name to use (needed when multiple workflows consume the same state)"
+        "--stage",
+        help="Stage name to use (needed when multiple stages consume the same state)"
     )
     args = parser.parse_args(argv)
 
     load(require=True)
     try:
-        results = run(args.queue, args.application_id, args.all, args.workflow)
+        results = run(args.queue, args.application_id, args.all, args.stage)
         return 1 if any(r.get("status") == "failed" for r in results) else 0
     except (ValueError, RuntimeError, KeyError) as exc:
         print(json.dumps({"error": str(exc)}, indent=2))

@@ -1,4 +1,4 @@
-"""Native ChatGPT-browser workflow protocol; no server-side browser or LLM.
+"""Native ChatGPT-browser stage protocol; no server-side browser or LLM.
 
 ChatGPT reads/fills websites in its own host. MCP exchanges context, structured
 observations and results. The service validates contracts and owns every write.
@@ -15,8 +15,8 @@ from functools import lru_cache
 from urllib.parse import urlsplit
 
 from .runtime_client import RuntimeClient, plain
-from .workflow_execution import CHATGPT_WORKFLOWS
-from .workflow_runs import Runs, blueprint_digest, public, timestamp
+from .stage_execution import CHATGPT_STAGES
+from .stage_tasks import StageTasks, blueprint_digest, public, timestamp
 
 
 INSTRUCTIONS = (
@@ -29,18 +29,18 @@ INSTRUCTIONS = (
     'action, click submit once, observe confirmation and call completeChatGPTSubmission. '
     'Prepared membership authorizes submission; no extra application approval gate is required. '
     'Respect browser host permissions. If a CAPTCHA, sign-in or upload needs user interaction, '
-    'call pauseChatGPTWorkflowTask and request that specific interaction. Do not claim to bypass '
+    'call pauseChatGPTStageTask and request that specific interaction. Do not claim to bypass '
     'CAPTCHAs. If the native browser is unavailable, pause; never substitute a different browser. '
     'After an interrupted begun submission, inspect for evidence without clicking submit again. '
     'If its outcome cannot be established, record Submission unconfirmed; it requires manual reconciliation. '
-    'Continue nextChatGPTWorkflowTask until the admitted scope is exhausted; omitted limit means all eligible items.'
+    'Continue nextChatGPTStageTask until the admitted scope is exhausted; omitted limit means all eligible items.'
 )
 
 
 @contextmanager
 def guard():
     from .database import connect, installation_lock
-    with connect() as connection, installation_lock(connection, 'workflow-execution'):
+    with connect() as connection, installation_lock(connection, 'stage-execution'):
         yield
 
 
@@ -56,7 +56,7 @@ def web_url(value):
 @lru_cache(maxsize=1)
 def contract_digest():
     root = Path(__file__).resolve().parents[1]
-    paths = ['application_service/chatgpt_workflows.py', 'services/workload_executor.py',
+    paths = ['application_service/chatgpt_tasks.py', 'services/workload_executor.py',
              'services/ready_submission.py', 'application_service/state_machine.py']
     for name in ('read-posting', 'validate'):
         paths.extend('agents/' + name + '/' + file for file in ('prompt.md', 'output.schema.json'))
@@ -64,22 +64,22 @@ def contract_digest():
 
 
 class Sessions:
-    def __init__(self, repository, runs=None, execution_guard=guard):
+    def __init__(self, repository, tasks=None, execution_guard=guard):
         self.repository = repository
         self.client = RuntimeClient(repository)
-        self.runs = runs or Runs()
+        self.tasks = tasks or StageTasks()
         self.guard = execution_guard
 
-    def _load(self, run_id):
-        with self.runs.store.locked() as records:
-            if run_id not in records:
-                raise KeyError(run_id)
-            return deepcopy(records[run_id])
+    def _load(self, stage_task_id):
+        with self.tasks.store.locked() as records:
+            if stage_task_id not in records:
+                raise KeyError(stage_task_id)
+            return deepcopy(records[stage_task_id])
 
     def _save(self, record):
         record['updated_at'] = timestamp()
-        with self.runs.store.locked() as records:
-            records[record['run_id']] = deepcopy(record)
+        with self.tasks.store.locked() as records:
+            records[record['stage_task_id']] = deepcopy(record)
 
     @contextmanager
     def _effect(self, record, task, data):
@@ -95,23 +95,23 @@ class Sessions:
         method = getattr(self.repository, 'mutation_scope', None)
         return method() if method else nullcontext()
 
-    def _run(self, run_id):
-        record = self._load(run_id)
-        name = record['request']['workflow']
-        if name in CHATGPT_WORKFLOWS and record['status'] == 'queued' and not record.get('claim_token'):
+    def _run(self, stage_task_id):
+        record = self._load(stage_task_id)
+        name = record['request']['stage']
+        if name in CHATGPT_STAGES and record['status'] == 'queued' and not record.get('claim_token'):
             record['execution_host'] = 'chatgpt'
             if not record.get('chatgpt'):
                 record['blueprint_digest'] = blueprint_digest(name)
             self._save(record)
-        if name not in CHATGPT_WORKFLOWS or record.get('execution_host') != 'chatgpt':
-            raise ValueError('This is not a ChatGPT-browser workflow run')
+        if name not in CHATGPT_STAGES or record.get('execution_host') != 'chatgpt':
+            raise ValueError('This is not a ChatGPT-browser stage run')
         active = record['status'] in {'queued', 'running'}
         if active and record.get('chatgpt', {}).get('contract_digest', contract_digest()) != contract_digest():
             record['status'] = 'reconciliation_required'
             self._save(record)
             raise ValueError('Execution code or agent contract changed; reconcile before continuing')
         if active and record['blueprint_digest'] != blueprint_digest(name):
-            raise ValueError('Workflow blueprint changed; reconcile this run before continuing')
+            raise ValueError('Stage blueprint changed; reconcile this run before continuing')
         return record
 
     def _snapshot(self, application_id):
@@ -130,7 +130,7 @@ class Sessions:
     def _response(self, record, task):
         response = {key: deepcopy(value) for key, value in task.items()
                     if key not in {'version', 'commands', 'intent'}}
-        response.update(run_id=record['run_id'], workflow=record['request']['workflow'],
+        response.update(stage_task_id=record['stage_task_id'], stage=record['request']['stage'],
                         execution_host='chatgpt', browser='chatgpt-native', instructions=INSTRUCTIONS)
         if task['state'] == 'completed':
             response['instructions'] = 'This task is complete. Do not repeat any browser action. Request the next task.'
@@ -142,7 +142,7 @@ class Sessions:
         from services.activity_report import publish
         session = record['chatgpt']
         results = [task['result'] for task in session['tasks'].values() if task.get('result')]
-        report = dict(run_id=record['run_id'], started_at=record['started_at'],
+        report = dict(stage_task_id=record['stage_task_id'], started_at=record['started_at'],
                       finished_at=timestamp(), workload_results=results,
                       remaining_requirements=['Reconcile uncertain submissions before any retry.']
                       if any(r.get('uncertain') for r in results) else [])
@@ -155,17 +155,17 @@ class Sessions:
                       finished_at=timestamp(), summary={'executions': len(results), 'execution_host': 'chatgpt'})
         session.pop('finishing', None)
         self._save(record)
-        return {'run': public(record), 'complete': True}
+        return {'task': public(record), 'complete': True}
 
-    def next(self, run_id):
+    def next(self, stage_task_id):
         with self.guard():
-            record = self._run(run_id)
+            record = self._run(stage_task_id)
             if record['status'] in {'succeeded', 'failed', 'reconciliation_required'}:
-                return {'run': public(record), 'complete': True}
-            with self.runs.store.locked() as records:
-                if any(r['run_id'] != run_id and r['status'] in {'running', 'reconciliation_required'}
+                return {'task': public(record), 'complete': True}
+            with self.tasks.store.locked() as records:
+                if any(r['stage_task_id'] != stage_task_id and r['status'] in {'running', 'reconciliation_required'}
                        for r in records.values()):
-                    raise ValueError('Another workflow run is active or requires reconciliation')
+                    raise ValueError('Another stage run is active or requires reconciliation')
             if record['status'] == 'queued':
                 record.update(status='running', started_at=timestamp(),
                               chatgpt={'tasks': {}, 'cursor': 0, 'contract_digest': contract_digest()})
@@ -174,34 +174,34 @@ class Sessions:
             if session.get('finishing'):
                 record['status'] = 'reconciliation_required'
                 self._save(record)
-                return {'run': public(record), 'complete': True}
+                return {'task': public(record), 'complete': True}
             pending = next((t for t in session['tasks'].values() if t['state'] != 'completed'), None)
             if pending:
                 if pending.get('intent'):
                     record['status'] = 'reconciliation_required'
                     self._save(record)
-                    return {'run': public(record), 'complete': True}
+                    return {'task': public(record), 'complete': True}
                 return self._response(record, pending)
             ids = record['application_ids'] or []
             while session['cursor'] < len(ids):
                 identity = ids[session['cursor']]
                 session['cursor'] += 1
                 snapshot = self._snapshot(identity)
-                expected = 'Bookmarked' if record['request']['workflow'] == 'validate-bookmarked' else 'Prepared'
+                expected = 'Bookmarked' if record['request']['stage'] == 'validate-bookmarked' else 'Prepared'
                 task_id = 'task-' + uuid.uuid4().hex
                 task = dict(task_id=task_id, token=uuid.uuid4().hex, application_id=identity,
                             state='pending', context=snapshot, version=digest(snapshot), commands={})
                 session['tasks'][task_id] = task
                 if not snapshot['application'] or snapshot['application']['status'] != expected:
                     task.update(state='completed', result={'application_id': identity, 'status': 'skipped',
-                        'workflow': record['request']['workflow'], 'activity': 'Application is no longer eligible.'})
+                        'stage': record['request']['stage'], 'activity': 'Application is no longer eligible.'})
                     self._save(record)
                     continue
                 from services.agent_runner import contract
                 task['context']['posting_url'] = snapshot['application']['posting_url']
                 # Store the version before adding presentation-only contract fields.
                 task['version'] = digest(self._snapshot(identity))
-                if record['request']['workflow'] == 'validate-bookmarked':
+                if record['request']['stage'] == 'validate-bookmarked':
                     task['contracts'] = {name: contract(name) for name in ('read-posting', 'validate')}
                 else:
                     from services.ready_submission import ReadySubmission
@@ -216,7 +216,7 @@ class Sessions:
                             else:
                                 runner._record_manual_required(identity, old)
                             task.update(state='completed', result={'application_id': identity,
-                                'status': 'succeeded' if confirmed else 'failed', 'workflow': 'submit-prepared',
+                                'status': 'succeeded' if confirmed else 'failed', 'stage': 'submit-prepared',
                                 'uncertain': old.get('status') == 'Submission unconfirmed',
                                 'submission': old, 'activity': 'Reconciled an existing receipt without another browser submission.'})
                             self._settle(record, task, reconciliation, {'result': task['result']})
@@ -232,7 +232,7 @@ class Sessions:
                                 'source': 'ChatGPT submission preflight',
                                 'bullets': ['System error validating the saved application package: ' + str(error)]},
                                 'chatgpt-package-preflight-' + task_id)
-                            task.update(state='completed', result={'application_id': identity, 'workflow': 'submit-prepared',
+                            task.update(state='completed', result={'application_id': identity, 'stage': 'submit-prepared',
                                 'status': 'failed', 'final_state': 'Dead Letters Queue',
                                 'activity': 'Saved package failed validation before any browser submission.'})
                             self._settle(record, task, preflight, {'result': task['result']})
@@ -275,13 +275,13 @@ class Sessions:
         if digest(self._snapshot(task['application_id'])) != task['version']:
             raise ValueError('Application, profile or events changed; reconcile this task before continuing')
 
-    def validate(self, run_id, data):
+    def validate(self, stage_task_id, data):
         from services.test_runner import validate_output
         from services.agent_runner import contract
         from services.workload_executor import plan_persistence_writes, execute_persistence_writes
         with self.guard(), self._scope():
-            record = self._run(run_id)
-            if record['request']['workflow'] != 'validate-bookmarked':
+            record = self._run(stage_task_id)
+            if record['request']['stage'] != 'validate-bookmarked':
                 raise ValueError('Validation results require validate-bookmarked')
             task = self._task(record, data.get('task_id'), data.get('token'))
             old = self._command(record, task, data)
@@ -312,7 +312,7 @@ class Sessions:
             try:
                 execute_persistence_writes(operations, self.client, dry_run=False)
                 task.update(state='completed', result={'application_id': task['application_id'],
-                    'workflow': 'validate-bookmarked', 'status': 'succeeded',
+                    'stage': 'validate-bookmarked', 'status': 'succeeded',
                     'final_state': 'Validated' if decision['is_match'] else 'Invalidated',
                     'activity': 'Posting read and match evaluated in ChatGPT native browser.'})
                 return self._settle(record, task, data, {'task_id': task['task_id'], 'result': task['result']})
@@ -321,11 +321,11 @@ class Sessions:
                 self._save(record)
                 raise
 
-    def package(self, run_id, task_id, token):
+    def package(self, stage_task_id, task_id, token):
         with self.guard():
-            record = self._run(run_id)
+            record = self._run(stage_task_id)
             task = self._task(record, task_id, token)
-            if record['request']['workflow'] != 'submit-prepared' or task['state'] == 'completed':
+            if record['request']['stage'] != 'submit-prepared' or task['state'] == 'completed':
                 raise ValueError('No active submission package for this task')
             from services.ready_submission import ReadySubmission
             context = ReadySubmission(self.client, None, adapter=lambda context: None).prepared_context(task['application_id'])
@@ -334,11 +334,11 @@ class Sessions:
             return {'name': context['package']['name'], 'mime_type': 'application/pdf',
                     'sha256': context['package_sha256'], 'content_base64': base64.b64encode(context['package_bytes']).decode('ascii')}
 
-    def begin_submission(self, run_id, data):
+    def begin_submission(self, stage_task_id, data):
         from services.ready_submission import ReadySubmission
         with self.guard(), self._scope():
-            record = self._run(run_id)
-            if record['request']['workflow'] != 'submit-prepared':
+            record = self._run(stage_task_id)
+            if record['request']['stage'] != 'submit-prepared':
                 raise ValueError('Submission requires submit-prepared')
             task = self._task(record, data.get('task_id'), data.get('token'))
             old = self._command(record, task, data)
@@ -361,11 +361,11 @@ class Sessions:
                 return self._settle(record, task, data, {'task_id': task['task_id'], 'may_submit': True,
                     'instruction': 'Perform the final submit action once in ChatGPT native browser, then record the observed result.'})
 
-    def complete_submission(self, run_id, data):
+    def complete_submission(self, stage_task_id, data):
         from services.ready_submission import ReadySubmission, OUTCOMES
         with self.guard(), self._scope():
-            record = self._run(run_id)
-            if record['request']['workflow'] != 'submit-prepared':
+            record = self._run(stage_task_id)
+            if record['request']['stage'] != 'submit-prepared':
                 raise ValueError('Submission requires submit-prepared')
             task = self._task(record, data.get('task_id'), data.get('token'))
             old = self._command(record, task, data)
@@ -404,14 +404,14 @@ class Sessions:
                     runner._record_confirmed(task['application_id'], receipt)
                 else:
                     runner._record_manual_required(task['application_id'], receipt)
-                task.update(state='completed', result={'application_id': task['application_id'], 'workflow': 'submit-prepared',
+                task.update(state='completed', result={'application_id': task['application_id'], 'stage': 'submit-prepared',
                     'status': 'succeeded' if success else 'failed', 'submission': receipt,
                     'uncertain': receipt['status'] == 'Submission unconfirmed'})
                 return self._settle(record, task, data, {'task_id': task['task_id'], 'result': task['result']})
 
-    def pause(self, run_id, data):
+    def pause(self, stage_task_id, data):
         with self.guard():
-            record = self._run(run_id)
+            record = self._run(stage_task_id)
             task = self._task(record, data.get('task_id'), data.get('token'))
             old = self._command(record, task, data)
             if old is not None:

@@ -13,17 +13,17 @@ from datetime import datetime, timezone
 from .event_dispatcher import dispatch
 from .application_service_client import ApplicationServiceClient
 from .runtime_config import load
-from .workflow_runtime import runtime_from_environment
+from .stage_executor import runtime_from_environment
 from .workload_registry import registry_from_environment
 from .stage_definitions import discover_stages, parse_stage
 from .worker_main import load_discovery_provider
 
 
-def _get_workflow():
-    workflows = discover_stages()
-    if "bookmark-discovered" not in workflows:
-        raise ValueError("bookmark-discovered workflow not found")
-    return parse_stage(workflows["bookmark-discovered"])
+def _get_stage():
+    stages = discover_stages()
+    if "bookmark-discovered" not in stages:
+        raise ValueError("bookmark-discovered stage not found")
+    return parse_stage(stages["bookmark-discovered"])
 
 
 def _bookmark_one(app, event_type, registry, runtime, agent_provider):
@@ -44,7 +44,7 @@ def _bookmark_one(app, event_type, registry, runtime, agent_provider):
 
     print(json.dumps({
         "activity": "started",
-        "workflow": "bookmark-discovered",
+        "stage": "bookmark-discovered",
         "application_id": app_id,
         "company": company,
         "role": role,
@@ -86,7 +86,7 @@ def _bookmark_one(app, event_type, registry, runtime, agent_provider):
 
 
 def run(max_workers=8):
-    definition = _get_workflow()
+    definition = _get_stage()
     event_type = definition.get("trigger", {}).get("event_type")
     if event_type is None:
         raise ValueError("bookmark-discovered has no event type")

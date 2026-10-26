@@ -18,7 +18,7 @@ Live reconciliation leaves active workers alone; recovery is performed at startu
 
 `event_dispatcher.py` is the pure internal routing boundary: normalized adapter events
 become queued task envelopes (persisted as workload records), which are then handled independently by the
-workflow runtime. It can optionally enqueue the envelope into
+stage runtime. It can optionally enqueue the envelope into
 `WorkloadRegistry`; without a registry it remains a pure function.
 For a scheduler or fixture-driven test, route one event with:
 
@@ -44,7 +44,7 @@ clients.
 application state. It supports idempotent request creation, approved/rejected
 decisions, and a pending-request report; it never performs the approved
 external action.
-When a workload payload contains an `approval_actions` array, the workflow
+When a workload payload contains an `approval_actions` array, the stage
 runtime evaluates those actions and records `ask` decisions in this registry
 when one is configured. `allow` and `deny` remain outcomes for the eventual
 external adapter; the runtime itself never performs that action.
@@ -60,16 +60,16 @@ worker restarts; omit it for a process-local registry. Deployments can use
 `registry_from_environment()` with `WORKLOAD_REGISTRY_PATH` and
 `WORKLOAD_MAX_ATTEMPTS`.
 
-`workflow_runtime.py` claims one queued workload, converts its normalized event
-into workflow context, invokes the stateless workload executor, and settles the
+`stage_executor.py` claims one queued workload, converts its normalized event
+into stage context, invokes the stateless workload executor, and settles the
 registry record as succeeded or failed. It never receives direct Drive, Gmail,
 Calendar, or browser access. `runtime_from_environment()` wires it to the
 configured Application Service and workload registry for a deployment entrypoint
 and requires completed onboarding by default. Unit tests may pass
 `require_configuration=False`.
-Call `WorkflowRuntime.run(..., agent_provider=provider)` when the runtime owns
+Call `StageExecutor.run(..., agent_provider=provider)` when the runtime owns
 agent invocation; the provider is called once per agent required by the
-workflow. Supplying `agent_results` remains useful for replay and deterministic
+stage. Supplying `agent_results` remains useful for replay and deterministic
 test execution. Before provider invocation, the runtime reads profile,
 application, event, and interview-research context through the Application Service
 when those resources are available; only serialized values are passed to the
@@ -82,7 +82,7 @@ when their context supplies `application_id` and `reconciliation_result`.
 They also return the registry's counts and attention records for reporting.
 
 `workload_worker.py` provides the continuous-drain seam. Construct it with a
-`WorkflowRuntime` and an LLM provider, call `run_once()` from a scheduler, or
+`StageExecutor` and an LLM provider, call `run_once()` from a scheduler, or
 use `run_forever()` in a long-running worker. Provider and persistence failures
 are returned as failed results while the registry retains retry state.
 
@@ -123,7 +123,7 @@ tabs are never removed automatically and leave the applied command unsuccessful.
 The runtime also has a deployable one-workload entrypoint:
 
 ```bash
-python3 -m services.workflow_runtime \
+python3 -m services.stage_executor \
   --workload-id work_... \
   --agent-results /path/to/agent-results.json
 ```

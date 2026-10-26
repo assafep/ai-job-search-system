@@ -47,7 +47,7 @@ def test_system_error_that_mentions_reader_is_not_url_failure():
     repository = MemoryRepository()
     app = repository.create_application('Example', 'Backend Engineer', URL, target_state='Discovered')
     repository.transition(app.application_id, 'Dead Letters Queue', {
-        'source': 'bookmark workflow',
+        'source': 'bookmark stage',
         'bullets': [
             'Pipeline: bookmark', 'Agent: read-posting', 'Outcome: system_error',
             'error: Application Service returned 404',
@@ -63,14 +63,14 @@ def test_empty_read_failure_field_from_successful_read_is_not_url_failure():
     repository = MemoryRepository()
     app = repository.create_application('Example', 'Backend Engineer', URL, target_state='Discovered')
     repository.transition(app.application_id, 'Bookmarked', {
-        'source': 'bookmark workflow',
+        'source': 'bookmark stage',
         'bullets': [
             'Agent: read-posting', 'Outcome: read',
             'read failure:', 'resolved url: ' + URL,
         ],
     }, 'successful-read')
     repository.transition(app.application_id, 'Dead Letters Queue', {
-        'source': 'validate workflow',
+        'source': 'validate stage',
         'bullets': [
             'Outcome: system_error',
             'error: saved posting content belongs to another position',

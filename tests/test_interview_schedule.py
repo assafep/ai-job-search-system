@@ -6,7 +6,7 @@ import pytest
 from application_service.repository import MemoryRepository
 from services.orchestrator import Orchestrator
 from services.pipeline_config import validate
-from services.polling import PollingSchedule, workflow_poll_seconds
+from services.polling import PollingSchedule, stage_poll_seconds
 from services.workload_registry import WorkloadRegistry
 
 
@@ -17,8 +17,8 @@ def config():
 def test_daily_default_and_supported_override_validation():
     value = config()
     assert value['pipelines']['interview']['event_poll_seconds'] == 86400
-    assert workflow_poll_seconds('prepare-interview') == 86400
-    assert workflow_poll_seconds('handle-incoming-email') == 60
+    assert stage_poll_seconds('prepare-interview') == 86400
+    assert stage_poll_seconds('handle-incoming-email') == 60
     validate(value)
     value['pipelines']['interview']['event_poll_seconds'] = 3600
     validate(value)
@@ -58,7 +58,7 @@ def test_orchestrator_honors_interview_interval_without_delaying_email(tmp_path,
         value['pipelines']['interview']['event_poll_seconds'] = override
     path = tmp_path/'pipelines.json'; path.write_text(json.dumps(value))
     now, calls = [0], []
-    def poll(persistence, registry, workflows): calls.extend(workflows)
+    def poll(persistence, registry, stages): calls.extend(stages)
     runner = Orchestrator(MemoryRepository(), WorkloadRegistry(), None, str(path), event_poller=poll)
     runner.schedule.clock = lambda: now[0]
     def launch(name, callback):
@@ -68,13 +68,13 @@ def test_orchestrator_honors_interview_interval_without_delaying_email(tmp_path,
         return False
     monkeypatch.setattr(runner, '_launch_background', launch)
     try:
-        runner._poll_workflows()
-        now[0] = 60; runner._poll_workflows()
+        runner._poll_stages()
+        now[0] = 60; runner._poll_stages()
         assert calls == ['handle-incoming-email', 'prepare-interview', 'handle-incoming-email']
         boundary = override or 86400
-        now[0] = boundary - 1; runner._poll_workflows()
+        now[0] = boundary - 1; runner._poll_stages()
         assert calls.count('prepare-interview') == 1
-        now[0] = boundary; runner._poll_workflows()
+        now[0] = boundary; runner._poll_stages()
         assert calls.count('prepare-interview') == 2
     finally:
         runner.pool.shutdown(wait=True)

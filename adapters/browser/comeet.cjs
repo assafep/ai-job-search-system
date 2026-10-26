@@ -1,4 +1,4 @@
-// Browser interactions belong to the external adapter, never to workflow agents.
+// Browser interactions belong to the external adapter, never to stage agents.
 const { chromium } = require('playwright');
 const fs = require('fs');
 

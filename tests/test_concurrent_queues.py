@@ -31,7 +31,7 @@ def test_runner_uses_all_eight_threads_and_consumes_ready_queue_once(monkeypatch
         barrier.wait(timeout=10)
         return {
             "application_id": application["application_id"],
-            "workflow": "submit-prepared",
+            "stage": "submit-prepared",
             "initial_state": application["status"],
             "final_state": application["status"],
             "status": "succeeded",
@@ -54,7 +54,7 @@ def test_prepared_posting_flows_into_submission_in_same_pool(monkeypatch):
         persistence.repository.get_application(app_id)  # Verify it exists
         return {
             "application_id": app_id,
-            "workflow": "submit-prepared",
+            "stage": "submit-prepared",
             "initial_state": "Prepared",
             "final_state": "Applied",
             "status": "succeeded",
@@ -66,24 +66,24 @@ def test_prepared_posting_flows_into_submission_in_same_pool(monkeypatch):
     assert report['workload_counts'] == {'submit-prepared': 1}
 
 
-def test_discover_workflows_from_blueprints(monkeypatch):
-    """Verify that queue-driven workflows are discovered from blueprints."""
-    workflows = concurrent_queues._discover_queue_workflows()
+def test_discover_stages_from_blueprints(monkeypatch):
+    """Verify that queue-driven stages are discovered from blueprints."""
+    stages = concurrent_queues._discover_queue_stages()
     # At minimum, the core pipeline states should be present
-    assert 'Discovered' in workflows
-    assert 'Bookmarked' in workflows
-    assert 'Validated' in workflows
-    assert 'Prepared' in workflows
-    # Each maps to a workflow name and event type
-    for state, info in workflows.items():
-        assert 'workflow' in info
+    assert 'Discovered' in stages
+    assert 'Bookmarked' in stages
+    assert 'Validated' in stages
+    assert 'Prepared' in stages
+    # Each maps to a stage name and event type
+    for state, info in stages.items():
+        assert 'stage' in info
         assert 'event_type' in info
         assert 'outcomes' in info
 
 
 def test_run_one_rechecks_state(monkeypatch):
     """Verify that run_one re-reads state before running (single-consumer pattern)."""
-    from services.workflow_runner import run_one
+    from services.stage_runner import run_one
 
     p = Persistence()
     app = p.repository.create_application('LockTest', 'Backend', 'https://example.test/lock')
@@ -100,14 +100,14 @@ def test_run_one_rechecks_state(monkeypatch):
     p.get_application = fake_get_application
 
     class FakeRuntime:
-        def prepare_context(self, workflow, context, agent_provider=None):
+        def prepare_context(self, stage, context, agent_provider=None):
             return context
-        def run_agent(self, workflow, enriched_context, agent_provider):
+        def run_agent(self, stage, enriched_context, agent_provider):
             return {'validate': {'is_match': True, 'relevance_evidence': ['test']}}
 
     result = run_one(
         p, WorkloadRegistry(), FakeRuntime(), app_dict,
-        workflow_name='validate-bookmarked',
+        stage_name='validate-bookmarked',
     )
     # get_application is called at least twice: once to re-check state,
     # and once after persistence writes to read the final state
@@ -117,7 +117,7 @@ def test_run_one_rechecks_state(monkeypatch):
 
 def test_run_one_skips_state_changed(monkeypatch):
     """Verify that run_one skips if another worker already changed the state."""
-    from services.workflow_runner import run_one
+    from services.stage_runner import run_one
 
     p = Persistence()
     app = p.repository.create_application('SkipTest', 'Backend', 'https://example.test/skip')
@@ -128,14 +128,14 @@ def test_run_one_skips_state_changed(monkeypatch):
     p.repository.transition(app.application_id, 'Validated')
 
     class FakeRuntime:
-        def prepare_context(self, workflow, context, agent_provider=None):
+        def prepare_context(self, stage, context, agent_provider=None):
             return context
-        def run_agent(self, workflow, enriched_context, agent_provider):
+        def run_agent(self, stage, enriched_context, agent_provider):
             raise AssertionError("Agent should not be called when state changed")
 
     result = run_one(
         p, WorkloadRegistry(), FakeRuntime(), app_dict,
-        workflow_name='validate-bookmarked',
+        stage_name='validate-bookmarked',
     )
     assert result['status'] == 'skipped'
     assert result['reason'] == 'state changed by another worker'

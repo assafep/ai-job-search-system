@@ -1,17 +1,17 @@
 import os
 
-from services import workflow_venv
+from services import stage_venv
 
 
 def test_missing_requirements_uses_the_current_interpreter(tmp_path, monkeypatch):
-    monkeypatch.setattr(workflow_venv, "ROOT", str(tmp_path))
-    monkeypatch.setattr(workflow_venv, "VENV_ROOT", str(tmp_path / "venvs"))
-    assert workflow_venv.ensure_workflow_python("bookmark-discovered") is None
+    monkeypatch.setattr(stage_venv, "ROOT", str(tmp_path))
+    monkeypatch.setattr(stage_venv, "VENV_ROOT", str(tmp_path / "venvs"))
+    assert stage_venv.ensure_stage_python("bookmark-discovered") is None
 
 
 def test_changed_requirements_rebuild_the_virtualenv(tmp_path, monkeypatch):
-    monkeypatch.setattr(workflow_venv, "ROOT", str(tmp_path))
-    monkeypatch.setattr(workflow_venv, "VENV_ROOT", str(tmp_path / "venvs"))
+    monkeypatch.setattr(stage_venv, "ROOT", str(tmp_path))
+    monkeypatch.setattr(stage_venv, "VENV_ROOT", str(tmp_path / "venvs"))
     requirements = tmp_path / "stages" / "prepare-validated" / "requirements.txt"
     requirements.parent.mkdir(parents=True)
     requirements.write_text("reportlab==5.1.0\n")
@@ -22,10 +22,10 @@ def test_changed_requirements_rebuild_the_virtualenv(tmp_path, monkeypatch):
         os.makedirs(os.path.join(venv_dir, "bin"))
         open(os.path.join(venv_dir, "bin", "python"), "w").close()
 
-    first = workflow_venv.ensure_workflow_python("prepare-validated", create_venv=create)
-    second = workflow_venv.ensure_workflow_python("prepare-validated", create_venv=create)
+    first = stage_venv.ensure_stage_python("prepare-validated", create_venv=create)
+    second = stage_venv.ensure_stage_python("prepare-validated", create_venv=create)
     requirements.write_text("reportlab==5.1.0\npypdf==4.3.1\n")
-    third = workflow_venv.ensure_workflow_python("prepare-validated", create_venv=create)
+    third = stage_venv.ensure_stage_python("prepare-validated", create_venv=create)
 
     assert first == second
     assert os.path.isfile(first)

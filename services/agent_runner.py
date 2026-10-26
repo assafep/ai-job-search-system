@@ -1,4 +1,4 @@
-"""Provider-neutral execution boundary for stateless workflow agents.
+"""Provider-neutral execution boundary for stateless stage agents.
 
 The runner owns contract loading and output validation. The supplied provider
 is only an invocation function; it receives prompt text and serialized

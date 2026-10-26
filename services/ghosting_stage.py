@@ -71,4 +71,4 @@ def execute(client, now=None):
                             data={'reason': reason, 'inactive_before': last_activity(application, events).isoformat()}))
         results.append({'application_id': identity, 'status': status, 'reason': reason})
     require_success(client.bulk_update_items(updates, batch_size=5))
-    return {'workflow': 'identify-ghosting', 'completed': results}
+    return {'stage': 'identify-ghosting', 'completed': results}

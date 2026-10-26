@@ -2,7 +2,7 @@
 
 Greenhouse board endpoints are public and do not require an API key. The
 adapter only reads postings; application submission remains outside this
-module and behind the workflow approval policy.
+module and behind the stage approval policy.
 """
 
 import html
