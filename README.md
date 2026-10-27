@@ -1,75 +1,72 @@
-# AJSS — AI Job Search System
+# AJSS — Google Doc Tab Queue job automation
 
-AJSS is a Google Docs–backed application workflow. **GDTQ (Google Doc Tab Queue) is the intended runtime.** The former Application Service, stage-task API, provisioning workflows and legacy queue runners remain in this repository for migration and selected reusable capabilities; they are **not** the new execution architecture.
-
-> **Release status:** GDTQ has deterministic unit tests and an injectable runtime, but Google Docs live reparenting, outbound email, and browser submission are not end-to-end certified. Do not run GDTQ and `services.orchestrator` against the same document.
+AJSS processes job applications with a **single GDTQ WorkloadOrchestrator**. There is no Application Service, REST/MCP server, PostgreSQL, legacy scheduler, or parallel stage-task runtime.
 
 ## Architecture
 
 ```text
-Google Docs (one tab per application)
-  Discovered ─pop─> Discovered-onFlight ─push─> Bookmarked
-  Bookmarked ─pop─> Bookmarked-onFlight ─push─> Validated / Invalidated
-  Validated  ─pop─> Validated-onFlight  ─push─> Prepared
-  Prepared   ─pop─> Prepared-onFlight   ─push─> Applied / Manual Apply Required
-                               |
-                               v
-     WorkloadOrchestrator -> OutcomeValidator -> StateTransitionEngine
-                               |
-                    terminal outcome / expiry
-                               v
-           Google Drive Applications/<Company - Role>/
-                final-event-<application-tab-id>.json
+Google Docs: Discovered -> Bookmarked -> Validated -> Prepared -> Applied -> Interviewing
+            pop(A) -> A-onFlight -> processing outcome -> push(A,B,item,event)
+                                       |
+                         OutcomeValidator + StateTransitionEngine
+                                       |
+                         WorkloadOrchestrator
+                            | nonterminal: another Docs queue
+                            | terminal: completion record in Drive
+Google Drive: Applicant/profile + resume; Applications/company-role/job posting/package;
+              Applications/company-role/final-event-<tab-id>.json
+SQLite: canonical posting identity, processing leases, idempotency and scheduler checkpoints
 ```
 
-- **Queue operations:** `gdtq.queue.GDTQ` claims and moves direct child tabs; a claim moves A → `A-onFlight`, and a push moves `A-onFlight` → B. The application's tab ID and URL are preserved.
-- **State rules:** `config/gdtq-routing.json`; per-agent output contracts: `schemas/gdtq/`. Processing agents produce outcomes; the orchestrator alone commits transitions.
-- **Persistence:** the Google document is the human-readable active journal; Google Drive stores posting content, preparation packages, research and final archives. SQLite (`gdtq.store.WorkIndex`) indexes posting identities, operation leases and scheduler checkpoints. Keep its volume persistent.
-- **Workers:** `gdtq.dispatch`, `gdtq.runtime`, `gdtq.handlers`; fair round-robin queue selection, bounded asynchronous workers and retry backoff. Email and Calendar observers are optional and disabled by default.
-- **Terminal states:** Offer, Rejected, Duplicate, Invalidated, Failed, Expired and Ghosted are archived before the live tab is deleted. Failed posting downloads go to the Drive `Failed/` tree; unconfirmed submissions require manual reconciliation.
-- **Extension boundary:** job-board ATS adapters, Google OAuth, PDF preparation, LLM providers and selected helpers are reused from `adapters/`, `services/` and `application_service/`. Proposed AI-generated scraping/submission recipes are **quarantined for review**, not automatically installed.
+GDTQ moves an application's existing Google Docs tab between parent state tabs; its tab URL stays stable. The **source queue** owns its on-flight sibling. Agent outcomes are enumerated by JSON Schemas in `schemas/gdtq/` and routed by `config/gdtq-routing.json`. All transitions and queue writes belong to the deterministic orchestrator.
 
-See [GDTQ component, operational and migration instructions](gdtq/README.md), [architecture](docs/architecture.md) and [state map](docs/state-machines.md).
+The Google Docs client, Drive artifact store and OAuth helpers live under `adapters/google/`; ATS/API/scraping adapters under `adapters/job_boards/`; the OpenAI provider under `adapters/llm/`. The GDTQ agent runner and PDF generator are self-contained.
 
-## Setup and quick verification
+## Local setup
 
-Use Python 3.12+ and run the existing onboarding only when the Google Drive folders, candidate profile or OAuth grant are missing. **Do not start the legacy stage runner afterward.**
+Requires Python 3.12+, a Google Docs journal and Drive root, an applicant profile at `Applicant/applicant_profile.json`, a résumé PDF accessible in Drive, and OAuth credentials.
 
 ```bash
-python -m pip install -r requirements.txt\npython -m pip install pytest jsonschema
+python -m pip install -r requirements.txt
+python -m pip install pytest
 python -m gdtq.cli doctor
-python -m pytest -q tests/test_gdtq.py
+python -m pytest -q tests/
 ```
 
-For a **single-writer, explicitly authorized** GDTQ process, configure `config/runtime.json` through onboarding, Google credentials, an accessible resume PDF, and the model provider:
+Create local `config/runtime.json` (ignored by Git) with the Google Docs/Drive URLs:
+```json
+{
+  "google_drive": {
+    "interview_journal_url": "https://docs.google.com/document/d/YOUR_DOC_ID/edit",
+    "artifact_root_url": "https://drive.google.com/drive/folders/YOUR_FOLDER_ID"
+  },
+  "scheduling": {"calendly_url": "https://calendly.com/your-account"}
+}
+```
 
+Configure a Google access token or refresh-token credential set using environment variables documented in `adapters/google/README.md`. Set `AJSS_RESUME_DRIVE_PATH`, `OPENAI_API_KEY`, and run one process:
 ```bash
-export AJSS_RESUME_DRIVE_PATH='Applicant/candidate-resume.pdf'
-export OPENAI_API_KEY='(supply using your secret manager)'
 python -m gdtq.cli run --database var/ajss-gdtq.sqlite3
 ```
 
-The process scheduler ticks once per second and checks queue states in round-robin order. Live submission automation is not enabled by the default CLI: an authorized browser/API submission strategy must be injected and tested. An absent strategy leads to manual follow-up, not a fabricated success.
+**Do not enable against a production journal before validating tab movement on a test document.** Live browser submissions require authorized injectable browser/API strategies; the CLI does not perform them by default. Optional mail/calendar/research/report integrations are behind `AJSS_GDTQ_ENABLE_OBSERVERS=1`, and Gmail send is disabled without `AJSS_GMAIL_ALLOW_SEND=1`.
 
-Optional correspondence/Calendar/research/report integrations are gated by `AJSS_GDTQ_ENABLE_OBSERVERS=1`; recipient and Google OAuth scopes are required. The Gmail adapter defaults to draft-only. See [GDTQ README](gdtq/README.md) for exact settings. Never commit credentials or `config/runtime.json`.
+For containers, see [deployment](deployment/README.md). Full queue contract, recovery policy and limitations: [GDTQ](gdtq/README.md). State map: [config/gdtq-routing.json](config/gdtq-routing.json).
 
-## Repository map
+## Repository
 
-| Location | Status | Purpose |
-| --- | --- | --- |
-| `gdtq/` | **Current** | Queue, orchestration, validation, scoring, stages, completion, observers, CLI |
-| `config/gdtq-*`, `schemas/gdtq/` | **Current** | Versioned lifecycle, typed outcomes, runtime defaults |
-| `tests/test_gdtq.py` | **Current** | Deterministic contract and adapter-boundary tests |
-| `adapters/job_boards/`, `adapters/google_events.py` | Shared | ATS readers and read-only Gmail/Calendar clients |
-| `services/agent_runner.py`, `services/document_generator.py` | Shared | Structured LLM calls and application PDF generation |
-| `application_service/google_docs_repository.py`, `google_drive_artifacts.py` | Shared | Google Docs/Drive clients, history, artifacts and OAuth support |
-| `services/orchestrator.py`, `stages/`, `api/`, `sql/` | **Legacy / compatibility** | Previous stage-task and persistence system; not GDTQ scheduler |
-| `provisioning/`, `deployment/` | Mixed | Existing environment provisioning; GDTQ service deployment needs explicit wiring |
+| Location | Purpose |
+| --- | --- |
+| `gdtq/` | WorkloadOrchestrator, GDTQ queue, stages, completion, observers, SQLite, CLI and tests |
+| `adapters/google/` | Google OAuth, Docs tab operations, Drive artifact store and journal readers |
+| `adapters/job_boards/` | ATS APIs, parsing, scraping and submission response contracts |
+| `adapters/google_events.py` | Read-only Gmail and Calendar event sources |
+| `adapters/llm/openai_provider.py` | Stateless model provider |
+| `agents/application/`, `agents/interview-prep/` | Prompt and schema assets for AI stages |
+| `config/gdtq-routing.json`, `schemas/gdtq/` | State graph and exhaustive typed business outcomes |
+| `tests/` | Deterministic unit and adapter-boundary tests |
+| `deployment/` | Dedicated GDTQ Docker image and operator guide |
 
-## Tests and deployment boundaries
+## Safety and correctness
 
-The focused GDTQ suite uses fake Docs/Drive adapters and does not access Google accounts or submit applications. Run `python -m pytest -q tests/test_gdtq.py`; GitHub Actions uses `.github/workflows/gdtq-tests.yml`. Run the legacy suite separately before retiring the Application Service.
-
-**Migration:** back up the journal, Drive artifacts and durable identity index; stop all legacy writers; provision GDTQ root/in-flight tabs; verify current and in-flight tab placement; run integration tests with non-production documents; then start one scheduler. No destructive live migration is automatically performed.
-
-See [deployment](deployment/README.md), [test instructions](tests/README.md), [GDTQ](gdtq/README.md), [agent contracts](agents/README.md), and [adapters](adapters/README.md).
+Submission attempts are checkpointed before external actions; uncertain results require reconciliation instead of another click. Completed applications are archived in Drive and read back before deletion from Docs. Generated browser recipes are stored for review, not automatically imported. Google Docs writes and SQLite commits do not form a distributed transaction: use one writer, an operator recovery policy, and backups for the SQLite identity index.

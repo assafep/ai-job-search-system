@@ -1,15 +1,5 @@
-# External adapters
+# Adapters
 
-Adapters perform bounded operations on third-party systems. Processing agents receive serialized context and return typed outcomes; they do **not** get direct credentials or ownership of state changes.
+Only active adapter code is retained. `google/` owns Google Docs/Drive/OAuth and journal parsing; `job_boards/` owns ATS search and content retrieval; `google_events.py` polls Gmail and Calendar; `llm/openai_provider.py` is the JSON model provider. No Application Service layer exists.
 
-## Shared adapters used by GDTQ
-
-- `job_boards/` implements ATS API-first posting reads and controlled scraping. The new `gdtq.handlers` reuse `adapters.job_boards.posting_details`.
-- `google_events.py` supplies read-only Gmail and Calendar event sources. GDTQ observers perform application matching, classification and idempotent checkpointing.
-- `llm/` supplies provider implementations used by the existing `services.agent_runner` and new cover-letter/research calls.
-- `browser/` contains older site-specific implementations and compatibility recipes. GDTQ does **not** automatically execute these; configure and authorize submission strategies explicitly.
-- `google-drive/`, `gmail/`, `calendar/`, and `calendly/` document integrations built on existing Application Service/Google access tokens. `gdtq.gmail` holds new draft/send logic.
-
-All external writes must be authorized and idempotent where possible. Never automatically execute AI-generated scraper/submission code; proposals remain in review storage until tested and approved.
-
-See [GDTQ](../gdtq/README.md), [main architecture](../docs/architecture.md) and [job-board API](job-boards/README.md).
+I/O adapters do not choose the next queue state; they return data/errors to deterministic GDTQ stages. Outgoing Gmail messages and final application submissions require explicit configuration and authorization.

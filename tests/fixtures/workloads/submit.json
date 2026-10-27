@@ -1,8 +1,0 @@
-{
-  "application_id": "fixture-application",
-  "application": {
-    "status": "Prepared",
-    "company": "Example",
-    "role": "Backend Engineer"
-  }
-}

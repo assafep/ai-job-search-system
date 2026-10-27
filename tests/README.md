@@ -1,26 +1,11 @@
-# Testing
+# Tests
 
-## GDTQ (current)
+The current repository has one runtime: GDTQ.
 
 ```bash
-python -m pip install -r requirements.txt
-python -m pip install pytest
+python -m pip install -r requirements.txt pytest
 python -m gdtq.cli doctor
-PYTHONPATH=. python -m pytest -q tests/test_gdtq.py
+python -m pytest -q tests/
 ```
 
-This test suite uses fake Google Docs and Drive implementations, SQLite temporary databases, and fake Gmail/Calendar adapters. It covers legal transitions/exhaustive code mapping, wrong-item claims, in-flight moves, retry backoff, deduplication, terminal archive verification, manual updates, observer idempotency, PDF/report timing, and explicit Gmail send permission. No live credentials or website submits are required. GitHub Actions runs the focused suite via [`gdtq-tests.yml`](../.github/workflows/gdtq-tests.yml).
-
-## Legacy regression suite
-
-The other `tests/test_*.py` files exercise the previous Application Service, stage-task, provisioning and ATS framework. They remain valuable while their code is still imported or deployed. Use `python -m pytest -q` (with all project requirements installed) when testing compatibility changes.
-
-Do **not** treat unit tests as certification of live Google Docs tab reparenting, Gmail OAuth permission, external submission confirmation or concurrent multi-process writers. Perform a separate integration pass using a non-production Google document before switching runtimes.
-
-The retired Jobify/RVC/EchoJobs browser-trial fixture test and its experimental helper were removed together, rather than leaving an orphaned test targeting absent site-recipes JSON. Existing ATS adapter and submission safety tests remain.
-
-The obsolete `test_posting_fetcher.py` fixture suite was also retired: it imported the already-removed `services.posting_fetcher` module and depended on the experimental `scrapling` implementation. Current posting behavior is exercised by `test_job_board_framework.py`, `test_posting_details.py` and GDTQ tests.
-
-## Known legacy regression baseline
-
-The optional `compatibility-tests` GitHub Actions job is deliberately non-blocking while retiring the old runtime. At the October 27, 2026 cleanup audit, seven test cases still fail for reasons not introduced by GDTQ: missing/changed legacy provisioning entry points, absent `docker_runner.bundle_files`, two tests requiring the optional `scrapling` dependency, runner readiness expectations, and an onboarding profile-file fixture assumption. This does **not** indicate production readiness; resolve or formally retire the legacy integration before removing the compatibility job.
+Tests use injected fake Google Docs/Drive/mail resources and temporary SQLite. No live OAuth, website submission or mailbox side effects occur. `.github/workflows/gdtq-tests.yml` runs the complete retained suite. Any new integration must have deterministic unit tests and a separate opt-in live smoke test.
