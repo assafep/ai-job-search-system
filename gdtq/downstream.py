@@ -1,7 +1,5 @@
-"""Idempotent final event journal written to Drive before deleting its source tab."""
-from __future__ import annotations
+"""Archive completed applications as JSON and delete source only after verification."""
 import json
-from .contracts import Event
 from .queue import QueueConflict
 
 def safe_name(value):
@@ -9,45 +7,38 @@ def safe_name(value):
     return safe_folder_name(value).replace("/","-")
 
 class CompletionPublisher:
-    """store is GoogleDriveArtifactStore; tabs is GDTQ.
-
-    Never delete the source tab unless the completed event journal has been
-    persisted and read back. Retain identity keys forever to avoid reapplying.
-    """
     def __init__(self,tabs,store,index):
         self.tabs,self.store,self.index=tabs,store,index
 
     def directory(self,company,role,state):
         label=safe_name(company+" - "+role)
-        if state=="Failed": return "Failed/"+label
-        return "Applications/"+label
+        return ("Failed/" if state=="Failed" else "Applications/")+label
 
-    def complete(self,item_id,company,role,final_state,reason,source_state=None,attempt_id=None):
+    def complete(self,item_id,company,role,final_state,reason,source_state=None,attempt_id=None,final_event=None):
         if final_state not in {"Rejected","Offer","Duplicate","Invalidated","Failed","Expired","Ghosted"}:
-            raise ValueError("Not a terminal state: "+final_state)
+            raise ValueError("Not terminal "+final_state)
         document=self.tabs.snapshot()
-        from .queue import find_tab,prop,events_from_tab
-        tab=find_tab(document,item_id)
-        if tab is None:
-            # Caller can treat missing tab as reconciled only after verifying receipt.
-            raise QueueConflict("Cannot archive missing application tab")
+        from .queue import find_tab
+        if find_tab(document,item_id) is None:
+            raise QueueConflict("Missing application tab: cannot archive")
         events=self.tabs.application_events(item_id)
-        final=Event(item_id=item_id,event_type="COMPLETED",previous_state=source_state or "",
-                    current_state=final_state,processor="completion_publisher",
-                    outcome={"reason":reason},attempt_id=attempt_id).as_dict()
-        if not any(e.get("event_id")==final["event_id"] for e in events):
-            events.append(final)
-        folder=self.directory(company,role,final_state)
-        path=folder+"/final-event.json"
+        if final_event is None:
+            from .contracts import Event
+            final_event=Event(item_id=item_id,event_type="COMPLETED",
+                 previous_state=source_state or "",current_state=final_state,
+                 processor="completion_publisher",outcome={"reason":reason},
+                 attempt_id=attempt_id).as_dict()
+        if not any(e.get("event_id")==final_event["event_id"] for e in events):
+            events.append(final_event)
+        path=self.directory(company,role,final_state)+"/final-event.json"
         record={"application_id":item_id,"company":company,"role":role,
                 "final_state":final_state,"document_id":self.tabs.client.document_id,
                 "events":events}
-        content=json.dumps(record,ensure_ascii=False,indent=2,sort_keys=True)
-        result=self.store.save_path(path,content.encode("utf-8"),"application/json",
-                                    "gdtq-final-"+item_id)
-        saved=self.store.read_path(path)["content"]
-        if json.loads(saved.decode("utf-8"))["application_id"]!=item_id:
-            raise RuntimeError("Archive verification failed; original tab preserved")
+        data=json.dumps(record,sort_keys=True,indent=2,ensure_ascii=False).encode("utf-8")
+        saved=self.store.save_path(path,data,"application/json", "gdtq-final-"+item_id)
+        persisted=self.store.read_path(path)["content"]
+        if persisted!=data:
+            raise RuntimeError("Archive contents differ; tab preserved")
         self.tabs.delete_application(item_id)
-        self.index.append_event(final)
-        return {"archive_path":path,"final_state":final_state,"drive_file":result.get("id")}
+        self.index.append_event(final_event)
+        return {"archive_path":path,"drive_file":saved.get("id"),"state":final_state}
