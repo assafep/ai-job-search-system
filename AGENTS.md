@@ -1,67 +1,29 @@
-# Job Search Automation
+# AJSS coding agent instructions
 
-This repository contains time-driven polling stages. Stage
-agents are stateless decision-makers: they read context, produce structured
-decisions, and do not directly create side effects. Workload instances use the
-Application Service to read and write state.
+## Primary design
 
-The portable persistence-boundary instructions are in
-`skills/application-service/SKILL.md`; `openapi.yaml` remains the authoritative
-request/response contract.
+The supported target is **GDTQ**. Start with `README.md`, `gdtq/README.md`, `docs/architecture.md`, `config/gdtq-routing.json`, and `schemas/gdtq/`.
 
-Before running a stage, ensure `config/runtime.json` exists. If it does not,
-run the onboarding command described in `README.md`.
+- Queue A owns A-onFlight. `pop(A)` moves A → A-onFlight; `push(A,B,item,event)` moves A-onFlight → B. Never insert a destination in-flight hop.
+- Stateless processing agents return schema-valid **business outcomes** and separate `execution_status`; they do not change state or directly send email/submit.
+- `OutcomeValidator` checks the agent contract. `StateTransitionEngine` exhaustively resolves outcomes using versioned policy. Only `WorkloadOrchestrator` authorizes a lifecycle transition.
+- A failed or ambiguous outbound application submission **must not be re-submitted blindly**. Persist an unconfirmed receipt and require reconciliation.
+- Invalid agent output is quarantined to DLQ with an error event; terminal outcomes are archived and verified before removing the live tab.
+- Use the existing ATS reader, PDF builder, OAuth and Docs/Drive primitives rather than introducing competing implementations.
+- SQLite is an authoritative **identity and dispatch checkpoint**, not the Google Docs application data store; keep its database on persistent disk and reconcile with document writes.
+- Never execute AI-generated website code automatically; review, sandbox, test, then explicitly approve promotion.
+- A single writer owns each Google document. Running the old `services.orchestrator` alongside GDTQ is forbidden.
+- Do not expose resume contents, credentials, bearer tokens, recruiter messages, or applicant profile in logs.
 
-## Boundaries
+## Commands
 
-- Stateless decision agents may not call Google Drive, Gmail, Calendar, or browser APIs directly.
-- For `validate-bookmarked` and `submit-prepared`, the ChatGPT stage orchestrator
-  uses ChatGPT native Browser/Computer Use. MCP supplies context and accepts structured
-  observations/results; the Application Service validates and persists them. Never
-  substitute a local CLI, Playwright, API model, or hosted browser for these website
-  interactions. Pause for specific CAPTCHA, sign-in or upload interaction when the
-  host requires it. Native-browser availability and CAPTCHA success are not guaranteed.
-- Adapters expose external systems to stage runtimes.
-- The Application Service is the only owner of application-state mutations.
-- Every write must be explicit, validated, and idempotent where retries are possible.
-- Prepared queue membership authorizes automatic submission; do not
-  pause that queue for human approval. Other actions follow
-  `config/automation-policy.yaml`.
+```bash
+python -m gdtq.cli doctor
+python -m pytest -q tests/test_gdtq.py
+```
 
-## Application and reporting policy
+A live `python -m gdtq.cli run` requires onboarding, authorized Google scopes, a persistent SQLite volume and approved external actions. It is **not** a replacement for the legacy deployment bootstrap until end-to-end testing is complete.
 
-- For bookmarking discovered positions, run `python3 -m services.run_single Discovered`
-  (with the configured runtime environment). To read a single posting URL without
-  any stage, use `python3 -m services.agent_cli read-posting --url https://...`.
-- When the user requests a particular workload or queue without specifying a
-  count, process all eligible positions in that requested scope. "Only
-  auto-apply" limits the stage, not the number of positions. Do not interpret
-  a command's default limit as a user-requested count. If the user names a
-  specific position, keep execution scoped to that position; honor any explicit
-  count or instruction to stop or not run.
-- Do not require human review before moving a successfully prepared, saved
-  application package from `Bookmarked` to `Prepared`.
-- Every failed auto-apply attempt must move to `Manual Apply Required`; its
-  transition event must include the auto-apply agent's failure explanation.
-  Prepared items must be submitted automatically. Unconfirmed
-  submissions must be reconciled manually before anyone retries them.
-- System errors (including configuration, unexpected exceptions, invalid agent
-  output, and preparation retrieval/validation/generation/storage failures) move
-  the posting to `Dead Letters Queue`, with the reason in the transition event.
-  This overrides manual routing for system errors before submission. Unconfirmed
-  submissions still require manual reconciliation. Dead letters are never
-  consumed automatically; an operator must restore the appropriate source state.
-- User-facing activity reports must be readable PDFs, not JSON. Machine-readable
-  checkpoints may remain JSON under workload-owned internal state.
-- Concurrent queue runs must share a synchronized persistence client and locked
-  workload/approval registries. Native ChatGPT tasks use durable per-item claims for Bookmarked/Prepared;
-  never assign the same posting to two executors. `services.concurrent_queues`
-  remains an isolated legacy/test utility, not the live entry point for these
-  native-browser stages. Never run a separate registry writer alongside
-  an installation’s active stage executor.
+## Legacy compatibility
 
-## Testing
-
-Use `python3 -m services.test_runner` to test one agent contract or one
-stage in dry-run mode. The test runner does not require `config/runtime.json`
-and does not call external adapters.
+`application_service/`, `services/`, `stages/`, `sql/`, `api/` and some deployment code still support the older stage-task API and tests. Do not casually delete helpers imported by `gdtq/` or public compatibility routes. Mark old components clearly and only remove them with a dependency audit and passing tests.
