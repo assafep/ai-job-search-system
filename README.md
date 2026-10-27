@@ -4,6 +4,8 @@ AJSS processes job applications with a **single GDTQ WorkloadOrchestrator**. The
 
 ## Architecture
 
+**[Architecture diagrams — components, queue sequence, states, storage and deployment](docs/architecture.md)** are maintained in Mermaid and rendered on GitHub.
+
 ```text
 Google Docs: Discovered -> Bookmarked -> Validated -> Prepared -> Applied -> Interviewing
             pop(A) -> A-onFlight -> processing outcome -> push(A,B,item,event)

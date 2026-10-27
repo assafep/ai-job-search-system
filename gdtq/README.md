@@ -1,5 +1,7 @@
 # GDTQ runtime and operational contract
 
+For graphical system views, see the [maintained Mermaid architecture diagrams](../docs/architecture.md): components, GDTQ sequence, state lifecycle, tab hierarchy, and runtime deployment.
+
 GDTQ is the **sole AJSS workload runtime**. Processing agents are stateless producers of JSON Schema-conformant outcomes; the deterministic WorkloadOrchestrator coordinates operations.
 
 ## Queue contract
