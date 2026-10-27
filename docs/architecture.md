@@ -224,7 +224,7 @@ flowchart LR
   OAuth --> Calendar
 ```
 
-There is **no Application Service, REST/MCP server, PostgreSQL service or alternate stage-task runner** in this deployment. Live Google integration, browser submission and external send permissions still require explicit configuration and testing.
+The deployed variant has a **stateless remote MCP/API gateway** on Vercel that connects to managed Neon PostgreSQL; it is not a persistent Application Service. There is no old stage-task runner. Vercel preview builds do not prove Google OAuth and write operations are configured. Live Google integration, browser submission and external send permissions still require explicit configuration and testing.
 
 ## Maintenance rule
 

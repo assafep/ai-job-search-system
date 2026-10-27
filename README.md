@@ -53,7 +53,7 @@ python -m gdtq.cli run --database var/ajss-gdtq.sqlite3
 
 **Do not enable against a production journal before validating tab movement on a test document.** Live browser submissions require authorized injectable browser/API strategies; the CLI does not perform them by default. Optional mail/calendar/research/report integrations are behind `AJSS_GDTQ_ENABLE_OBSERVERS=1`, and Gmail send is disabled without `AJSS_GMAIL_ALLOW_SEND=1`.
 
-For containers, see [deployment](deployment/README.md). Full queue contract, recovery policy and limitations: [GDTQ](gdtq/README.md). State map: [config/gdtq-routing.json](config/gdtq-routing.json).
+For containers, see [deployment](deployment/README.md). For **on-demand ChatGPT/MCP access on Vercel**, use [Vercel gateway instructions](deployment/VERCEL.md). The authenticated service exposes read-only history/dedup tools; dispatch is separately disabled until live integration is approved. Full queue contract, recovery policy and limitations: [GDTQ](gdtq/README.md). State map: [config/gdtq-routing.json](config/gdtq-routing.json).
 
 ## Repository
 
