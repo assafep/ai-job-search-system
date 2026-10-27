@@ -23,8 +23,62 @@ def revision():
     return result.stdout.strip() + ('+dirty' if dirty.stdout else '') if result.returncode == 0 else 'unknown'
 
 
+def execute_local_submission(record, persistence):
+    """Run the prepared Comeet scope with durable one-shot receipts.
+
+    Never use generic queue execution for this stage: that path has no form
+    interaction. The Application Service remains the only persistence writer.
+    """
+    from application_service.stage_execution import submission_backend
+    from application_service.stage_tasks import blueprint_digest, timestamp
+    from adapters.job_boards.framework import get_framework
+    from services.ready_submission import ReadySubmission
+    from services.workload_registry import registry_from_environment
+    from services.activity_report import publish
+
+    if record.get('execution_host') != 'workstation' or submission_backend() != 'local-playwright':
+        raise RuntimeError('Local submission backend must match the admitted task and worker configuration')
+    if record['blueprint_digest'] != blueprint_digest('submit-prepared'):
+        raise RuntimeError('Submission blueprint changed; reconcile the admitted task')
+    if not persistence.journal_status()['valid']:
+        raise RuntimeError('Journal validation failed')
+    ids = record.get('application_ids') or []
+    if not ids:
+        raise RuntimeError('Submission task has no admitted applications')
+    submitter = ReadySubmission(persistence, registry_from_environment())
+    submitter.browser_backend = 'local-playwright'
+    report = dict(stage_task_id=record['stage_task_id'], started_at=record['started_at'],
+                  workload_results=[], code_revision=revision())
+    for application_id in ids:
+        application = persistence.get_application(application_id)
+        # A previously closed or changed posting must never be resubmitted.
+        if not application or application.get('status') != 'Prepared':
+            report['workload_results'].append(dict(
+                application_id=application_id, status='failed',
+                error='Application is no longer Prepared; no submission attempted'))
+            continue
+        if get_framework().resolve_provider(application.get('posting_url', '')) != 'comeet':
+            report['workload_results'].append(dict(
+                application_id=application_id, status='failed',
+                error='Local Playwright currently supports Comeet only; no submission attempted'))
+            continue
+        # Receipt is written before dispatch, and replay never re-clicks submit.
+        outcome = submitter.execute(application_id, record['stage_task_id'] + ':' + application_id)
+        state = outcome.get('status')
+        report['workload_results'].append(dict(
+            application_id=application_id,
+            status='ok' if state in {'Submitted successfully', 'Already submitted'} else 'failed',
+            submission_status=state,
+            error='; '.join(outcome.get('blockers') or []) if state not in {'Submitted successfully', 'Already submitted'} else None))
+    report['finished_at'] = timestamp()
+    report['activity_report_pdf'] = publish(persistence, report)
+    return report
+
+
 def execute(record, persistence):
     from application_service.stage_execution import CHATGPT_STAGES
+    if record['request']['stage'] == 'submit-prepared' and record.get('execution_host') == 'workstation':
+        return execute_local_submission(record, persistence)
     if record['request']['stage'] in CHATGPT_STAGES:
         raise ValueError('This stage requires ChatGPT native browser execution through MCP task tools')
     from .concurrent_queues import run as run_queues
