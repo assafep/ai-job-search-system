@@ -6,7 +6,7 @@ description: Discover, inspect, and safely operate JavaScript-rendered websites 
 # Dynamic website and application-form discovery
 
 A **workflow skill** for an interactive browser-capable runtime. A search result,
-\`requests.get()\`, parsed HTML, or an LLM guess does **not** establish the
+`requests.get()`, parsed HTML, or an LLM guess does **not** establish the
 contents of a client-rendered form. Discover from browser-rendered evidence, keep
 a field inventory, and distinguish a form being filled from an application being
 received.
@@ -21,7 +21,7 @@ heuristics here; the safety, evidence and confirmation rules remain shared.
    application identity. Record the canonical/redirected URL.
 2. Determine which **real** browser the task is allowed to use:
    - **Interactive ChatGPT native Browser/Computer Use** when the AJSS
-     \`validate-bookmarked\` or \`submit-prepared\` task contract requires it.
+     `validate-bookmarked` or `submit-prepared` task contract requires it.
      Use the supplied stage task protocol; a Python script cannot secretly
      stand in for that browser.
    - **Playwright on a workstation** only for an explicitly supported and
@@ -41,7 +41,7 @@ heuristics here; the safety, evidence and confirmation rules remain shared.
 
 For AJSS, **Prepared** queue membership is the application submission
 authorization; a final browser click still requires the durable
-\`beginChatGPTSubmission\`/receipt boundary defined by the current stage
+`beginChatGPTSubmission`/receipt boundary defined by the current stage
 contract. Follow the deployed stage ownership. Do not infer that a local
 Playwright capability is available merely because repository code mentions it.
 
@@ -53,7 +53,7 @@ application flow**, not an unrestricted crawl of an employer website.
 | Pass | Inspection | Evidence / next decision |
 | --- | --- | --- |
 | A: HTTP document | Normal GET, redirects, status, content type, source HTML | Is there job text, JSON-LD, an inline state blob, a form, script references, or only an app shell? |
-| B: Browser boot | Real browser with JavaScript enabled; subscribe to events **before** \`goto\` | Final page URL, document title, screenshot, visible text and runtime errors |
+| B: Browser boot | Real browser with JavaScript enabled; subscribe to events **before** `goto` | Final page URL, document title, screenshot, visible text and runtime errors |
 | C: Network graph | Request/response/failed requests, XHR/fetch/GraphQL, relevant JSON bodies | Which successful **read** response supplies position/details/form configuration? |
 | D: DOM graph | Main frame + every same/cross-origin child frame, visible controls, shadow roots | Form boundaries, labels, hidden/conditional sections, buttons |
 | E: Safe transitions | Click an identified *open application* control, select a noncommittal tab, scroll, wait | Re-enumerate frames, controls, network and visible text after each transition |
@@ -61,31 +61,31 @@ application flow**, not an unrestricted crawl of an employer website.
 | G: Final boundary | Identify uniquely the *final submit* control and receipt contract | Stop at preview, or persist submission intent and click once when authorized |
 
 Maintain a state graph:
-\`initial -> job-details -> apply-entry -> form-loaded -> partially-filled ->
-ready-to-submit -> receipt/error\`. For each edge save what action caused it,
+`initial -> job-details -> apply-entry -> form-loaded -> partially-filled ->
+ready-to-submit -> receipt/error`. For each edge save what action caused it,
 which frames/requests appeared, and whether the action could create an account,
 consent to something, or transmit an application. Do **not** use backtracking
 or replays once the final click might have happened.
 
-**Do not treat \`DOMContentLoaded\` or \`networkidle\` as proof of completion.**
+**Do not treat `DOMContentLoaded` or `networkidle` as proof of completion.**
 Prefer an explicit form/iframe/control wait, plus a bounded observation interval
 for asynchronous fields. A completed top-level document can still contain an
 unloaded form iframe.
 
 ## 3. Intercept and interpret requests/responses correctly
 
-Use \`page.on("request")\`, \`page.on("response")\`,
-\`page.on("requestfinished")\`, \`page.on("requestfailed")\`, and
-\`page.on("frameattached")\`. In human Chrome, inspect the Network tab with
+Use `page.on("request")`, `page.on("response")`,
+`page.on("requestfinished")`, `page.on("requestfailed")`, and
+`page.on("frameattached")`. In human Chrome, inspect the Network tab with
 "Preserve log" enabled before opening the form.
 
 - For each relevant request record: time/order, navigation action, initiator
   frame, method, sanitized URL, resource type, HTTP status or failure reason,
-  redirect target, response \`content-type\`, and whether it changed the UI.
+  redirect target, response `content-type`, and whether it changed the UI.
 - For a **public GET** JSON response, parse its root shape, keys, list lengths,
   position UID and related links. Follow any documented position/details URL
   and verify it matches the visible job. Treat a 200 JSON error object as
-  an error, not a valid posting. Distinguish \`requestfailed\` transport failures
+  an error, not a valid posting. Distinguish `requestfailed` transport failures
   from an HTTP 404/429/503 response.
 - For GraphQL, interpret the **observed operation name, variables and response**
   but do not enumerate undocumented mutations. If pagination exists, follow
@@ -108,29 +108,29 @@ the page, including its real frame context, cookies, redirects, validation,
 CSRF-handling and browser origin rules. Use Playwright locators and UI actions.
 
 **For documented public read-only API calls:** use the browser's
-\`context.request.get(url, params=...)\` or an ordinary Python
-\`requests.get\` if the endpoint is truly public and does not require session
+`context.request.get(url, params=...)` or an ordinary Python
+`requests.get` if the endpoint is truly public and does not require session
 state. The two are not interchangeable for an authenticated form workflow.
 
 **Never** construct a raw submit POST from a guessed endpoint, extract private
-CSRF/session credentials for an unrelated HTTP client, or forge \`Origin\`,
-\`Referer\`, cookies, proxy identities or CAPTCHA answers. Respect the
+CSRF/session credentials for an unrelated HTTP client, or forge `Origin`,
+`Referer`, cookies, proxy identities or CAPTCHA answers. Respect the
 website's terms, rate limits, and access controls. Access to a public careers
 API is not authority to call internal applicant/mutation endpoints.
 
 ### Request parameters and headers
 
 Start with **no invented parameters**. Add only parameters the page actually
-sent or public documentation specifies, e.g. a documented \`details=true\`,
-\`page\`, \`cursor\` or locale. Preserve IDs **exactly** (including dots/leading
+sent or public documentation specifies, e.g. a documented `details=true`,
+`page`, `cursor` or locale. Preserve IDs **exactly** (including dots/leading
 zeros), encode query values with a URL builder, and verify response identity.
-Do not try arbitrary \`render=1\`, \`ajax=true\`, \`callback\`, secret token
+Do not try arbitrary `render=1`, `ajax=true`, `callback`, secret token
 guesses or parameter brute force to make a page work.
 
 Use normal HTTPS and the browser's natural headers for browser actions.
 For a public read-only fetch, reasonable headers are a truthful application
-\`User-Agent\`, a content-specific \`Accept\` (\`text/html\` or
-\`application/json\`) and an optional real \`Accept-Language\`. Follow
+`User-Agent`, a content-specific `Accept` (`text/html` or
+`application/json`) and an optional real `Accept-Language`. Follow
 documented request timeouts, back off from 429, and enforce modest concurrency.
 Do not disable TLS checks, invent navigation headers, or use rotating
 proxies to defeat controls. Never place credentials in saved diagnostic logs.
@@ -138,22 +138,22 @@ proxies to defeat controls. Never place credentials in saved diagnostic logs.
 ## 4. Enumerate **all** active form controls
 
 After every material DOM transition, inspect **every frame**, not just
-\`page.locator()\` in the main page. Treat \`iframe\` navigation and
+`page.locator()` in the main page. Treat `iframe` navigation and
 shadow-DOM components separately. Prefer Playwright's
-\`get_by_role\`, \`get_by_label\`, \`get_by_placeholder\` and \`frame_locator\`;
+`get_by_role`, `get_by_label`, `get_by_placeholder` and `frame_locator`;
 CSS IDs are useful corroboration, not universal truth.
 
 Enumerate at least:
-\`input\` (all types), \`textarea\`, \`select\`,
-\`button\`, \`input[type=submit]\`, \`[role=button]\`,
-\`[role=combobox]\`, \`[role=checkbox]\`,
-\`[role=radio]\`, \`[contenteditable]\`, file-upload triggers,
+`input` (all types), `textarea`, `select`,
+`button`, `input[type=submit]`, `[role=button]`,
+`[role=combobox]`, `[role=checkbox]`,
+`[role=radio]`, `[contenteditable]`, file-upload triggers,
 and meaningful links. Also check labels, legends, help text, error messages,
-accessible names and \`aria-describedby\`.
+accessible names and `aria-describedby`.
 
 Store a **field inventory** keyed by stable UI identity, including:
 
-\`\`\`json
+```json
 {
   "frame_url": "https://example.com/form",
   "form_id": "optional-id",
@@ -173,13 +173,13 @@ Store a **field inventory** keyed by stable UI identity, including:
   "selector_evidence": "get_by_label('Email')",
   "source": "observed-rendered-DOM"
 }
-\`\`\`
+```
 
-For each control, collect \`required\` **and** \`aria-required\`, \`disabled\`,
-visibility, \`autocomplete\`, \`multiple\`, \`accept\`, \`pattern\`,
-\`min\`/\`max\` and \`minlength\`/\`maxlength\` when meaningful. Derive labels
-from explicit \`label[for]\`, wrapping labels, \`aria-label\`,
-\`aria-labelledby\`, placeholder, legend/group context, and then nearby text;
+For each control, collect `required` **and** `aria-required`, `disabled`,
+visibility, `autocomplete`, `multiple`, `accept`, `pattern`,
+`min`/`max` and `minlength`/`maxlength` when meaningful. Derive labels
+from explicit `label[for]`, wrapping labels, `aria-label`,
+`aria-labelledby`, placeholder, legend/group context, and then nearby text;
 save uncertainty instead of silently guessing.
 
 For select/combobox/radio fields, list **available choices from the UI**.
@@ -188,8 +188,8 @@ optional marketing or data-sharing consent. Do not tick optional consent to
 remove a blocker. If the candidate's choice is unknown, ask or route to manual
 work instead of inventing it.
 
-For file fields inspect the actual \`input[type=file]\` even when visually
-hidden. Record \`accept\`, \`multiple\`, enabled state, and whether an upload
+For file fields inspect the actual `input[type=file]` even when visually
+hidden. Record `accept`, `multiple`, enabled state, and whether an upload
 widget uses a button/label to open a file chooser. After upload, verify the
 selected file's **basename and UI confirmation**; a clicked upload trigger
 alone is not evidence that the file was accepted.
@@ -209,10 +209,10 @@ Do not confuse them. Confirm the final button belongs to the populated form,
 is visibly enabled, and has the correct accessible name (some sites use
 "Send", "Submit application" or customized text). Verify one and only one
 matching actionable control within the **correct frame**. If several match,
-scope to the parent form and inspect the DOM rather than using \`.first()\`
+scope to the parent form and inspect the DOM rather than using `.first()`
 blindly.
 
-For preview, scroll to the final button, call \`locator.hover()\`, and capture
+For preview, scroll to the final button, call `locator.hover()`, and capture
 a screenshot. Screenshots commonly omit the system mouse pointer; optionally
 overlay a **clearly marked cursor indicator** for human review. **Do not
 click** in preview mode. Never synthesize a success message or infer
@@ -225,8 +225,8 @@ phone numbers, employers, education, citizenship, work authorization or
 candidate answers. Match fields by semantic label + UI context, not by
 position in a list. Fill in small batches, then re-enumerate the DOM and
 validation messages. Dispatch normal browser input/change events through
-\`locator.fill()\`, \`select_option()\`, \`check()\`, and
-\`set_input_files()\`; setting \`element.value\` by script alone can bypass
+`locator.fill()`, `select_option()`, `check()`, and
+`set_input_files()`; setting `element.value` by script alone can bypass
 framework handlers.
 
 Stop before final click if any of the following applies: missing **required**
@@ -240,8 +240,8 @@ unverified submit control.
 1. Make an immutable preflight record: exact posting URL and role, profile
    provenance, package filename/hash, required-field inventory, UI evidence
    and stable task/application ID.
-2. If AJSS-native submission, call \`beginChatGPTSubmission\` **immediately
-   before** clicking and click **only if** it returns \`may_submit=true\`.
+2. If AJSS-native submission, call `beginChatGPTSubmission` **immediately
+   before** clicking and click **only if** it returns `may_submit=true`.
    For a configured local worker, use its existing durable pending receipt
    **before** dispatch. Never manufacture an intent marker after the fact.
 3. Arm navigation/response observers **before** the final click; click the
@@ -252,12 +252,12 @@ unverified submit control.
    and explicit successful-application text. A request status 200, file
    upload success or absent confirmation email is **not** sufficient.
 5. Record the observed outcome through the Application Service:
-   - \`Submitted successfully\` / \`Already submitted\`: actual receipt
+   - `Submitted successfully` / `Already submitted`: actual receipt
      evidence, observed URL, no conflicting blockers.
-   - \`Prepared but not submitted\`: never clicked; fixable form blockers.
-   - \`Blocked\`: known pre-click block (CAPTCHA, missing access, etc.).
-   - \`Submission unconfirmed\`: clicked or may have clicked, but no receipt.
-   Never mark \`Applied\` without verified success.
+   - `Prepared but not submitted`: never clicked; fixable form blockers.
+   - `Blocked`: known pre-click block (CAPTCHA, missing access, etc.).
+   - `Submission unconfirmed`: clicked or may have clicked, but no receipt.
+   Never mark `Applied` without verified success.
 6. Do not retry an unconfirmed or already-submitted application; investigate
    the existing AJSS receipt and employer confirmation first.
 
@@ -274,18 +274,18 @@ Never copy session cookies, auth headers, CSRF tokens or applicant PDFs into
 a public log, GitHub issue, or LLM prompt.
 
 The repo's optional non-submitting inspector is
-[\`scripts/inspect.py\`](scripts/inspect.py). Run it on an authorized browser
+[`scripts/inspect.py`](scripts/inspect.py). Run it on an authorized browser
 workstation, not in an environment where website access is blocked:
 
-\`\`\`bash
+```bash
 python -m pip install playwright
 python -m playwright install chromium
 python skills/dynamic-web-form-discovery/scripts/inspect.py \
   "https://example.com/careers/job" --headed --out .local-form-inspection
-\`\`\`
+```
 
 Inspect the resulting JSON and screenshot; it never fills personal data and
-never performs final submission. Use \`--entry-selector '#showApplyForm'\`
+never performs final submission. Use `--entry-selector '#showApplyForm'`
 **only after verifying** that selector opens the form rather than submitting.
 
 For actual submission, follow the deployed AJSS task contract and a permitted
@@ -309,7 +309,7 @@ evidence, and stop at the last safe boundary.
   [network](https://playwright.dev/python/docs/network),
   [request events](https://playwright.dev/python/docs/api/class-request),
   [file chooser](https://playwright.dev/python/docs/api/class-filechooser).
-- AJSS: \`deployment/chatgpt-stages.md\`,
-  \`services/ready_submission.py\`,
-  \`adapters/job_boards/submission.py\`,
-  \`skills/application-service/SKILL.md\`.
+- AJSS: `deployment/chatgpt-stages.md`,
+  `services/ready_submission.py`,
+  `adapters/job_boards/submission.py`,
+  `skills/application-service/SKILL.md`.
