@@ -81,3 +81,5 @@ browser submit permissions.
 ## Cleaned-up repository guidance
 
 The root [README](../README.md), [architecture](../docs/architecture.md), [state map](../docs/state-machines.md), [agents](../agents/README.md) and [tests](../tests/README.md) now describe GDTQ as the primary design. Legacy Application Service provisioning, stage-task runners and PostgreSQL migrations remain only for compatibility. Obsolete diagrams, scratch diagnostics and IDE metadata are removed; do not reintroduce a competing queue/state workflow.
+
+The old exploratory Jobify/RVC/EchoJobs site-trial scripts/playbooks are no longer maintained. When a strong-model fallback finds a reusable approach, store it as a data-only `RecipeProposalRegistry` record for review; do not recreate the old automatic trial machinery.

@@ -16,3 +16,5 @@ This test suite uses fake Google Docs and Drive implementations, SQLite temporar
 The other `tests/test_*.py` files exercise the previous Application Service, stage-task, provisioning and ATS framework. They remain valuable while their code is still imported or deployed. Use `python -m pytest -q` (with all project requirements installed) when testing compatibility changes.
 
 Do **not** treat unit tests as certification of live Google Docs tab reparenting, Gmail OAuth permission, external submission confirmation or concurrent multi-process writers. Perform a separate integration pass using a non-production Google document before switching runtimes.
+
+The retired Jobify/RVC/EchoJobs browser-trial fixture test and its experimental helper were removed together, rather than leaving an orphaned test targeting absent site-recipes JSON. Existing ATS adapter and submission safety tests remain.
