@@ -72,8 +72,15 @@ def build_google_runtime(document_id,drive_root_url,db_path,*,max_tabs=100,
     if token is None: raise RuntimeError("Google OAuth credentials not configured")
     queue=GDTQ(GoogleDocsClient(token,document_id),max_tabs=max_tabs)
     store=GoogleDriveArtifactStore(token,drive_root_url)
-    Path(db_path).parent.mkdir(parents=True,exist_ok=True)
-    index=WorkIndex(db_path)
+    database_url=os.environ.get("DATABASE_URL") or os.environ.get("AJSS_DATABASE_URL")
+    if database_url:
+        from .postgres_index import PostgresWorkIndex
+        index=PostgresWorkIndex(database_url)
+    elif os.environ.get("AJSS_ALLOW_LOCAL_SQLITE")=="1":
+        Path(db_path).parent.mkdir(parents=True,exist_ok=True)
+        index=WorkIndex(db_path)
+    else:
+        raise RuntimeError("DATABASE_URL required; local SQLite requires AJSS_ALLOW_LOCAL_SQLITE=1")
     engine=StateTransitionEngine()
     publisher=CompletionPublisher(queue,store,index)
     loader=ApplicationContextLoader(queue,store)

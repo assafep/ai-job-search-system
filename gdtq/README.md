@@ -14,11 +14,11 @@ Agent outputs are validated in `gdtq.policy.OutcomeValidator` against `schemas/g
 
 ## Stages and adapters
 
-- Discovered: check SQLite identity (canonical URL, source ID, company-role); read posting using ATS APIs/scraping; optionally call an explicitly configured smart reader if deterministic readers fail. Save posting JSON under `Applications/<Company - Role>/`. Classify permanent vs retryable retrieval failures.
+- Discovered: check Neon PostgreSQL identity (canonical URL, source ID, company-role); read posting using ATS APIs/scraping; optionally call an explicitly configured smart reader if deterministic readers fail. Save posting JSON under `Applications/<Company - Role>/`. Classify permanent vs retryable retrieval failures.
 - Bookmarked: deterministic skill occurrence scoring relative to applicant profile; below-threshold applications are finalized as Invalidated.
 - Validated: write tailored cover letter with the LLM prompt and a combined submission PDF using `gdtq.document_generator`.
 - Prepared: invoke only explicitly approved external submission strategies, with a durable receipt before clicking Submit. Timeout or ambiguous result must not cause a repeated submission; route to manual reconciliation.
-- Applied/Interviewing: optional hourly Gmail and Calendar observers; the latter invokes the research prompt and creates a nested application tab. Calendar and email idempotency keys are stored in SQLite.
+- Applied/Interviewing: optional hourly Gmail and Calendar observers; the latter invokes the research prompt and creates a nested application tab. Calendar and email idempotency keys are stored in Neon PostgreSQL.
 - Human updates: `gdtq.manual.manual_transition`; DLQ redrive requires explicit approver and reason.
 - Completion: write and verify `Applications/<Company - Role>/final-event-<tab-id>.json` (or `Failed/...`), then delete the live application tab.
 
@@ -43,6 +43,10 @@ Run one process **per journal**. Google Docs allows 100 tabs in a document, coun
 
 ## Operational safety
 
-Google Docs event insertion and reparenting are in one revision-checked batch. SQLite leases, Google Docs updates and Drive archives are **not** an atomic multi-service transaction. An interrupted claim requires reconciliation under exclusive ownership. `recover_orphaned_inflight(..., exclusive_instance=True)` is an operator-only tool; never run concurrently with active workers. Back up SQLite and application artifacts.
+Google Docs event insertion and reparenting are in one revision-checked batch. Neon PostgreSQL leases, Google Docs updates and Drive archives are **not** an atomic multi-service transaction. An interrupted claim requires reconciliation under exclusive ownership. `recover_orphaned_inflight(..., exclusive_instance=True)` is an operator-only tool; never run concurrently with active workers. Back up Neon PostgreSQL and application artifacts.
 
 No old Application Service, REST/MCP API, PostgreSQL migrations, or legacy stage runners are present. Non-production live Google integration tests are required before treating this architecture as production-ready.
+
+## Neon historical deduplication
+
+Use [sql/gdtq/](../sql/gdtq/README.md) to backfill the 160 historical applications without dropping existing tables. The runtime selects `PostgresWorkIndex` from `DATABASE_URL` and only permits a local SQLite fallback with `AJSS_ALLOW_LOCAL_SQLITE=1`. The migration is blocked until the Neon role has schema-create permissions.

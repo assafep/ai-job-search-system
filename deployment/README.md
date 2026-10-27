@@ -22,3 +22,7 @@ docker compose up gdtq-worker
 Mount a local `config/runtime.json` with `google_drive.interview_journal_url` and `google_drive.artifact_root_url`. The Compose service mounts `./var` for durable SQLite.
 
 GDTQ runs a one-second round-robin scheduler. Real ATS API/browser submissions and outbound Gmail sending require separately provided, explicitly authorized adapters. Email/Calendar observers are opt-in and drafts are the default. Before a production cutover, test Google tab reparenting and lease recovery on a disposable document; back up both Docs artifacts and SQLite.
+
+## Database
+
+GDTQ now requires managed Neon PostgreSQL via `DATABASE_URL` for normal operation. The previous local SQLite volume is only an explicit offline-test fallback (`AJSS_ALLOW_LOCAL_SQLITE=1`). Run the additive migration under [sql/gdtq](../sql/gdtq/README.md) on a test branch and verify zero missing identities before activating a production worker.

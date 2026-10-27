@@ -10,6 +10,7 @@ services:
     environment:
       AJSS_RESUME_DRIVE_PATH: "${AJSS_RESUME_DRIVE_PATH:-}"
       AJSS_GDTQ_DB: "/app/var/ajss-gdtq.sqlite3"
+      DATABASE_URL: "${DATABASE_URL:-}"
     volumes:
       - ./var:/app/var
       - ./config/runtime.json:/app/config/runtime.json:ro

@@ -17,7 +17,7 @@ Google Docs: Discovered -> Bookmarked -> Validated -> Prepared -> Applied -> Int
                             | terminal: completion record in Drive
 Google Drive: Applicant/profile + resume; Applications/company-role/job posting/package;
               Applications/company-role/final-event-<tab-id>.json
-SQLite: canonical posting identity, processing leases, idempotency and scheduler checkpoints
+Neon PostgreSQL: identities, leases, idempotency and scheduler checkpoints
 ```
 
 GDTQ moves an application's existing Google Docs tab between parent state tabs; its tab URL stays stable. The **source queue** owns its on-flight sibling. Agent outcomes are enumerated by JSON Schemas in `schemas/gdtq/` and routed by `config/gdtq-routing.json`. All transitions and queue writes belong to the deterministic orchestrator.
@@ -72,3 +72,7 @@ For containers, see [deployment](deployment/README.md). Full queue contract, rec
 ## Safety and correctness
 
 Submission attempts are checkpointed before external actions; uncertain results require reconciliation instead of another click. Completed applications are archived in Drive and read back before deletion from Docs. Generated browser recipes are stored for review, not automatically imported. Google Docs writes and SQLite commits do not form a distributed transaction: use one writer, an operator recovery policy, and backups for the SQLite identity index.
+
+## Existing Neon history
+
+The existing `ajss-db` contains 160 applications and 240 historical posting keys; 46 applications were missing any key. See [the idempotent Neon migration](sql/gdtq/README.md), which preserves the legacy tables and backfills the new GDTQ index. Set `DATABASE_URL` to activate the PostgreSQL implementation. The connected database role currently cannot perform the required DDL, so no migration has been applied to main.
