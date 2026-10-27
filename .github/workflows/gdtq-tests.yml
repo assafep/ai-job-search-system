@@ -7,7 +7,12 @@ on:
       - 'gdtq/**'
       - 'schemas/gdtq/**'
       - 'config/gdtq-*'
-      - 'tests/test_gdtq.py'
+      - 'tests/**'
+      - 'README.md'
+      - 'docs/**'
+      - 'adapters/**'
+      - 'services/**'
+      - '.github/workflows/gdtq-tests.yml'
 jobs:
   gdtq-tests:
     runs-on: ubuntu-latest
