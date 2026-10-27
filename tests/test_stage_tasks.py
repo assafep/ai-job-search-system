@@ -273,3 +273,41 @@ def test_queue_executor_respects_snapshot_and_correct_stage(monkeypatch):
                          stages=['submit-prepared'], application_ids=[second.application_id])
     assert calls == [(second.application_id, 'submit-prepared')]
     assert persistence.get_application(first.application_id)['status'] == 'Prepared'
+
+
+def test_local_comeet_stage_is_claimed_only_by_workstation(tasks, monkeypatch):
+    from application_service.stage_execution import execution_host
+    repository = MemoryRepository()
+    app = repository.create_application(
+        'Example', 'Backend Engineer', 'https://www.comeet.com/jobs/example/12.345/backend/67.890')
+    repository.transition(app.application_id, 'Prepared')
+    monkeypatch.setenv('AJSS_SUBMISSION_BROWSER_BACKEND', 'local-playwright')
+    assert execution_host('submit-prepared') == 'workstation'
+    assert execution_host('validate-bookmarked') == 'chatgpt'
+    task = tasks.start({'stage': 'submit-prepared', 'application_id': app.application_id,
+                        'idempotency_key': 'local-example'}, repository)
+    assert task['execution_host'] == 'workstation'
+    claim = tasks.claim('local-worker')['task']
+    assert claim['stage_task_id'] == task['stage_task_id']
+    assert tasks.claim('second-worker') == {'task': None}
+
+
+def test_native_submission_is_not_workstation_claimable(tasks, monkeypatch):
+    repository = MemoryRepository()
+    app = repository.create_application(
+        'Example', 'Backend Engineer', 'https://www.comeet.com/jobs/example/12.345/backend/67.890')
+    repository.transition(app.application_id, 'Prepared')
+    monkeypatch.setenv('AJSS_SUBMISSION_BROWSER_BACKEND', 'chatgpt-native')
+    task = tasks.start({'stage': 'submit-prepared', 'application_id': app.application_id,
+                        'idempotency_key': 'native-example'}, repository)
+    assert task['execution_host'] == 'chatgpt'
+    assert tasks.claim('local-worker') == {'task': None}
+
+
+def test_backend_configuration_is_fail_closed(monkeypatch):
+    from application_service.stage_execution import submission_backend, execution_host
+    monkeypatch.setenv('AJSS_SUBMISSION_BROWSER_BACKEND', 'auto')
+    with pytest.raises(ValueError, match='AJSS_SUBMISSION_BROWSER_BACKEND'):
+        submission_backend()
+    with pytest.raises(ValueError):
+        execution_host('submit-prepared')
