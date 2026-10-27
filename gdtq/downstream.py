@@ -1,6 +1,6 @@
 """Idempotent completion archiving; no tab deletion before upload verification."""
 import json
-from application_service.google_drive_artifacts import application_folder_name
+from adapters.google.drive import application_folder_name
 from .queue import QueueConflict,find_tab
 
 class CompletionPublisher:

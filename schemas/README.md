@@ -1,9 +1,5 @@
-# Shared schemas
+# Versioned schemas
 
-Store provider-neutral domain and workload schemas here. Agent output schemas
-remain next to their agent instructions.
+`gdtq/` contains the shared envelope and per-stage outcome enums; all values must be covered in `config/gdtq-routing.json`. The StateTransitionEngine verifies exhaustiveness at startup.
 
-`applicant-profile.schema.json` defines the stable envelope used by onboarding,
-the Application Service, and application workloads. Its inner profile fields remain
-open so the resume/profile extraction process can evolve without changing the
-stage contract.
+`applicant-profile.schema.json` records the candidate profile format. Prompt-level schemas live alongside the retained `agents/application/` and `agents/interview-prep/` instructions.

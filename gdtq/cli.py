@@ -27,7 +27,7 @@ def doc_id(value):
 def provider_writer():
     """Reuses the repository's stateless application agent and verified schema."""
     from adapters.llm.openai_provider import OpenAIProvider
-    from services.agent_runner import run
+    from gdtq.agent_runner import run
     from pypdf import PdfReader
     provider=OpenAIProvider()
     if not provider.api_key: raise RuntimeError("OPENAI_API_KEY required for preparation")
@@ -57,7 +57,7 @@ def main(argv=None):
         print(json.dumps({"status":"ok","rules_version":engine.version,
              "states":len(engine.transitions),"agents":list(engine.routes)},indent=2))
         return 0
-    from services.runtime_config import load
+    from gdtq.settings import load
     cfg=load(require=True)
     drive=cfg["google_drive"]
     runtime=build_google_runtime(doc_id(drive["interview_journal_url"]),
@@ -82,7 +82,7 @@ def main(argv=None):
         from adapters.llm.openai_provider import OpenAIProvider
         # Discovery and validation still run deterministically. Research
         # requires an explicitly configured provider and authorized scopes.
-        from services.runtime_config import calendly_url as configured_calendly
+        from gdtq.settings import calendly_url as configured_calendly
         recipient=os.environ.get("AJSS_REPORT_RECIPIENT","")
         if not recipient:raise RuntimeError("Set AJSS_REPORT_RECIPIENT before enabling observers")
         from .integrations import research_provider

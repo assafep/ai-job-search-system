@@ -1,7 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "version": 2,
-  "framework": null,
   "functions": {
     "api/index.py": {
       "maxDuration": 300
@@ -9,8 +8,28 @@
   },
   "rewrites": [
     {
-      "source": "/(.*)",
-      "destination": "/api/index.py"
+      "source": "/mcp",
+      "destination": "/api/index/mcp"
+    },
+    {
+      "source": "/api/mcp",
+      "destination": "/api/index/mcp"
+    },
+    {
+      "source": "/health",
+      "destination": "/api/index/health"
+    },
+    {
+      "source": "/api/health",
+      "destination": "/api/index/health"
+    },
+    {
+      "source": "/cron/dispatch",
+      "destination": "/api/index/cron/dispatch"
+    },
+    {
+      "source": "/api/cron/dispatch",
+      "destination": "/api/index/cron/dispatch"
     }
   ]
 }

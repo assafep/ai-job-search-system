@@ -1,79 +1,52 @@
-# Google Doc Tab Queue (GDTQ)
+# GDTQ runtime and operational contract
 
-A deterministic, typed, single-writer queue/workflow runtime over Google Docs tabs.
+For graphical system views, see the [maintained Mermaid architecture diagrams](../docs/architecture.md): components, GDTQ sequence, state lifecycle, tab hierarchy, and runtime deployment.
 
-## Logical operations
+GDTQ is the **sole AJSS workload runtime**. Processing agents are stateless producers of JSON Schema-conformant outcomes; the deterministic WorkloadOrchestrator coordinates operations.
 
-- `pop(A)` selects the first (or highest-scoring) application under state tab A
-  and re-parents it to the sibling `A-onFlight`. It returns the stable tab ID,
-  tab URL, latest event, and attempt ID.
-- `push(A, B, item_id, event)` verifies membership in `A-onFlight`, appends a
-  structured AJSS_EVENT JSON envelope to the application tab, and re-parents it
-  directly under state B in one revision-checked Google Docs batchUpdate.
-- `claim_item(A, item_id)` claims a specific tab for email, calendar, or human
-  events rather than incorrectly popping a different application.
-- `application_events(tab_id)` returns structured events, legacy journal entries,
-  notes, and nested research-tab content. Research subtabs stay attached when the
-  application tab changes state.
-- `CompletionPublisher.complete` writes an immutable-id-named final JSON under
-  the existing `Applications/<company-role>/` folder or under `Failed/<company-role>/`,
-  verifies it via Drive read-back, then deletes the source document tab.
+## Queue contract
 
-**Only the orchestrator invokes GDTQ**; processing agents return typed outcomes.
-The schema registry lives under `schemas/gdtq/`. The complete, audited
-state map and exhaustive per-agent routing are in `config/gdtq-routing.json`.
-The event envelope includes previous and current state, agent, outcome and version.
+For application tab `itemId`, `pop(A)` moves it from root state tab `A` into sibling `A-onFlight`. A successful processing outcome resolves state B; `push(A, B, itemId, event)` appends a structured event to the application tab and moves it **directly from A-onFlight to B**. Both operations retain the same Google Docs tab ID and URL.
 
-## Set up
+`claim_item(A,itemId)` claims one specific item for a Calendar, Gmail or human update. `application_events(itemId)` combines structured processing envelopes, legacy journal text/notes, and nested interview research tabs.
 
-1. Configure the existing `config/runtime.json` using the repository's onboarding.
-2. Configure Google OAuth (existing `application_service.google_auth`).
-3. Put a searchable-text resume PDF in Drive and set `AJSS_RESUME_DRIVE_PATH`.
-4. Configure `OPENAI_API_KEY` and optionally `OPENAI_MODEL` for preparation.
-5. Run `python -m gdtq.cli doctor` to check configuration and schema coverage.
-6. Run `python -m gdtq.cli run --database var/ajss-gdtq.sqlite3` under a single
-   exclusive deployment; supervise with systemd or Docker.
+Agent outputs are validated in `gdtq.policy.OutcomeValidator` against `schemas/gdtq/`; `StateTransitionEngine` maps every enumerated outcome via `config/gdtq-routing.json` and checks against the legal state graph. The orchestrator handles dispatch, completion, quarantine, retention, and redrive.
 
-`run` uses ATS API/scraping readers already in `adapters.job_boards`, deterministic
-skill scoring and the existing application cover-letter agent. **No automatic browser
-submission or outgoing email sending is granted by default.** To enable them,
-inject consented browser/API submission strategies and authorized Gmail adapters into
-`build_handlers`, `EmailCorrespondenceObserver`, and `Scheduler`.
+## Stages and adapters
 
-## Recovery / delivery
+- Discovered: check Neon PostgreSQL identity (canonical URL, source ID, company-role); read posting using ATS APIs/scraping; optionally call an explicitly configured smart reader if deterministic readers fail. Save posting JSON under `Applications/<Company - Role>/`. Classify permanent vs retryable retrieval failures.
+- Bookmarked: deterministic skill occurrence scoring relative to applicant profile; below-threshold applications are finalized as Invalidated.
+- Validated: write tailored cover letter with the LLM prompt and a combined submission PDF using `gdtq.document_generator`.
+- Prepared: invoke only explicitly approved external submission strategies, with a durable receipt before clicking Submit. Timeout or ambiguous result must not cause a repeated submission; route to manual reconciliation.
+- Applied/Interviewing: optional hourly Gmail and Calendar observers; the latter invokes the research prompt and creates a nested application tab. Calendar and email idempotency keys are stored in Neon PostgreSQL.
+- Human updates: `gdtq.manual.manual_transition`; DLQ redrive requires explicit approver and reason.
+- Completion: write and verify `Applications/<Company - Role>/final-event-<tab-id>.json` (or `Failed/...`), then delete the live application tab.
 
-- SQLite owns posting deduplication and durable scheduler cursors. It is not a
-  ChatGPT-managed key/value service; persist/backup the DB volume.
-- `recover_orphaned_inflight` requires exclusive instance ownership.
-- A submission attempt is checkpointed *before* its external side effect. Any
-  unconfirmed result is routed for manual reconciliation, not retried blindly.
-- AI-generated board-specific code is saved as a **proposal**, never imported
-  automatically. Require security review, sandbox tests and promotion.
-- Google Docs is not a transactional message broker. The Docs tab movement and
-  event append form one batch; the external SQLite claim and Drive archive require
-  recovery/reconciliation. Use one writer per document.
-- 100 tabs is the actual Docs limit. Configure a 90-tab soft cap, a 20-item
-  manual queue cap, plus age-based expiry. Existing research subtabs count too.
-- Run tests: `python -m pytest -q tests/test_gdtq.py`.
+The `gdtq.recipes` registry only stores **proposed** board-specific source code. It is never dynamically imported or deployed without review and tests.
 
-## Integration points still requiring deployment-specific configuration
+## Deployment
 
-The queue runtime is executable with the adapters configured as above.
-Automated forms, Gmail sending, Calendar polling, research web tools and strong-model
-fallback must be injected using real credentials/permissions. Without them, only
-configured operations run; the code does not claim integrations succeeded.
+Install Python 3.12+ requirements; configure `config/runtime.json` with Google Docs/Drive URLs, set Google OAuth refresh credentials, `OPENAI_API_KEY`, and `AJSS_RESUME_DRIVE_PATH`. The target Drive root must contain `Applicant/applicant_profile.json` and the resume PDF.
 
-The old `services.orchestrator` remains intact. **Do not run it and GDTQ as
-simultaneous writers to the same Google document.** Switch over under an exclusive
-lock and migrate existing in-flight records first.
+```bash
+python -m pip install -r requirements.txt pytest
+python -m gdtq.cli doctor
+python -m pytest -q tests/
+python -m gdtq.cli run --database var/ajss-gdtq.sqlite3
+```
 
-## Enable hourly Gmail/Calendar observation and daily reports
+The default process operates a one-second round-robin tick, bounded worker concurrency, and no browser submission capability. Configure authorized site strategies explicitly before enabling real submissions.
 
-Set `AJSS_GDTQ_ENABLE_OBSERVERS=1`, `AJSS_REPORT_RECIPIENT`,
-`AJSS_CONTACT_PHONE` and the existing Calendly URL configuration, plus
-Google Gmail/Calendar OAuth permissions. The observers are then invoked hourly
-by the same process, and the daily PDF is prepared at 08:00 Asia/Jerusalem.
-The default `AJSS_GMAIL_ALLOW_SEND=0` creates drafts rather than sending.
-Set to `1` only after explicitly authorizing account access and recipients.
-This is a process-level opt-in; enabling it does not install Chrome or grant
-browser submit permissions.
+Optionally set `AJSS_GDTQ_ENABLE_OBSERVERS=1` with Gmail/Calendar OAuth scopes, `AJSS_REPORT_RECIPIENT`, `AJSS_CONTACT_PHONE` and a Calendly URL. The daily report is scheduled for 08:00 Asia/Jerusalem. Gmail remains **draft-only** unless `AJSS_GMAIL_ALLOW_SEND=1` and authorized scopes are supplied.
+
+Run one process **per journal**. Google Docs allows 100 tabs in a document, counting nested research tabs. A configured soft cap of 90 and manual retention/expiry policy should prevent capacity exhaustion.
+
+## Operational safety
+
+Google Docs event insertion and reparenting are in one revision-checked batch. Neon PostgreSQL leases, Google Docs updates and Drive archives are **not** an atomic multi-service transaction. An interrupted claim requires reconciliation under exclusive ownership. `recover_orphaned_inflight(..., exclusive_instance=True)` is an operator-only tool; never run concurrently with active workers. Back up Neon PostgreSQL and application artifacts.
+
+No old Application Service, REST/MCP API, PostgreSQL migrations, or legacy stage runners are present. Non-production live Google integration tests are required before treating this architecture as production-ready.
+
+## Neon historical deduplication
+
+Use [sql/gdtq/](../sql/gdtq/README.md) to backfill the 160 historical applications without dropping existing tables. The runtime selects `PostgresWorkIndex` from `DATABASE_URL` and only permits a local SQLite fallback with `AJSS_ALLOW_LOCAL_SQLITE=1`. The migration was successfully applied to Neon main on October 27, 2026 and validated (160 historical applications, 369 keys, zero missing/legacy-key loss).

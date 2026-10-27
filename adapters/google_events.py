@@ -9,7 +9,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from html import unescape
 
-from application_service.google_auth import access_token_value, token_from_environment
+from adapters.google.auth import access_token_value, token_from_environment
 
 
 SCOPES = {
@@ -44,13 +44,6 @@ def body_text(payload):
 def saved_gmail_access(path=None, opener=None):
     """Refresh the onboarding Gmail token, or return None."""
     from pathlib import Path
-    try:
-        from application_service.gmail_grant import access_from_store
-        stored = access_from_store(opener)
-        if stored is not None:
-            return stored
-    except Exception:
-        pass
     token_path = path or Path(__file__).resolve().parents[1] / '.onboarding' / 'gmail-user.json'
     if not token_path.is_file():
         return None
@@ -63,7 +56,7 @@ def saved_gmail_access(path=None, opener=None):
     fields = [saved.get('refresh_token'), saved.get('client_id'), saved.get('client_secret')]
     if not all(fields):
         return None
-    from application_service.google_auth import GoogleAccessToken
+    from adapters.google.auth import GoogleAccessToken
     return GoogleAccessToken(*fields, opener=opener)
 
 

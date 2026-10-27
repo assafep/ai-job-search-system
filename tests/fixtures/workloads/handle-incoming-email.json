@@ -1,6 +1,0 @@
-{
-  "trigger": {"type": "incoming_email", "message_id": "fixture-message-1"},
-  "application_id": "app_fixture",
-  "approval_mode": "dry_run"
-}
-

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime,timezone,timedelta,date
 from .contracts import Event
 from .stages import classify_correspondence
-from services.external_event_polling import matching_application
+from gdtq.matching import matching_application
 
 class EmailCorrespondenceObserver:
     def __init__(self,fetch_mail,applications,report_outcome,reply=None,index=None,classifier=None):

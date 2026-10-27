@@ -1,7 +1,8 @@
 reportlab==5.1.0
 pypdf==4.3.1
-phonenumbers==8.13.55
-psycopg[binary]==3.2.12
 cryptography==44.0.0
-
--r requirements-mcp.txt
+jsonschema==4.26.0
+PyYAML==6.0.3
+psycopg[binary]==3.2.12
+fastapi==0.115.12
+httpx==0.28.1

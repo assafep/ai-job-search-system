@@ -1,6 +1,0 @@
-{
-  "setup": "local-docker",
-  "action": "up",
-  "drive_mode": "user-oauth",
-  "drive_path": "JobSearch/JobSearch 2026"
-}

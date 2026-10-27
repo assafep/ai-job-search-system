@@ -1,4 +1,0 @@
-# Cover letter
-
-<!-- Template placeholder. -->
-
