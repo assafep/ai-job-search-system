@@ -18,3 +18,5 @@ The other `tests/test_*.py` files exercise the previous Application Service, sta
 Do **not** treat unit tests as certification of live Google Docs tab reparenting, Gmail OAuth permission, external submission confirmation or concurrent multi-process writers. Perform a separate integration pass using a non-production Google document before switching runtimes.
 
 The retired Jobify/RVC/EchoJobs browser-trial fixture test and its experimental helper were removed together, rather than leaving an orphaned test targeting absent site-recipes JSON. Existing ATS adapter and submission safety tests remain.
+
+The obsolete `test_posting_fetcher.py` fixture suite was also retired: it imported the already-removed `services.posting_fetcher` module and depended on the experimental `scrapling` implementation. Current posting behavior is exercised by `test_job_board_framework.py`, `test_posting_details.py` and GDTQ tests.
