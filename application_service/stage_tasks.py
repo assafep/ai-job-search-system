@@ -97,6 +97,11 @@ class StageTasks:
                     raise ValueError('idempotency_key already used with another request')
                 return public(records[identity])
             definition = definitions()[request['stage']]
+            host = execution_host(request['stage'])
+            if host == 'workstation' and request['stage'] == 'submit-prepared':
+                from .stage_execution import submission_backend
+                if submission_backend() != 'local-playwright':
+                    raise ValueError('Workstation submission requires the local-playwright backend')
             selected = None
             if definition['trigger']['poll_kind'] == 'queue':
                 states = definition['input_states']
@@ -109,7 +114,7 @@ class StageTasks:
                     ids = [request['application_id']]
                 selected = ids[:request['limit']] if 'limit' in request else ids
             record = dict(stage_task_id=identity, stage=request['stage'], request=request, application_ids=selected,
-                          execution_host=execution_host(request['stage']),
+                          execution_host=host,
                           blueprint_digest=blueprint_digest(request['stage']),
                           status='queued', created_at=timestamp(), updated_at=timestamp())
             records[identity] = record
@@ -153,8 +158,9 @@ class StageTasks:
                 return {'task': None}
             from .stage_execution import CHATGPT_STAGES
             record = next((r for r in records.values() if r['status'] == 'queued'
-                           and r['request']['stage'] not in CHATGPT_STAGES
-                           and r.get('execution_host', 'workstation') == 'workstation'), None)
+                           and r.get('execution_host', 'workstation') == 'workstation'
+                           and (r['request']['stage'] not in CHATGPT_STAGES
+                                or r['request']['stage'] == 'submit-prepared')), None)
             if record is None:
                 return {'task': None}
             record.update(status='running', worker_id=worker_id, claim_token=uuid.uuid4().hex,
