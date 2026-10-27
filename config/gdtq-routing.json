@@ -163,6 +163,30 @@
         "RESEARCH_SKIPPED": "@same",
         "ERROR": "Dead Letters Queue"
       }
+    },
+    "manual_update": {
+      "source_states": [
+        "Manual Apply Required"
+      ],
+      "outcomes": {
+        "APPLIED": "Applied",
+        "INTERVIEWING": "Interviewing",
+        "REJECTED": "Rejected",
+        "OFFER": "Offer",
+        "PREPARED": "Prepared",
+        "DUPLICATE": "Duplicate"
+      }
+    },
+    "phone_followup": {
+      "source_states": [
+        "Applied",
+        "Interviewing"
+      ],
+      "outcomes": {
+        "INTERVIEWING": "Interviewing",
+        "REJECTED": "Rejected",
+        "OFFER": "Offer"
+      }
     }
   }
 }
