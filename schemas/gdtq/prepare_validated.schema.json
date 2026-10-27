@@ -1,0 +1,48 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "agent",
+    "item_id",
+    "code",
+    "execution_status",
+    "summary",
+    "data"
+  ],
+  "properties": {
+    "agent": {
+      "const": "prepare_validated"
+    },
+    "item_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "code": {
+      "enum": [
+        "PREPARED",
+        "MANUAL_REVIEW",
+        "DUPLICATE",
+        "ERROR"
+      ]
+    },
+    "execution_status": {
+      "enum": [
+        "SUCCESS",
+        "RETRYABLE_FAILURE",
+        "PERMANENT_FAILURE"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "data": {
+      "type": "object"
+    },
+    "attempt_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}

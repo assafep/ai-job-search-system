@@ -1,0 +1,53 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "agent",
+    "item_id",
+    "code",
+    "execution_status",
+    "summary",
+    "data"
+  ],
+  "properties": {
+    "agent": {
+      "const": "submit_prepared"
+    },
+    "item_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "code": {
+      "enum": [
+        "SUBMITTED",
+        "INTERVIEW_CONFIRMED",
+        "ALREADY_SUBMITTED",
+        "REJECTED",
+        "OFFER",
+        "MANUAL_REQUIRED",
+        "SUBMISSION_UNCONFIRMED",
+        "DUPLICATE",
+        "ERROR"
+      ]
+    },
+    "execution_status": {
+      "enum": [
+        "SUCCESS",
+        "RETRYABLE_FAILURE",
+        "PERMANENT_FAILURE"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "data": {
+      "type": "object"
+    },
+    "attempt_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}
