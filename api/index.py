@@ -4,7 +4,6 @@ import hmac
 import os
 from fastapi import FastAPI,Request,HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel,Field
 from gdtq import service
 
 app=FastAPI(title="AJSS MCP",docs_url=None,redoc_url=None,openapi_url=None)
@@ -80,11 +79,13 @@ def rpc_response(body):
                 "isError":True}}
     return {"jsonrpc":"2.0","id":req_id,"error":{"code":-32601,"message":"Method not found"}}
 
+@app.get("/api/index/health")
 @app.get("/api/health")
 @app.get("/health")
 def health():
-    return {"service":"ajss-gdtq","status":"ready","dispatch_enabled":os.getenv("AJSS_ENABLE_DISPATCH")=="1"}
+    return {"service":"ajss-gdtq","status":"alive","database_configured":bool(os.getenv("DATABASE_URL") or os.getenv("AJSS_DATABASE_URL")),"dispatch_enabled":os.getenv("AJSS_ENABLE_DISPATCH")=="1"}
 
+@app.post("/api/index/mcp")
 @app.post("/api/mcp")
 @app.post("/mcp")
 async def mcp(request:Request):
@@ -98,6 +99,7 @@ async def mcp(request:Request):
     if body.get("method")=="notifications/initialized":return JSONResponse({},status_code=202)
     return rpc_response(body)
 
+@app.post("/api/index/cron/dispatch")
 @app.post("/api/cron/dispatch")
 @app.post("/cron/dispatch")
 async def cron_dispatch(request:Request):

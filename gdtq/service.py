@@ -104,6 +104,12 @@ def dispatch_lock(dsn):
             finally:
                 cur.execute("SELECT pg_advisory_unlock(%s)",(LOCK_KEY,))
 
+def _default_writer():
+    if not os.environ.get("OPENAI_API_KEY"):
+        return None
+    from .cli import provider_writer
+    return provider_writer()
+
 def dispatch_once(*,runtime_factory=None,handler_factory=None,writer_factory=None,
                   lock_factory=None):
     """Process at most one queued application synchronously; NEVER fork background work.
@@ -121,7 +127,7 @@ def dispatch_once(*,runtime_factory=None,handler_factory=None,writer_factory=Non
             from .dispatch import WorkloadOrchestrator
             from .handlers import build_handlers
             resume=os.environ.get("AJSS_RESUME_DRIVE_PATH")
-            writer=(writer_factory or (lambda: None))()
+            writer=(writer_factory or _default_writer)()
             handlers=(handler_factory or build_handlers)(
                 runtime,writer=writer,resume_path=resume,
                 submission_strategies=(),

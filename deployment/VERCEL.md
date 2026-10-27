@@ -10,9 +10,7 @@ entrypoint and root directory. The gateway provides `/api/mcp`,
 `/api/health`, and `/api/cron/dispatch`. The root rewrites in `vercel.json`
 also expose `/mcp`, `/health`, and `/cron/dispatch`.
 
-Vercel's Python builder ordinarily installs `requirements.txt`; it MUST include
-`fastapi`, `pydantic` and `psycopg[binary]` as well as the normal runtime
-requirements. Do not rely on a local SQLite filesystem for identity state.
+Vercel's Python builder installs `requirements.txt`, which contains `fastapi`, `httpx` for tests, and `psycopg[binary]`. Do not rely on a local SQLite filesystem for identity state.
 
 Required secrets:
 - `DATABASE_URL`: Neon pooled Postgres URI, configured in the Vercel
