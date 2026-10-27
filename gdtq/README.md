@@ -49,4 +49,4 @@ No old Application Service, REST/MCP API, PostgreSQL migrations, or legacy stage
 
 ## Neon historical deduplication
 
-Use [sql/gdtq/](../sql/gdtq/README.md) to backfill the 160 historical applications without dropping existing tables. The runtime selects `PostgresWorkIndex` from `DATABASE_URL` and only permits a local SQLite fallback with `AJSS_ALLOW_LOCAL_SQLITE=1`. The migration is blocked until the Neon role has schema-create permissions.
+Use [sql/gdtq/](../sql/gdtq/README.md) to backfill the 160 historical applications without dropping existing tables. The runtime selects `PostgresWorkIndex` from `DATABASE_URL` and only permits a local SQLite fallback with `AJSS_ALLOW_LOCAL_SQLITE=1`. The migration was successfully applied to Neon main on October 27, 2026 and validated (160 historical applications, 369 keys, zero missing/legacy-key loss).

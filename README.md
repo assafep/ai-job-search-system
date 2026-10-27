@@ -75,4 +75,4 @@ Submission attempts are checkpointed before external actions; uncertain results 
 
 ## Existing Neon history
 
-The existing `ajss-db` contains 160 applications and 240 historical posting keys; 46 applications were missing any key. See [the idempotent Neon migration](sql/gdtq/README.md), which preserves the legacy tables and backfills the new GDTQ index. Set `DATABASE_URL` to activate the PostgreSQL implementation. The connected database role currently cannot perform the required DDL, so no migration has been applied to main.
+The existing `ajss-db` contains 160 applications and 240 historical posting keys; 46 applications were missing any key. See [the idempotent Neon migration](sql/gdtq/README.md), which preserves the legacy tables and backfills the new GDTQ index. Set `DATABASE_URL` to activate the PostgreSQL implementation. **Migration applied and verified in Neon main on October 27, 2026**: 160/160 applications covered, 369 keys, all 240 original keys preserved. The production worker is not yet deployed.

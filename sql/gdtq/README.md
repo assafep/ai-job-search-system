@@ -16,9 +16,7 @@ lost legacy keys, and re-run the migration to prove idempotency. Only then
 seek approval to apply to production. Do not connect the scheduler to the
 database until the schema passes validation.
 
-The current ChatGPT Neon connection is pinned to `ajss_db_migration`,
-which does not have `CREATE` privileges on schema `public`, so the
-prepare-migration operation was denied; **no migration was applied**.
+**Applied October 27, 2026:** migrated to Neon `ajss-db` production `main` using owner-authorized migration flow, after successful temporary-branch validation. Final verified state: **160/160 historical applications covered, 369 deduplication keys, 240/240 original keys preserved, 0 internal URNs indexed as external URLs**. The temporary branch was deleted after promotion. The original tables remain untouched.
 A Neon administrator must grant the necessary scoped permission or connect
 with a schema-owning database role. Do not elevate credentials in source.
 
