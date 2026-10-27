@@ -66,3 +66,14 @@ configured operations run; the code does not claim integrations succeeded.
 The old `services.orchestrator` remains intact. **Do not run it and GDTQ as
 simultaneous writers to the same Google document.** Switch over under an exclusive
 lock and migrate existing in-flight records first.
+
+## Enable hourly Gmail/Calendar observation and daily reports
+
+Set `AJSS_GDTQ_ENABLE_OBSERVERS=1`, `AJSS_REPORT_RECIPIENT`,
+`AJSS_CONTACT_PHONE` and the existing Calendly URL configuration, plus
+Google Gmail/Calendar OAuth permissions. The observers are then invoked hourly
+by the same process, and the daily PDF is prepared at 08:00 Asia/Jerusalem.
+The default `AJSS_GMAIL_ALLOW_SEND=0` creates drafts rather than sending.
+Set to `1` only after explicitly authorizing account access and recipients.
+This is a process-level opt-in; enabling it does not install Chrome or grant
+browser submit permissions.

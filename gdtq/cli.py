@@ -62,6 +62,10 @@ def main(argv=None):
     drive=cfg["google_drive"]
     runtime=build_google_runtime(doc_id(drive["interview_journal_url"]),
                drive["artifact_root_url"],args.database)
+    runtime["queue"].ensure_state_tabs(
+        list(runtime["engine"].transitions)+[name+"-onFlight" for name in
+         ("Discovered","Bookmarked","Validated","Prepared","Applied","Interviewing",
+          "Manual Apply Required","Dead Letters Queue")])
     if not args.resume_path:
         raise RuntimeError("Set AJSS_RESUME_DRIVE_PATH to the verified resume PDF in Drive")
     writer=provider_writer()
@@ -71,7 +75,25 @@ def main(argv=None):
         match_threshold=float(os.environ.get("AJSS_SKILL_THRESHOLD","0")),
         calendly_url=(cfg.get("scheduling") or {}).get("calendly_url"))
     orch,dispatcher=wire_orchestrator(runtime,handlers)
-    scheduler=Scheduler(runtime["index"],orch)
+    email_scan=calendar_scan=daily=None
+    if os.environ.get("AJSS_GDTQ_ENABLE_OBSERVERS")=="1":
+        from .integrations import build_observers
+        from .observers import Scheduler
+        from adapters.llm.openai_provider import OpenAIProvider
+        # Discovery and validation still run deterministically. Research
+        # requires an explicitly configured provider and authorized scopes.
+        from services.runtime_config import calendly_url as configured_calendly
+        recipient=os.environ.get("AJSS_REPORT_RECIPIENT","")
+        if not recipient:raise RuntimeError("Set AJSS_REPORT_RECIPIENT before enabling observers")
+        from .integrations import research_provider
+        mail,calendar,report=build_observers(runtime,orch,
+            researcher=OpenAIProvider(),report_recipient=recipient,
+            calendly_url=configured_calendly(cfg) or "",
+            phone_number=os.environ.get("AJSS_CONTACT_PHONE",""),
+            allow_send=os.environ.get("AJSS_GMAIL_ALLOW_SEND")=="1")
+        email_scan,calendar_scan,daily=mail.scan,calendar.scan,report.run
+    scheduler=Scheduler(runtime["index"],orch,email=email_scan,calendar=calendar_scan,
+                        report=daily,report_timezone="Asia/Jerusalem",report_hour=8)
     try:run_forever(scheduler,tick_seconds=args.tick_seconds)
     finally:
         dispatcher.close()
