@@ -1,0 +1,14 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "version": 2,
+  "functions": {
+    "api/index.py": {
+      "maxDuration": 300
+    }
+  },
+  "rewrites": [
+    {"source": "/mcp", "destination": "/api/index"},
+    {"source": "/health", "destination": "/api/index"},
+    {"source": "/cron/dispatch", "destination": "/api/index"}
+  ]
+}
