@@ -21,3 +21,7 @@ which does not have `CREATE` privileges on schema `public`, so the
 prepare-migration operation was denied; **no migration was applied**.
 A Neon administrator must grant the necessary scoped permission or connect
 with a schema-owning database role. Do not elevate credentials in source.
+
+### Historical URL semantics
+
+The `applications.posting_url` field contains **138 internal `urn:ajss:` IDs** and **22 HTTP(S) URLs**. External legacy URLs are held in the 127 `posting_keys` entries. The migration therefore preserves every legacy URL key, but only uses `applications.posting_url` as a new URL identity when it has an HTTP(S) scheme. Never use a legacy internal URN as the external posting URL. URL and company/role aliases may coexist for the same application.

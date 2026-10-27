@@ -28,12 +28,14 @@ SELECT 'company_role',lower(btrim(company))||' / '||lower(btrim(role)),
 FROM public.applications WHERE btrim(company)<>'' AND btrim(role)<>''
 ON CONFLICT(key_type,lookup_key) DO NOTHING;
 
--- Posting URLs stored in applications were confirmed unique; use their
--- source values to recover missing indices. Canonical tracking removal in
--- runtime handles future occurrences.
+-- Only HTTP(S) posting URLs are valid for URL deduplication.
+-- Many historical applications use internal urn:ajss: identifiers; DO NOT
+-- create a URL key from those. Original external URLs already exist in
+-- posting_keys where available.
 INSERT INTO public.gdtq_identities(key_type,lookup_key,application_id,origin)
 SELECT 'url',posting_url,application_id,'backfill'
-FROM public.applications WHERE btrim(posting_url)<>''
+FROM public.applications
+WHERE posting_url ~* '^https?://' AND btrim(posting_url)<>''
 ON CONFLICT(key_type,lookup_key) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS public.gdtq_items(

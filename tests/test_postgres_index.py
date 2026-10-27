@@ -24,3 +24,8 @@ def test_claims_are_atomic_and_checkpoint_json():
     assert "ON CONFLICT (item_id) DO UPDATE" in source
     assert "RETURNING item_id" in source
     assert "pg_advisory_xact_lock" in source
+
+def test_backfill_does_not_index_internal_urn_as_url():
+    sql=(Path(__file__).resolve().parents[1]/"sql/gdtq/001_neon_index.sql").read_text()
+    assert "posting_url ~* '^https?://'" in sql
+    assert "FROM public.posting_keys" in sql
