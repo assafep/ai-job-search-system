@@ -69,10 +69,9 @@ async function submit(input) {
       else if (required) requiredMissing.push(label);
       outcome.fields.push({ label, required, value: value || null, source: 'applicant_profile.personal', state: value ? 'prepared' : 'blank' });
     }
-    // The prepared artifact is one combined cover-letter/resume PDF. Upload it
-    // once as the resume; never misrepresent the same file as two attachments.
-    // A separate cover-letter upload needs its own explicit artifact.
-    for (const [id, label] of [['cv', 'Attach Resume']]) {
+    // Intentional: the same combined PDF is uploaded into both Comeet slots.
+    // The saved package contains the cover letter and resume together.
+    for (const [id, label] of [['cv', 'Attach Resume'], ['coverLetter', 'Attach Cover Letter']]) {
       if (!await frame.locator('#' + id).count()) continue;
       const chooserPromise = page.waitForEvent('filechooser', { timeout: 15000 });
       await frame.getByText(label, { exact: true }).click();
