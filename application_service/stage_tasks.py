@@ -10,7 +10,7 @@ import hashlib
 import json
 import os
 import uuid
-from .stage_execution import execution_host, execution_enabled
+from .stage_execution import execution_host, execution_enabled, submission_backend
 from urllib.parse import parse_qs, urlparse
 
 
@@ -115,6 +115,8 @@ class StageTasks:
                         (urlsplit(a.posting_url if hasattr(a, 'posting_url') else a['posting_url']).hostname or '').lower()
                         == 'www.comeet.com']
                 ids = list(dict.fromkeys(a.application_id if hasattr(a, 'application_id') else a['application_id'] for a in applications))
+                if request['stage'] == 'submit-prepared' and host == 'workstation' and not ids:
+                    raise ValueError('No Prepared Comeet applications are available for local submission')
                 if 'application_id' in request:
                     if request['application_id'] not in ids:
                         raise ValueError('Application is not eligible for this stage')
@@ -168,7 +170,7 @@ class StageTasks:
                            and r.get('execution_host', 'workstation') == 'workstation'
                            and (r['request']['stage'] not in CHATGPT_STAGES
                                 or (r['request']['stage'] == 'submit-prepared'
-                                    and __import__('application_service.stage_execution', fromlist=['submission_backend']).submission_backend() == 'local-playwright'))), None)
+                                    and submission_backend() == 'local-playwright'))), None)
             if record is None:
                 return {'task': None}
             record.update(status='running', worker_id=worker_id, claim_token=uuid.uuid4().hex,
