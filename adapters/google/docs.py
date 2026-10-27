@@ -2,7 +2,7 @@
 import json,os,re,urllib.error,urllib.parse,urllib.request
 from time import monotonic
 from .auth import access_token_value
-URL_RE=re.compile(r"https?://[^\\s]+",re.IGNORECASE)
+URL_RE=re.compile(r"https?://[^\s]+", re.IGNORECASE)
 
 class GoogleDocsClient:
     def __init__(self, access_token, document_id):

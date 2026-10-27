@@ -36,7 +36,7 @@ def application_folder_name(company, role):
     label = " - ".join(part.strip() for part in (company, role) if part and part.strip())
     # A slash is intentional here: it is part of the existing Drive folder name
     # convention and does not create another folder in Google Drive.
-    return safe_folder_name(label)
+    return safe_folder_name(label.replace('/', '-'))
 
 
 class GoogleDriveArtifactStore:
