@@ -96,3 +96,45 @@ def test_comeet_board_without_a_token_is_an_error():
 
     with pytest.raises(RuntimeError, match='careers token'):
         ComeetJobBoard({'F2.004': 'Claroty'}, opener=empty).list_jobs()
+
+
+def test_comeet_submit_uses_native_submitter_by_default():
+    from adapters.job_boards.interface import SubmissionContext
+    board = ComeetJobBoard()
+    calls = []
+    context = SubmissionContext(
+        application={'company': 'Example'}, posting_url='https://www.comeet.com/jobs/test/1.234/role/5.678',
+        profile={'personal': {'name': 'Example'}}, package_bytes=b'%PDF-test',
+        package_name='cv.pdf',
+    )
+    outcome = board.submit_application(context, lambda payload: calls.append(payload) or {'status': 'Prepared but not submitted', 'blockers': ['Test']})
+    assert outcome['status'] == 'Prepared but not submitted'
+    assert len(calls) == 1
+
+
+def test_comeet_submit_local_playwright_dispatch(monkeypatch):
+    from adapters.job_boards.interface import SubmissionContext
+    from adapters.browser import comeet as browser
+    received = []
+    monkeypatch.setattr(browser, 'submit', lambda payload: received.append(payload) or {'status': 'Prepared but not submitted', 'blockers': ['Test']})
+    context = SubmissionContext(
+        application={'company': 'Example'}, posting_url='https://www.comeet.com/jobs/test/1.234/role/5.678',
+        profile={'personal': {'name': 'Example'}}, package_bytes=b'%PDF-test',
+        package_name='cv.pdf', host_context={'browser_backend': 'local-playwright'},
+    )
+    result = ComeetJobBoard().submit_application(context, None)
+    assert result['status'] == 'Prepared but not submitted'
+    assert len(received) == 1
+    assert received[0]['package']['name'] == 'cv.pdf'
+    assert received[0]['application']['posting_url'] == context.posting_url
+
+
+def test_comeet_submit_local_playwright_rejects_non_comeet_url():
+    from adapters.job_boards.interface import SubmissionContext
+    context = SubmissionContext(
+        application={}, posting_url='https://example.com/jobs/1',
+        package_bytes=b'%PDF-test', package_name='cv.pdf',
+        host_context={'browser_backend': 'local-playwright'},
+    )
+    with pytest.raises(ValueError, match='www.comeet.com'):
+        ComeetJobBoard().submit_application(context, None)
