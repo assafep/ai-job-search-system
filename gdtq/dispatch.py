@@ -48,6 +48,18 @@ class WorkloadOrchestrator:
             payload={"item_id":item_id,"agent":"outcome_validator","code":"INVALID_OUTCOME",
                      "execution_status":"PERMANENT_FAILURE","summary":str(exc),
                      "data":{"error":str(exc)},"attempt_id":payload.get("attempt_id")}
+        if payload["execution_status"]=="RETRYABLE_FAILURE":
+            from datetime import datetime,timezone,timedelta
+            attempts=1+sum(1 for e in self.index.events(item_id)
+                           if ((e.get("outcome") or {}).get("execution_status")=="RETRYABLE_FAILURE"))
+            if attempts>5:
+                decision=self.engine.quarantine(source_state)
+                payload=dict(payload,summary="Retry budget exhausted: "+payload.get("summary",""))
+            else:
+                delay=min(60*2**(attempts-1),3600)
+                payload=dict(payload,data=dict(payload.get("data") or {},
+                    retry_count=attempts,
+                    next_attempt_at=(datetime.now(timezone.utc)+timedelta(seconds=delay)).isoformat()))
         event=Event(item_id=item_id,event_type="PROCESSING_COMPLETED",
                     previous_state=source_state,current_state=decision.next_state,
                     processor=payload["agent"],outcome=payload,

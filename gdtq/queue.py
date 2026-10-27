@@ -68,6 +68,20 @@ class GDTQ:
     def total_tabs(self,doc=None):
         return sum(1 for _ in all_tabs((doc or self.snapshot()).get("tabs") or []))
 
+    def ensure_state_tabs(self,names):
+        """Explicit provisioning; call before activating the scheduler."""
+        result=[]
+        for name in names:
+            doc=self.snapshot()
+            if any(prop(t,"title")==name for t in doc.get("tabs",[])):
+                self.queue_tab(doc,name)
+                continue
+            if self.total_tabs(doc)>=self.max_tabs:
+                raise QueueFull("Cannot provision state tab "+name)
+            self.client.batch_update([{"addDocumentTab":{"tabProperties":{"title":name}}}],doc.get("revisionId"))
+            result.append(name)
+        return result
+
     def size(self,name):
         doc=self.snapshot()
         return len(children(doc,prop(self.queue_tab(doc,name),"tabId")))
@@ -91,6 +105,17 @@ class GDTQ:
         doc=self.snapshot()
         queue_id=prop(self.queue_tab(doc,source_queue),"tabId")
         items=children(doc,queue_id)
+        if not items:return None
+        from datetime import datetime,timezone
+        def eligible(tab):
+            events=events_from_tab(tab)
+            if not events:return True
+            outcome=events[-1].get("outcome") or {}
+            due=(outcome.get("data") or {}).get("next_attempt_at")
+            if not due:return True
+            try:return datetime.fromisoformat(due.replace("Z","+00:00"))<=datetime.now(timezone.utc)
+            except (TypeError,ValueError):raise QueueConflict("Invalid retry due timestamp")
+        items=[tab for tab in items if eligible(tab)]
         if not items:return None
         if priority:
             def score(tab):

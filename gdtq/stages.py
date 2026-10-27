@@ -26,7 +26,7 @@ def bookmark_discovered(item,reader,index,*,smart_reader=None,recipe_proposals=N
         if method is None: continue
         try:
             posting=method(url)
-            if not posting or len(str(posting.get("description","")).strip())<100:
+            if not posting or len(str(posting.get("description","")).strip())<500:
                 raise ValueError("Posting description missing or too short")
             if recipe_proposals and posting.get("deterministic_recipe"):
                 # A proposed recipe is data, never executable without security review.

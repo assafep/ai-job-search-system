@@ -17,8 +17,11 @@ class RetentionManager:
         for tab in children(doc,prop(root,"tabId")):
             events=events_from_tab(tab)
             timestamp=(events[-1].get("created_at") if events else None)
-            try: updated=datetime.fromisoformat(timestamp.replace("Z","+00:00")) if timestamp else datetime.min.replace(tzinfo=timezone.utc)
-            except ValueError: updated=datetime.min.replace(tzinfo=timezone.utc)
+            # Legacy tabs without structured timestamps must not be silently
+            # marked as ancient and expired. Use current time and enforce
+            # the queue-length cap independently of age.
+            try: updated=datetime.fromisoformat(timestamp.replace("Z","+00:00")) if timestamp else datetime.now(timezone.utc)
+            except (ValueError,TypeError): updated=datetime.now(timezone.utc)
             result.append((updated,tab,events))
         return sorted(result,key=lambda x:x[0])
 
