@@ -21,7 +21,9 @@ async function submit(input) {
   try {
     page = await browser.newPage();
     await page.goto(destination.verification_url, { waitUntil: 'domcontentloaded' });
-    const link = page.locator('a').filter({ hasText: app.role }).filter({ hasText: 'Senior' });
+    // Never assume the position is senior. Verify the exact position URL,
+    // while requiring the visible careers link to name the requested role.
+    const link = page.locator('a').filter({ hasText: app.role });
     await link.first().waitFor({ state: 'visible', timeout: 20000 });
     const matches = await link.evaluateAll(nodes => nodes.map(a => a.href));
     if (!matches.includes(destination.application_url)) throw new Error('Role destination is absent from the employer careers board');
@@ -62,12 +64,15 @@ async function submit(input) {
       const control = frame.locator('#' + id);
       if (!await control.count()) continue;
       const label = (await frame.locator('label[for="' + id + '"]').first().innerText()).trim();
-      const required = await control.getAttribute('required') !== null;
+      const required = await control.getAttribute('required') !== null || await control.getAttribute('aria-required') === 'true';
       if (value) await control.fill(value);
       else if (required) requiredMissing.push(label);
       outcome.fields.push({ label, required, value: value || null, source: 'applicant_profile.personal', state: value ? 'prepared' : 'blank' });
     }
-    for (const [id, label] of [['cv', 'Attach Resume'], ['coverLetter', 'Attach Cover Letter']]) {
+    // The prepared artifact is one combined cover-letter/resume PDF. Upload it
+    // once as the resume; never misrepresent the same file as two attachments.
+    // A separate cover-letter upload needs its own explicit artifact.
+    for (const [id, label] of [['cv', 'Attach Resume']]) {
       if (!await frame.locator('#' + id).count()) continue;
       const chooserPromise = page.waitForEvent('filechooser', { timeout: 15000 });
       await frame.getByText(label, { exact: true }).click();
@@ -87,8 +92,8 @@ async function submit(input) {
       if (value) await frame.locator('#' + id).fill(value);
       outcome.fields.push({ label, required: false, value, source: value ? 'grok-4.7' : null, state: value ? 'prepared' : 'blank' });
     }
-    const unknownRequired = await frame.locator('input[required],select[required],textarea[required]').evaluateAll(elements =>
-      elements.filter(e => !['inputFirstName', 'inputLastName', 'inputEmail', 'inputTel', 'cv'].includes(e.id)).map(e => e.name || e.id || 'Unknown required field'));
+    const unknownRequired = await frame.locator('input[required],select[required],textarea[required],[aria-required="true"]').evaluateAll(elements =>
+      elements.filter(e => !['inputFirstName', 'inputLastName', 'inputEmail', 'inputTel', 'cv', 'inputLink', 'portfolio', 'inputNote'].includes(e.id) && !e.disabled).map(e => e.name || e.id || 'Unknown required field'));
     requiredMissing.push(...unknownRequired);
     // This reviewed form has no consent checkboxes. Stop if it changes rather
     // than silently accepting newly introduced commitments.
@@ -102,16 +107,16 @@ async function submit(input) {
     // CSS renders the text in uppercase, but the accessible button name is
     // "Submit application". Match the actual control without relying on CSS.
     const submit = frame.getByRole('button', { name: /^submit application$/i });
+    submitClicked = true; // Mark before awaiting: network failure after click is uncertain.
     await submit.click();
-    submitClicked = true;
     for (let i = 0; i < 30; i++) {
       const text = await frame.locator('body').innerText();
       if (humanVerification(text)) {
-        outcome.status = 'Blocked';
+        outcome.status = 'Submission unconfirmed';
         outcome.requires_human_verification = true;
         outcome.submission_rejected = /session verification failed due to a human check error/i.test(text);
         outcome.observed_result_text = text.slice(-6000);
-        outcome.blockers = ['Comeet human verification blocks automatic submission. Manual browser verification is required.'];
+        outcome.blockers = ['Human verification appeared after the final click. Reconcile whether Comeet received the submission before retrying.'];
         return outcome;
       }
       const confirmation = text.match(/(?:application (?:has been |was )?(?:received|submitted successfully|sent successfully)|thank you for (?:applying|your application))[^\n]*/i);
@@ -132,7 +137,7 @@ async function submit(input) {
     if (page) {
       const visible = await page.locator('body').innerText({timeout:3000}).catch(() => '');
       if (humanVerification(visible)) {
-        outcome.status = 'Blocked';
+        outcome.status = submitClicked ? 'Submission unconfirmed' : 'Blocked';
         outcome.requires_human_verification = true;
         outcome.blockers = ['Human verification blocks automatic submission.'];
         return outcome;
