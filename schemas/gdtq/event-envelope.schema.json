@@ -1,0 +1,52 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "item_id",
+    "event_type",
+    "previous_state",
+    "current_state",
+    "processor",
+    "outcome",
+    "event_id",
+    "created_at",
+    "rules_version"
+  ],
+  "properties": {
+    "item_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "event_type": {
+      "type": "string"
+    },
+    "previous_state": {
+      "type": "string"
+    },
+    "current_state": {
+      "type": "string"
+    },
+    "processor": {
+      "type": "string"
+    },
+    "outcome": {
+      "type": "object"
+    },
+    "event_id": {
+      "type": "string"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "rules_version": {
+      "type": "string"
+    },
+    "attempt_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}

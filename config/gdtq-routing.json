@@ -1,0 +1,192 @@
+{
+  "version": "2026-10-27.1",
+  "allowed_transitions": {
+    "Discovered": [
+      "Bookmarked",
+      "Manual Apply Required",
+      "Duplicate",
+      "Dead Letters Queue"
+    ],
+    "Bookmarked": [
+      "Validated",
+      "Invalidated",
+      "Prepared",
+      "Manual Apply Required",
+      "Duplicate",
+      "Dead Letters Queue"
+    ],
+    "Validated": [
+      "Prepared",
+      "Manual Apply Required",
+      "Duplicate",
+      "Dead Letters Queue"
+    ],
+    "Invalidated": [
+      "Bookmarked"
+    ],
+    "Prepared": [
+      "Applied",
+      "Interviewing",
+      "Rejected",
+      "Offer",
+      "Manual Apply Required",
+      "Duplicate",
+      "Dead Letters Queue"
+    ],
+    "Manual Apply Required": [
+      "Applied",
+      "Interviewing",
+      "Rejected",
+      "Offer",
+      "Prepared",
+      "Duplicate",
+      "Dead Letters Queue"
+    ],
+    "Applied": [
+      "Interviewing",
+      "Rejected",
+      "Offer",
+      "Dead Letters Queue"
+    ],
+    "Interviewing": [
+      "Interviewing",
+      "Offer",
+      "Rejected",
+      "Dead Letters Queue"
+    ],
+    "Dead Letters Queue": [
+      "Discovered",
+      "Bookmarked",
+      "Validated",
+      "Prepared",
+      "Manual Apply Required",
+      "Applied",
+      "Interviewing",
+      "Duplicate"
+    ],
+    "Rejected": [],
+    "Offer": [],
+    "Duplicate": []
+  },
+  "terminal_states": [
+    "Invalidated",
+    "Rejected",
+    "Offer",
+    "Duplicate",
+    "Failed",
+    "Expired",
+    "Ghosted"
+  ],
+  "routes": {
+    "bookmark_discovered": {
+      "source_states": [
+        "Discovered"
+      ],
+      "outcomes": {
+        "BOOKMARKED": "Bookmarked",
+        "DUPLICATE": "Duplicate",
+        "NEEDS_MANUAL": "Manual Apply Required",
+        "ERROR": "Dead Letters Queue"
+      }
+    },
+    "validate_bookmarked": {
+      "source_states": [
+        "Bookmarked"
+      ],
+      "outcomes": {
+        "MATCH": "Validated",
+        "BELOW_THRESHOLD": "Invalidated",
+        "MANUAL_REVIEW": "Manual Apply Required",
+        "DUPLICATE": "Duplicate",
+        "ERROR": "Dead Letters Queue"
+      }
+    },
+    "prepare_validated": {
+      "source_states": [
+        "Bookmarked",
+        "Validated"
+      ],
+      "outcomes": {
+        "PREPARED": "Prepared",
+        "MANUAL_REVIEW": "Manual Apply Required",
+        "DUPLICATE": "Duplicate",
+        "ERROR": "Dead Letters Queue"
+      }
+    },
+    "submit_prepared": {
+      "source_states": [
+        "Prepared"
+      ],
+      "outcomes": {
+        "SUBMITTED": "Applied",
+        "INTERVIEW_CONFIRMED": "Interviewing",
+        "ALREADY_SUBMITTED": "Applied",
+        "REJECTED": "Rejected",
+        "OFFER": "Offer",
+        "MANUAL_REQUIRED": "Manual Apply Required",
+        "SUBMISSION_UNCONFIRMED": "Manual Apply Required",
+        "DUPLICATE": "Duplicate",
+        "ERROR": "Dead Letters Queue"
+      }
+    },
+    "email_correspondence": {
+      "source_states": [
+        "Applied",
+        "Interviewing"
+      ],
+      "outcomes": {
+        "FOLLOW_UP": "Interviewing",
+        "REJECTED": "Rejected",
+        "OFFER": "Offer",
+        "NO_ACTION": "@same",
+        "AMBIGUOUS": "@same",
+        "ERROR": "Dead Letters Queue"
+      }
+    },
+    "calendar_observer": {
+      "source_states": [
+        "Applied",
+        "Interviewing"
+      ],
+      "outcomes": {
+        "INTERVIEW_FOUND": "Interviewing",
+        "NO_ACTION": "@same",
+        "ERROR": "Dead Letters Queue"
+      }
+    },
+    "research": {
+      "source_states": [
+        "Interviewing"
+      ],
+      "outcomes": {
+        "RESEARCH_SAVED": "@same",
+        "RESEARCH_SKIPPED": "@same",
+        "ERROR": "Dead Letters Queue"
+      }
+    },
+    "manual_update": {
+      "source_states": [
+        "Manual Apply Required"
+      ],
+      "outcomes": {
+        "APPLIED": "Applied",
+        "INTERVIEWING": "Interviewing",
+        "REJECTED": "Rejected",
+        "OFFER": "Offer",
+        "PREPARED": "Prepared",
+        "DUPLICATE": "Duplicate"
+      }
+    },
+    "phone_followup": {
+      "source_states": [
+        "Applied",
+        "Interviewing"
+      ],
+      "outcomes": {
+        "INTERVIEWING": "Interviewing",
+        "REJECTED": "Rejected",
+        "OFFER": "Offer"
+      }
+    }
+  }
+}

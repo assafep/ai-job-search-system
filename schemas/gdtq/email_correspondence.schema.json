@@ -1,0 +1,50 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "agent",
+    "item_id",
+    "code",
+    "execution_status",
+    "summary",
+    "data"
+  ],
+  "properties": {
+    "agent": {
+      "const": "email_correspondence"
+    },
+    "item_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "code": {
+      "enum": [
+        "FOLLOW_UP",
+        "REJECTED",
+        "OFFER",
+        "NO_ACTION",
+        "AMBIGUOUS",
+        "ERROR"
+      ]
+    },
+    "execution_status": {
+      "enum": [
+        "SUCCESS",
+        "RETRYABLE_FAILURE",
+        "PERMANENT_FAILURE"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "data": {
+      "type": "object"
+    },
+    "attempt_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}

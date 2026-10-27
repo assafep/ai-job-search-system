@@ -1,0 +1,23 @@
+{
+  "document_id": "SET_AT_DEPLOYMENT",
+  "tick_seconds": 1,
+  "email_scan_seconds": 3600,
+  "calendar_scan_seconds": 3600,
+  "daily_report_timezone": "Asia/Jerusalem",
+  "max_document_tabs": 100,
+  "soft_document_tabs": 90,
+  "manual_queue_limit": 20,
+  "manual_retention_days": 30,
+  "applied_ghost_days": 30,
+  "interview_ghost_days": 21,
+  "skill_match_threshold": 0,
+  "queue_order": [
+    "Discovered",
+    "Bookmarked",
+    "Validated",
+    "Prepared"
+  ],
+  "auto_send_scheduling_replies": false,
+  "enable_automatic_submission": false,
+  "recipe_installation_policy": "review_and_test_only"
+}

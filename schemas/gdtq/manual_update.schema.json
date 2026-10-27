@@ -1,0 +1,50 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "agent",
+    "item_id",
+    "code",
+    "execution_status",
+    "summary",
+    "data"
+  ],
+  "properties": {
+    "agent": {
+      "const": "manual_update"
+    },
+    "item_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "code": {
+      "enum": [
+        "APPLIED",
+        "INTERVIEWING",
+        "REJECTED",
+        "OFFER",
+        "PREPARED",
+        "DUPLICATE"
+      ]
+    },
+    "execution_status": {
+      "enum": [
+        "SUCCESS",
+        "RETRYABLE_FAILURE",
+        "PERMANENT_FAILURE"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "data": {
+      "type": "object"
+    },
+    "attempt_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}
