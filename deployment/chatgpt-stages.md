@@ -37,6 +37,61 @@ worker, model API, or adapter. Use `pauseChatGPTStageTask` for a specific CAPTCH
 login, upload, or missing browser capability. Prepared membership authorizes
 submission; interruption never authorizes submitting again without verification.
 
+## Optional local Comeet submission
+
+The default `submit-prepared` execution host remains ChatGPT native Browser/Computer
+Use. Operators may explicitly enable the existing Playwright/Chrome Comeet
+adapter **on the Application Service and its workstation worker**:
+
+```bash
+export AJSS_SUBMISSION_BROWSER_BACKEND=local-playwright
+export AJSS_STAGE_TASKS_ENABLED=1
+export AJSS_WORKSTATION_STAGES=1
+```
+
+Install the repository's Python dependencies, Node.js, the Playwright npm
+package and a Chrome/Chromium executable on the workstation worker. The
+browser adapter uses `BROWSER_EXECUTABLE` when set, otherwise searches the
+usual Chrome executable names. Extra-question generation uses the configured
+xAI provider credentials. This backend is **not** a feature of a serverless
+Application Service deployment: the worker requires a persistent host with
+the browser runtime.
+
+Restart/redeploy **both** service and worker with identical settings before
+starting a new stage task. `listStages` should now report
+`submit-prepared.execution_host=workstation`. Use the normal
+`startStageTask` API/MCP operation with `stage=submit-prepared` and an
+idempotency key. The workstation worker claims the task, selects Prepared
+Comeet applications, reads their existing PDFs, and dispatches exactly once
+through `ComeetJobBoard.submit_application`. A command like
+`python3 -m services.stage_task_worker --once` consumes one queued task on
+an installation configured for workstation stages.
+
+There is no manual `SubmissionContext` construction and no need to call
+Playwright directly. The browser adapter uses a combined résumé/cover-letter
+PDF as **one** résumé attachment. A separate cover-letter form attachment is
+left blank rather than pretending the combined file is a separate letter.
+
+Only Comeet applications are admitted into local submissions; other Prepared
+applications remain eligible when the native backend is selected. Backend
+ownership is stored on each durable task at admission. Changing the setting
+does not migrate queued/running tasks; reconcile or complete them under their
+original execution host before changing backend. Local validation of bookmarks
+is **not** supported: `validate-bookmarked` stays ChatGPT native.
+
+The same safety rules apply to both backends: a durable receipt precedes any
+browser dispatch, confirmed receipts alone move applications to Applied,
+blocked/unconfirmed results are recorded, and ambiguous outcomes are never
+automatically retried. Human verification and unfamiliar form controls require
+manual attention. Use a **single test application** before enabling queue-wide
+runs, since Comeet form variants are not fully validated live.
+
+To revert for **new** tasks, after resolving existing claims:
+
+```bash
+export AJSS_SUBMISSION_BROWSER_BACKEND=chatgpt-native
+```
+
 ## Workstation execution
 
 `python3 -m services.stage_task_worker` consumes non-browser commands through
