@@ -4,12 +4,13 @@ The public endpoint requires no account, API key, or payment. It returns the
 Jobicy listing URL; commercial direct-ATS links are intentionally not used.
 """
 
-import html
 import json
-import re
 import urllib.error
 import urllib.parse
 import urllib.request
+
+from .interface import JobBoardAdapter
+from .parsing import plain_text as _plain_text
 
 
 BASE_URL = "https://jobicy.com/api/v2/remote-jobs"
@@ -26,15 +27,21 @@ COUNTRY_SLUGS = dict(pair.split(':') for pair in (
 ).split())
 
 
-def _plain_text(value):
-    return " ".join(html.unescape(re.sub(r"<[^>]+>", " ", value or "")).split())
+class JobicyJobBoard(JobBoardAdapter):
+    provider_name = 'jobicy'
+    hosts = ('jobicy.com',)
 
+    def search_api(self, context, transport):
+        return self.search(query=context.query, count=context.limit,
+                           geo=next(iter(context.countries), ''), _transport=transport)
 
-class JobicyJobBoard:
+    def discovery_pages(self, context):
+        yield 'https://jobicy.com/jobs?' + urllib.parse.urlencode({'s': context.query}), ''
+
     def __init__(self, opener=None):
         self.opener = opener or urllib.request.urlopen
 
-    def search(self, query="", count=100, geo="", industry="", cursor=None):
+    def search(self, query="", count=100, geo="", industry="", cursor=None, *, _transport=None):
         if count < 1 or count > 200:
             raise ValueError("count must be between 1 and 200")
         if query and not 3 <= len(query) <= 50:
@@ -53,7 +60,7 @@ class JobicyJobBoard:
             headers={"Accept": "application/json"},
         )
         try:
-            with self.opener(request) as response:
+            with self._open(request, _transport) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as error:
             detail = error.read(1000).decode('utf-8', 'replace')

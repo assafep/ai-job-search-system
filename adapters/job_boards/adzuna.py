@@ -11,6 +11,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from .interface import JobBoardAdapter, UnsupportedOperation
+
 
 BASE_URL = "https://api.adzuna.com/v1/api/jobs"
 
@@ -22,18 +24,36 @@ def _required(environ, name):
     return value
 
 
-class AdzunaJobBoard:
-    def __init__(self, app_id, app_key, country="il", opener=None):
-        self.app_id = app_id
-        self.app_key = app_key
+class AdzunaJobBoard(JobBoardAdapter):
+    provider_name = 'adzuna'
+    hosts = ('www.adzuna.com',)
+
+    def search_api(self, context, transport):
+        return self.search(what=context.query, where=' OR '.join(context.locations),
+                           country=next(iter(context.countries), self.country).lower(),
+                           page=context.page, results_per_page=context.limit, _transport=transport)
+
+    def discovery_pages(self, context):
+        country = next(iter(context.countries), self.country).lower()
+        if country != 'gb':
+            raise UnsupportedOperation('No verified public Adzuna search URL for this country')
+        yield 'https://www.adzuna.co.uk/search?' + urllib.parse.urlencode({
+            'q': context.query, 'w': ' OR '.join(context.locations)}), ''
+
+    def __init__(self, app_id=None, app_key=None, country="il", opener=None):
+        self.app_id = app_id if app_id is not None else os.environ.get("ADZUNA_APP_ID", "")
+        self.app_key = app_key if app_key is not None else os.environ.get("ADZUNA_APP_KEY", "")
         self.country = country.strip().lower()
         if not self.country:
             raise ValueError("Adzuna country is required")
         self.opener = opener or urllib.request.urlopen
 
-    def search(self, what="", where="", page=1, results_per_page=20, **filters):
+    def search(self, what="", where="", page=1, results_per_page=20, *, _transport=None, country=None, **filters):
         if page < 1 or results_per_page < 1:
             raise ValueError("page and results_per_page must be positive")
+        from .interface import MissingCredentials
+        if not self.app_id or not self.app_key:
+            raise MissingCredentials("Adzuna API credentials are missing")
         params = {
             "app_id": self.app_id,
             "app_key": self.app_key,
@@ -48,13 +68,13 @@ class AdzunaJobBoard:
                 params[name] = filters[name]
         url = "{}/{}/search/{}?{}".format(
             BASE_URL,
-            urllib.parse.quote(self.country, safe=""),
+            urllib.parse.quote(country or self.country, safe=""),
             page,
             urllib.parse.urlencode(params),
         )
         request = urllib.request.Request(url, headers={"Accept": "application/json"})
         try:
-            with self.opener(request) as response:
+            with self._open(request, _transport) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as error:
             raise RuntimeError("Adzuna returned HTTP {}".format(error.code))

@@ -74,6 +74,23 @@ def test_ready_queue_submits_without_approval():
     assert client.get_application(client.id)['status'] == 'Applied'
 
 
+def test_pending_receipt_is_durable_before_callback_dispatch():
+    import json
+
+    observed = []
+    client = Client()
+
+    def submit(context):
+        receipt = json.loads(client.read_file(ReadySubmission.receipt_path(client.id))['content'])
+        observed.append(receipt)
+        return {'status': 'Submitted successfully', 'confirmation_text': 'Application received'}
+
+    runner = ReadySubmission(client, WorkloadRegistry(), submit)
+    runner.run_one(client.id)
+    assert observed[0]['status'] == 'Submission unconfirmed'
+    assert observed[0]['package_sha256']
+
+
 def test_confirmed_submission_promotes_and_retry_does_not_submit_twice():
     calls = []
     def submit(ctx):
@@ -158,8 +175,21 @@ def test_system_error_after_adapter_call_is_never_automatically_retried():
     client, runner = make_runner(lambda context: calls.append(context) or {
         'status': 'Blocked', 'failure_kind': 'system_error', 'blockers': ['Browser unavailable']})
     runner.execute(client.id, 'first')
-    client.repository.transition(client.id, 'Prepared')
+    receipt = runner._receipt(client.id)
+    assert receipt['status'] == 'Blocked'
     assert runner.execute(client.id, 'restored')['replayed'] is True
+    assert len(calls) == 1
+    assert client.get_application(client.id)['status'] == 'Dead Letters Queue'
+
+
+def test_invalid_callback_failure_explanation_remains_unconfirmed_and_is_not_retried():
+    calls = []
+    client, runner = make_runner(lambda context: calls.append(context) or {
+        'status': 'Blocked', 'blockers': ['  ']})
+    result = runner.run_one(client.id)
+    assert result['status'] == 'Submission unconfirmed'
+    assert client.get_application(client.id)['status'] == 'Manual Apply Required'
+    runner.run_one(client.id)
     assert len(calls) == 1
 
 

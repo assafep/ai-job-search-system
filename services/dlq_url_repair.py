@@ -10,8 +10,8 @@ import sys
 from dataclasses import asdict, is_dataclass
 from time import sleep
 
-from adapters.job_boards.posting_details import (
-    fetch_posting_details, posting_artifact_name, posting_content_bytes)
+from adapters.job_boards.framework import fetch_posting_details
+from adapters.job_boards.posting_details import posting_artifact_name, posting_content_bytes
 from application_service.journal_format import ALL_STATES, parse_transition_arrow
 
 

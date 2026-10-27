@@ -130,3 +130,29 @@ python3 -m services.stage_executor \
 
 It requires onboarding, claims the workload from the configured registry, and
 settles its status after execution.
+
+### Job-board access
+
+Discovery, bookmarking and submission dispatch use
+`adapters.job_boards.framework`. Read operations try the board's API capability
+first, then its scraping capability. Transport policy is shared across adapters.
+
+Configure defaults and per-board overrides in `config/job-boards.json`, or select
+another file with `JOB_BOARDS_CONFIG`. Policies control HTTP backend (`urllib` or
+`scrapling`), direct/proxy routes, request timeouts, shared operation deadlines,
+redirects and response sizes. Existing `POSTING_*` environment settings remain
+supported as default overrides.
+
+Install the optional Scrapling HTTP backend with:
+
+```bash
+python3 -m pip install -r services/requirements-posting-fetcher.txt
+```
+
+No browser binaries are required. `services.posting_fetcher` is a compatibility
+facade; `bookmark_read` retains its `(output, attempt)` contract and configured
+model fallback. Submission uses a single native-host callback and never inherits
+read retries. Application Service persistence and DLQ routing remain unchanged.
+
+See [the framework guide](../docs/job-board-framework.md) for the capability
+contract, configuration examples, proxy behavior, supported providers and limits.

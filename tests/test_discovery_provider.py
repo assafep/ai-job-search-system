@@ -1,3 +1,4 @@
+from adapters.job_boards.interface import AdapterResult
 import pytest
 
 from services.pipeline_agents import PipelineAgents
@@ -77,12 +78,11 @@ def test_empty_search_terms_are_derived_once(monkeypatch, tmp_path):
             return {"search_terms": ["backend"]}
 
     class Board:
-        def search(self, **kwargs):
-            assert kwargs["query"] == "backend"
-            return []
+        def search(self, context, source):
+            assert context.query == "backend"
+            return AdapterResult(True, [])
 
-    monkeypatch.setattr("adapters.job_boards.freehire.FreehireJobBoard", Board)
-    monkeypatch.setattr("adapters.job_boards.jobicy.JobicyJobBoard", Board)
+    monkeypatch.setattr("adapters.job_boards.framework.get_framework", Board)
     repository = MemoryRepository()
     repository.profile = {"job_search": {"countries": ["IL"], "search_terms": []}}
     agents = PipelineAgents(repository, None, lambda prompt, context: pytest.fail("pipeline provider"), discovery_provider=Discovery())
@@ -98,13 +98,14 @@ def test_jobicy_searches_individual_terms_and_deduplicates(monkeypatch):
     from services.stage_executor import StageExecutor
     calls = []
     class Board:
-        def search(self, **kwargs):
-            calls.append(kwargs)
-            return [{'posting_url': 'https://jobicy.com/jobs/one', 'company': 'Example'}]
-    monkeypatch.setattr('adapters.job_boards.jobicy.JobicyJobBoard', Board)
+        def search(self, context, source):
+            assert source == 'jobicy'
+            calls.append(context)
+            return AdapterResult(True, [{'posting_url': 'https://jobicy.com/jobs/one', 'company': 'Example'}])
+    monkeypatch.setattr('adapters.job_boards.framework.get_framework', Board)
     terms = ['Senior Backend Software Engineer', 'Distributed Systems Engineer']
     assert len(' OR '.join(terms)) > 50
     context = {'source_names': ['jobicy'], 'search_terms': terms, 'countries': ['IL']}
     StageExecutor._enrich_discovery_context(context)
-    assert [call['query'] for call in calls] == terms
+    assert [call.query for call in calls] == terms
     assert len(context['job_postings']) == 1

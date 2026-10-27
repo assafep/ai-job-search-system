@@ -3,6 +3,18 @@ import json
 from adapters.job_boards.posting_details import fetch_posting_details
 
 
+@pytest.fixture(autouse=True)
+def legacy_http_fixtures_use_injected_transport(monkeypatch):
+    import urllib.request
+    from adapters.job_boards.transport import ReadSession
+
+    def session(policy, **kwargs):
+        kwargs['opener'] = urllib.request.urlopen
+        return ReadSession(policy, **kwargs)
+
+    monkeypatch.setattr('adapters.job_boards.framework.ReadSession', session)
+
+
 def test_posting_filenames_keep_different_urls_separate():
     from adapters.job_boards.posting_details import posting_artifact_name
     first = posting_artifact_name('HiBob', 'Backend', 'https://one.careers.hibob.com/jobs/id')
@@ -13,7 +25,7 @@ def test_posting_filenames_keep_different_urls_separate():
 
 
 def test_comeet_null_position_is_an_ordinary_unreadable_posting():
-    from adapters.job_boards.posting_details import _extract_comeet
+    from adapters.job_boards.comeet import _extract_comeet
     assert _extract_comeet('<script>POSITION_DATA = null;</script>') == ''
 
 
@@ -170,3 +182,30 @@ def test_akamai_branded_url_uses_exact_oracle_requisition(monkeypatch):
     assert result['posting_url'] == url
     assert result['source_url'] == calls[0]
     assert 'Build secure systems.' in result['description']
+
+
+@pytest.mark.parametrize('job', [
+    None,
+    {'guid': 'https://himalayas.app/companies/coinbase/jobs/other',
+     'companySlug': 'coinbase', 'description': 'Wrong role. ' * 100},
+    {'guid': 'https://himalayas.app/companies/coinbase/jobs/staff-software-engineer',
+     'companySlug': 'other', 'description': 'Wrong company. ' * 100},
+    {'guid': 'https://himalayas.app/companies/coinbase/jobs/staff-software-engineer',
+     'companySlug': 'coinbase', 'description': None},
+])
+def test_himalayas_rejects_invalid_api_records(job):
+    from adapters.job_boards.himalayas import _extract_himalayas
+    with pytest.raises(ValueError):
+        _extract_himalayas(json.dumps({'job': job}),
+            'https://himalayas.app/companies/coinbase/jobs/staff-software-engineer')
+
+
+@pytest.mark.parametrize('url', [
+    'https://himalayas.app.evil.com/companies/coinbase/jobs/engineer',
+    'https://user@himalayas.app/companies/coinbase/jobs/engineer',
+    'https://himalayas.app/companies/coinbase',
+    'https://himalayas.app/companies/coinbase/jobs/engineer/extra',
+])
+def test_himalayas_mapping_requires_exact_host_and_posting_path(url):
+    from adapters.job_boards.himalayas import _himalayas_endpoint
+    assert _himalayas_endpoint(url) is None

@@ -5,7 +5,6 @@ adapter only reads postings; application submission remains outside this
 module and behind the stage approval policy.
 """
 
-import html
 import json
 import os
 import re
@@ -13,13 +12,11 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from .interface import EmployerJobBoard, UnsupportedOperation
+from .parsing import plain_text as _plain_text
+
 
 BASE_URL = "https://boards-api.greenhouse.io/v1/boards"
-
-
-def _plain_text(value):
-    value = re.sub(r"<[^>]+>", " ", value or "")
-    return " ".join(html.unescape(value).split())
 
 
 def boards_from_environment(environ=None):
@@ -40,24 +37,41 @@ def boards_from_environment(environ=None):
     return {token.strip(): company.strip() for token, company in boards.items()}
 
 
-class GreenhouseJobBoard:
-    def __init__(self, boards, opener=None, timeout=30):
-        if not isinstance(boards, dict) or not boards:
+class GreenhouseJobBoard(EmployerJobBoard):
+    provider_name = 'greenhouse'
+    hosts = ('boards.greenhouse.io', 'job-boards.greenhouse.io')
+
+    def discovery_pages(self, context):
+        for token, company in (context.boards or self.boards).items():
+            yield 'https://boards.greenhouse.io/' + urllib.parse.quote(token, safe=''), company
+
+    def fetch_details_api(self, context, transport):
+        from .parsing import text
+        match = re.fullmatch(r'/([^/]+)/jobs/(\d+)/?', urllib.parse.urlsplit(context.posting_url).path)
+        if not match:
+            raise UnsupportedOperation('Not an exact Greenhouse posting URL')
+        url = BASE_URL + '/{}/jobs/{}'.format(*match.groups())
+        payload = transport.read_json(url)
+        if payload.get('id') is not None and str(payload['id']) != match[2]:
+            raise ValueError('Greenhouse API returned a different posting')
+        return transport.details(context.posting_url, url, text(payload.get('content') or ''))
+
+    def __init__(self, boards=None, opener=None, timeout=30):
+        if boards is not None and (not isinstance(boards, dict) or not boards):
             raise ValueError("at least one Greenhouse board token is required")
-        self.boards = boards
+        self.boards = boards or {}
         self.opener = opener or urllib.request.urlopen
         self.timeout = timeout
 
-    def list_jobs(self):
+    def list_jobs(self, *, boards=None, _transport=None):
         postings = []
-        for token, company in self.boards.items():
+        for token, company in (boards if boards is not None else self.boards).items():
             query = urllib.parse.urlencode({"content": "true"})
             url = "{}/{}/jobs?{}".format(BASE_URL, urllib.parse.quote(token, safe=""), query)
             request = urllib.request.Request(url, headers={"Accept": "application/json"})
             try:
                 # Custom openers retain the small test/adapter interface.
-                response_context = (self.opener(request, timeout=self.timeout)
-                                    if self.opener is urllib.request.urlopen else self.opener(request))
+                response_context = self._open(request, _transport)
                 with response_context as response:
                     payload = json.loads(response.read().decode("utf-8"))
             except urllib.error.HTTPError as error:

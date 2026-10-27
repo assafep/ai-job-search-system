@@ -1,0 +1,25 @@
+{
+  "defaults": {
+    "budget_seconds": 25,
+    "api": {
+      "backend": "urllib",
+      "timeout_seconds": 6,
+      "direct": true,
+      "proxy_attempts": 0
+    },
+    "scraping": {
+      "backend": "scrapling",
+      "timeout_seconds": 6,
+      "direct": true,
+      "proxy_attempts": 4,
+      "proxy_file": "free_proxies.csv",
+      "impersonate": "chrome",
+      "max_redirects": 5,
+      "max_response_bytes": 3000000
+    }
+  },
+  "providers": {
+    "smartrecruiters": {"budget_seconds": 120},
+    "himalayas": {"budget_seconds": 60}
+  }
+}

@@ -8,9 +8,11 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
+
+from .interface import EmployerJobBoard, UnsupportedOperation
 from datetime import datetime, timezone
 
-from .greenhouse import _plain_text
+from .parsing import plain_text as _plain_text
 
 
 BASES = (
@@ -40,29 +42,54 @@ def _iso_from_epoch(value):
         return None
 
 
-class LeverJobBoard:
-    def __init__(self, boards, opener=None, timeout=30):
-        if not isinstance(boards, dict) or not boards:
+class LeverJobBoard(EmployerJobBoard):
+    provider_name = 'lever'
+    hosts = ('jobs.lever.co', 'jobs.eu.lever.co')
+
+    def fetch_details_api(self, context, transport):
+        parsed = urllib.parse.urlsplit(context.posting_url)
+        parts = parsed.path.strip('/').split('/')
+        if len(parts) != 2:
+            raise UnsupportedOperation('Not an exact Lever posting URL')
+        token, job_id = parts
+        template = BASES[1] if parsed.hostname == 'jobs.eu.lever.co' else BASES[0]
+        url = template.format(urllib.parse.quote(token, safe=''))
+        jobs = transport.read_json(url)
+        if not isinstance(jobs, list):
+            raise ValueError('Lever returned an invalid response')
+        for job in jobs:
+            if str(job.get('id')) == job_id:
+                description = self._normalize('', job)['description']
+                additional = job.get('additionalPlain') or _plain_text(job.get('additional'))
+                return transport.details(context.posting_url, url, '\n'.join(filter(None, [description, additional])))
+        raise ValueError('Lever feed has no matching public posting')
+
+    def discovery_pages(self, context):
+        for token, company in (context.boards or self.boards).items():
+            yield 'https://jobs.lever.co/' + urllib.parse.quote(token, safe=''), company
+
+    def __init__(self, boards=None, opener=None, timeout=30):
+        if boards is not None and (not isinstance(boards, dict) or not boards):
             raise ValueError('at least one Lever board is required')
-        self.boards = boards
+        self.boards = boards or {}
         self.opener = opener or urllib.request.urlopen
         self.timeout = timeout
 
-    def list_jobs(self):
+    def list_jobs(self, *, boards=None, _transport=None):
         postings = []
-        for token, company in self.boards.items():
-            for job in self._postings(token):
+        for token, company in (boards if boards is not None else self.boards).items():
+            for job in self._postings(token, _transport):
                 posting = self._normalize(company, job)
                 if posting['posting_url']:
                     postings.append(posting)
         return postings
 
-    def _postings(self, token):
+    def _postings(self, token, _transport=None):
         quoted = urllib.parse.quote(token, safe='')
         last_error = None
         for template in BASES:
             try:
-                body = self._read(template.format(quoted))
+                body = self._read(template.format(quoted), _transport)
             except RuntimeError as error:
                 last_error = error
                 if 'HTTP 404' in str(error):
@@ -77,14 +104,13 @@ class LeverJobBoard:
             return payload
         raise RuntimeError('Lever board {} {}'.format(token, last_error or 'unavailable'))
 
-    def _read(self, url):
+    def _read(self, url, _transport=None):
         request = urllib.request.Request(url, headers={
             'Accept': 'application/json',
             'User-Agent': 'ai-job-search-system/1.0',
         })
         try:
-            response_context = (self.opener(request, timeout=self.timeout)
-                                if self.opener is urllib.request.urlopen else self.opener(request))
+            response_context = self._open(request, _transport)
             with response_context as response:
                 return response.read().decode('utf-8')
         except urllib.error.HTTPError as error:

@@ -5,20 +5,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import re
 
+from adapters.job_boards.locations import ISRAEL_LOCATION
+
 
 CATALOG = Path(__file__).resolve().parents[1] / 'config' / 'discovery-sources.json'
 SOURCE_NAMES = {
     'freehire', 'jobicy', 'adzuna', 'greenhouse', 'ashby', 'comeet', 'lever', 'himalayas',
     'smartrecruiters',
 }
-ISRAEL_LOCATION = re.compile(
-    r'\b(?:israel|isr|tel[ -]?aviv(?:[ -]yafo)?|herzli[yz]a|haifa|jerusalem|'
-    r'ra[\W_]?anana|netanya|ramat[ -]gan|pet[ah]+[ -]ti[kq]va|kfar[ -]saba|'
-    r'beer[ -]sheva|be.er[ -]sheva|rehovot|yokneam|holon|bnei[ -]brak|'
-    r'kinneret|gush[ -]dan)\b|'
-    r'ישראל|תל[ -]?אביב|ירושלים|חיפה|הרצליה|רעננה|נתניה|רמת[ -]?גן|'
-    r'פתח[ -]?תקווה|כפר[ -]?סבא|באר[ -]?שבע|רחובות|יוקנעם|יקנעם|חולון|'
-    r'בני[ -]?ברק|ראשון[ -]?לציון|גבעתיים|מודיעין|רמת[ -]?השרון', re.I)
 ENGINEERING_ROLE = re.compile(
     r'backend|back[ -]end|server|software|platform|distributed|data engineer|'
     r'big data|מפתח|פיתוח|מתכנת', re.I)
@@ -28,6 +22,11 @@ EXCLUDED_ROLE = re.compile(
 
 
 def source_boards(source):
+    if source == 'greenhouse':
+        from adapters.job_boards.greenhouse import boards_from_environment
+        configured = boards_from_environment()
+        if configured:
+            return configured
     with CATALOG.open() as handle:
         boards = json.load(handle).get(source, {})
     if not isinstance(boards, dict) or any(
@@ -48,13 +47,16 @@ def _date(value):
     return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed
 
 
-def fetch_employer_boards(board_class, boards):
+def fetch_employer_boards(source, boards, *, framework=None):
     """One failing employer must not discard another employer's live results."""
+    from adapters.job_boards.framework import get_framework
+    from adapters.job_boards.interface import DiscoveryContext
+    framework = framework or get_framework()
     postings, errors = [], []
     succeeded = 0
     for token, company in boards.items():
         try:
-            postings.extend(board_class({token: company}).list_jobs())
+            postings.extend(framework.list_jobs(DiscoveryContext(boards={token: company}), source).unwrap())
             succeeded += 1
         except (RuntimeError, ValueError, OSError) as error:
             errors.append('{}: {}'.format(token, error))

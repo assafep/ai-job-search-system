@@ -14,5 +14,8 @@ dependencies = [
     "vercel-queue==0.10.0",
 ]
 
+[project.optional-dependencies]
+posting-fetcher = ["scrapling[fetchers]==0.5"]
+
 [tool.vercel]
 entrypoint = "api.index:handler"

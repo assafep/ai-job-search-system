@@ -1,57 +1,46 @@
+from adapters.job_boards.interface import AdapterResult
 from services.stage_executor import StageExecutor
 
 
 def test_adzuna_source_is_not_fetched_without_explicit_source(monkeypatch):
-    called = []
+    class Framework:
+        def list_jobs(self, context, source):
+            assert source == 'greenhouse'
+            return AdapterResult(True, [])
 
-    class Board:
-        def __init__(self, boards, opener=None, timeout=30):
-            pass
+        def search(self, *args):
+            raise AssertionError('unselected search source must not run')
 
-        def list_jobs(self):
-            return []
-
-    def unexpected(*args, **kwargs):
-        called.append(True)
-        raise AssertionError("source should not be fetched")
-
-    monkeypatch.setattr("adapters.job_boards.greenhouse.GreenhouseJobBoard", Board)
-    monkeypatch.setattr("adapters.job_boards.adzuna.AdzunaJobBoard", unexpected)
-    context = {"source_names": ["greenhouse"]}
+    monkeypatch.setattr('adapters.job_boards.framework.get_framework', Framework)
+    context = {'source_names': ['greenhouse']}
     StageExecutor._enrich_discovery_context(context)
-    assert called == []
+    assert context['job_postings'] == []
 
 
 def test_adzuna_source_fetches_postings(monkeypatch):
-    class Client:
-        def __init__(self, *args, **kwargs):
-            pass
-        def search(self, **kwargs):
-            assert kwargs["what"] == "python OR backend"
-            assert kwargs["where"] == "Tel Aviv"
-            return [{"company": "Example", "role": "Engineer", "posting_url": "https://example"}]
+    class Framework:
+        def search(self, context, source):
+            assert source == 'adzuna'
+            assert context.query == 'python OR backend'
+            assert context.locations == ['Tel Aviv']
+            return AdapterResult(True, [{'company': 'Example', 'role': 'Engineer', 'posting_url': 'https://example'}])
 
-    monkeypatch.setattr(
-        "adapters.job_boards.adzuna.AdzunaJobBoard", Client
-    )
-    context = {
-        "source_names": ["adzuna"],
-        "search_terms": ["python", "backend"],
-        "locations": ["Tel Aviv"],
-    }
+    monkeypatch.setattr('adapters.job_boards.framework.get_framework', Framework)
+    context = {'source_names': ['adzuna'], 'search_terms': ['python', 'backend'], 'locations': ['Tel Aviv']}
     StageExecutor._enrich_discovery_context(context)
-    assert context["job_postings"][0]["company"] == "Example"
+    assert context['job_postings'][0]['company'] == 'Example'
 
 
 def test_discovery_uses_onboarded_profile_countries(monkeypatch):
-    class Client:
-        def search(self, **kwargs):
-            assert kwargs["countries"] == ["IL", "US"]
-            assert kwargs["query"] == ""
-            return []
+    class Framework:
+        def search(self, context, source):
+            assert source == 'freehire'
+            assert context.countries == ['IL', 'US']
+            assert context.query == ''
+            return AdapterResult(True, [])
 
-    monkeypatch.setattr("adapters.job_boards.freehire.FreehireJobBoard", Client)
-    context = {"source_names": ["freehire"]}
-    profile = {"job_search": {"countries": ["IL", "US"], "search_terms": []}}
+    monkeypatch.setattr('adapters.job_boards.framework.get_framework', Framework)
+    context = {'source_names': ['freehire']}
+    profile = {'job_search': {'countries': ['IL', 'US'], 'search_terms': []}}
     StageExecutor._enrich_discovery_context(context, profile)
-    assert context["job_postings"] == []
+    assert context['job_postings'] == []

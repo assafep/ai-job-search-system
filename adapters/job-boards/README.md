@@ -1,7 +1,12 @@
 # Job-board adapters
 
-Read-only discovery adapters for job sources. Submission remains behind the
-application stage and approval policy.
+Services enter through `adapters.job_boards.framework` for discovery, posting
+retrieval and native-host submission dispatch. Every board implements the shared
+API/scraping capability contract. Configure transport defaults and per-board
+overrides in `config/job-boards.json`; see the
+[framework guide](../../docs/job-board-framework.md) for usage and limitations.
+Prepared queue membership authorizes submission; submission is never retried by
+the read fallback engine.
 
 ## Greenhouse
 

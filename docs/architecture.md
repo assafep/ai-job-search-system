@@ -1,6 +1,6 @@
-# Workflow, stage and task architecture
+# Stage and task architecture
 
-A **workflow** is the coordinated job-search lifecycle. A **stage** is one
+A **pipeline** spans the job-search lifecycle. A **stage** is one
 processing definition in `stages/*.yaml`. A **stage task** requests execution
 for a stage and a scope. A **worker** executes tasks. An **agent run** invokes a
 stateless decision agent. These are different concepts, not interchangeable names.
@@ -14,6 +14,11 @@ stateless decision agent. These are different concepts, not interchangeable name
 | Execution commands, claims, task progress and report references | PostgreSQL `installation_resources.stage_tasks` |
 | Installation metadata and OAuth coordination | PostgreSQL `installation_resources` |
 | Résumé, generated packages and configured artifacts | Google Drive |
+
+**Important:** Incomplete applications (those in `Discovered`, `Bookmarked`,
+`Validated`, `Prepared`, or `Manual Apply Required` states) exist **only** in
+Google Docs and Google Drive. PostgreSQL stores **only** completed applications
+as archives. The database never holds in-progress application state.
 
 A queued stage task is a command, not a job application. One task can discover
 new positions, process several application IDs from the journal, or run a
@@ -36,6 +41,91 @@ flowchart TB
     SERVICE --> ARCHIVE["PostgreSQL: completed applications"]
     SERVICE --> DRIVE["Google Drive: packages and research"]
 ```
+
+## Process boundaries and network communication
+
+This diagram focuses on runtime communication. Boxes group components by execution
+host; components inside a box are not separate network services. Solid arrows
+show network requests initiated by the source (responses return on the same
+connection). Dotted arrows show local calls or subprocess IPC. External APIs and
+websites are grouped under WWW; PostgreSQL uses its own wire protocol.
+
+```mermaid
+flowchart LR
+    subgraph CHATGPT["ChatGPT host"]
+        NATIVE["Stage orchestrator<br/>validate-bookmarked / submit-prepared"]
+        BROWSER["Native Browser / Computer Use"]
+        NATIVE -.->|"Host browser interaction"| BROWSER
+    end
+
+    subgraph WORKFLOW["Workstation workflow process"]
+        RUNNER["Stage task worker / orchestration<br/>StageExecutor + Workload Executor<br/>Polling, routing and worker threads"]
+        CLIENT["ApplicationServiceClient<br/>Shared synchronized persistence client"]
+        ADAPTERS["External-system adapters<br/>Job boards, Gmail, Calendar, scheduling"]
+        LLM["Agent runner + LLM adapter<br/>Serialized context → validated decision"]
+        RUNNER -.-> CLIENT
+        RUNNER -.-> ADAPTERS
+        RUNNER -.-> LLM
+    end
+
+    subgraph APP["Application Service process / hosted deployment"]
+        API["REST API + /mcp<br/>Authentication and OpenAPI validation<br/>Stage task claims and result validation"]
+        REPO["Repositories + persistence clients<br/>Application-state mutations<br/>Idempotency and locking"]
+        API -.-> REPO
+    end
+
+    subgraph WWW["WWW / external HTTPS services"]
+        SITES["Employer / ATS websites<br/>Posting pages and application forms"]
+        PROVIDERS["Job-board / Gmail / Calendar / scheduling APIs<br/>Configured integrations"]
+        MODELS["Configured LLM provider API"]
+        DOCS["Google Docs API<br/>Active applications, journal events, research tabs"]
+        DRIVE["Google Drive API<br/>Profile, résumés, packages, reports, internal files"]
+        AUTH["Google OAuth token endpoint"]
+    end
+
+    PG[("PostgreSQL<br/>Completed application archives<br/>Stage tasks, claims, installation and OAuth records<br/>Optional workload-owned internal files")]
+
+    NATIVE -->|"HTTPS · MCP Streamable HTTP · POST /mcp<br/>Admit / claim tasks, read packages, record intent and results"| API
+    CLIENT -->|"HTTP(S) · REST / JSON · bearer token<br/>Claim / update tasks; read context; explicit state and artifact writes"| API
+    BROWSER -->|"HTTPS · browse, fill, upload, submit"| SITES
+    ADAPTERS -->|"HTTPS · configured reads / external actions"| PROVIDERS
+    ADAPTERS -->|"HTTPS · posting retrieval / discovery"| SITES
+    LLM -->|"HTTPS · model inference when API provider is selected"| MODELS
+    REPO -->|"HTTPS · read / batchUpdate"| DOCS
+    REPO -->|"HTTPS · list / download / upload"| DRIVE
+    REPO -->|"HTTPS · token exchange / refresh"| AUTH
+    REPO -->|"PostgreSQL wire protocol · psycopg<br/>SQL + advisory locks; TLS per connection configuration"| PG
+```
+
+The workflow initiates REST requests; the service does not push work to it.
+`POST /stage-tasks/claim` polls for commands and worker updates report progress.
+ChatGPT uses the same service boundary through MCP for task context and structured
+browser results. The REST contract is [`openapi.yaml`](../openapi.yaml).
+Production service connections use HTTPS; local development defaults to
+`http://127.0.0.1:8080`.
+
+The LLM path depends on configuration: an API adapter calls the provider over
+HTTPS, while a CLI adapter launches a local agent subprocess using prompt/schema
+files and structured output. Stateless decision agents receive no persistence,
+browser, Gmail or Calendar clients. Website validation and submission for the two
+native-browser stages always run in ChatGPT's native browser.
+
+Google Docs and Drive are persistence dependencies even though their transport
+is HTTPS over the public internet. Only the Application Service accesses those
+stores during stage execution. PostgreSQL stores task coordination separately
+from completed application archives; active applications remain in the Docs
+journal. Workload-owned internal files can optionally use PostgreSQL behind the
+same service API. Setup/provisioning and local configuration/log files are outside
+this runtime diagram.
+
+### Boundary rules
+
+- **Agents** receive only serialized context and return schema-validated decisions. They never receive adapter or persistence clients.
+- **Workers** are stateless threads that invoke agents and return results. They never touch the persistence API.
+- **Stage Executor** is the lifecycle boundary between queued workloads and stateless stage execution.
+- **Workload Executor** is the side-effect boundary that translates agent decisions into Application Service operations.
+- **Application Service** is the only component that communicates with storage layers (Google Drive, Google Docs, PostgreSQL). Every write is explicit, validated, and idempotent where retries are possible.
+- **Adapters** normalize inputs from external systems and perform only their assigned external action.
 
 ## Source and API contracts
 
@@ -77,3 +167,15 @@ not prove an application was submitted.
 See [application state machines](state-machines.md),
 [ChatGPT operations](../deployment/chatgpt-stages.md), and
 [the coordinated cutover](stage-task-cutover.md).
+
+
+## Job-board access
+
+`adapters.job_boards.framework` is the service entry point for searching, listing,
+retrieving postings and dispatching native-host submission. Provider adapters own
+URLs and parsing; a shared HTTP transport applies the configured API and scraping
+strategies. Read failures fall back from API to scraping under one deadline.
+Submission invokes the native host once, outside the read retry engine.
+
+See [job-board framework](job-board-framework.md) for the interface, default and
+per-board configuration, proxy behavior and supported capabilities.

@@ -6,24 +6,32 @@ the resume-aware discovery agent.
 """
 
 import json
-import re
 import urllib.error
 import urllib.parse
 import urllib.request
+
+from .interface import JobBoardAdapter
+from .parsing import plain_text as _plain_text
 
 
 BASE_URL = "https://freehire.me/api/v1/jobs/search"
 
 
-def _plain_text(value):
-    return " ".join(re.sub(r"<[^>]+>", " ", value or "").split())
+class FreehireJobBoard(JobBoardAdapter):
+    provider_name = 'freehire'
+    hosts = ('freehire.me',)
 
+    def search_api(self, context, transport):
+        return self.search(query=context.query, countries=context.countries, limit=context.limit,
+                           offset=context.offset, _transport=transport)
 
-class FreehireJobBoard:
+    def discovery_pages(self, context):
+        yield 'https://freehire.me/jobs?' + urllib.parse.urlencode({'q': context.query}), ''
+
     def __init__(self, opener=None):
         self.opener = opener or urllib.request.urlopen
 
-    def search(self, query="", countries=None, limit=100, offset=0):
+    def search(self, query="", countries=None, limit=100, offset=0, *, _transport=None):
         if limit < 1 or limit > 100:
             raise ValueError("limit must be between 1 and 100")
         params = {
@@ -44,7 +52,7 @@ class FreehireJobBoard:
             },
         )
         try:
-            with self.opener(request) as response:
+            with self._open(request, _transport) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as error:
             raise RuntimeError("Freehire returned HTTP {}".format(error.code))

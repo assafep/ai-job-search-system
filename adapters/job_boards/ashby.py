@@ -5,29 +5,49 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from .greenhouse import _plain_text
+from .interface import EmployerJobBoard, UnsupportedOperation
+from .parsing import plain_text as _plain_text
 
 
 BASE_URL = 'https://api.ashbyhq.com/posting-api/job-board/'
 
 
-class AshbyJobBoard:
-    def __init__(self, boards, opener=None, timeout=30):
-        if not isinstance(boards, dict) or not boards:
+class AshbyJobBoard(EmployerJobBoard):
+    provider_name = 'ashby'
+    hosts = ('jobs.ashbyhq.com',)
+
+    def fetch_details_api(self, context, transport):
+        parts = urllib.parse.urlsplit(context.posting_url).path.strip('/').split('/')
+        if len(parts) != 2:
+            raise UnsupportedOperation('Not an exact Ashby posting URL')
+        token, job_id = parts
+        url = BASE_URL + urllib.parse.quote(token, safe='')
+        payload = transport.read_json(url)
+        for job in payload.get('jobs') or []:
+            if str(job.get('id')) == job_id and job.get('isListed') is True:
+                return transport.details(context.posting_url, url,
+                                         self._normalize('', job)['description'])
+        raise ValueError('Ashby feed has no matching public posting')
+
+    def discovery_pages(self, context):
+        for token, company in (context.boards or self.boards).items():
+            yield 'https://jobs.ashbyhq.com/' + urllib.parse.quote(token, safe=''), company
+
+    def __init__(self, boards=None, opener=None, timeout=30):
+        if boards is not None and (not isinstance(boards, dict) or not boards):
             raise ValueError('at least one Ashby board token is required')
-        self.boards = boards
+        self.boards = boards or {}
         self.opener = opener or urllib.request.urlopen
         self.timeout = timeout
 
-    def list_jobs(self):
+    def list_jobs(self, *, boards=None, _transport=None):
         postings = []
-        for token, company in self.boards.items():
+        for token, company in (boards if boards is not None else self.boards).items():
             request = urllib.request.Request(
                 BASE_URL + urllib.parse.quote(token, safe=''),
                 headers={'Accept': 'application/json', 'User-Agent': 'ai-job-search-system/1.0'})
             try:
-                response_context = (self.opener(request, timeout=self.timeout)
-                                    if self.opener is urllib.request.urlopen else self.opener(request))
+                response_context = self._open(request, _transport)
                 with response_context as response:
                     payload = json.loads(response.read().decode('utf-8'))
             except urllib.error.HTTPError as error:

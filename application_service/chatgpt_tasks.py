@@ -14,6 +14,7 @@ from pathlib import Path
 from functools import lru_cache
 from urllib.parse import urlsplit
 
+from adapters.job_boards.submission import SUCCESS_OUTCOMES, validate_submission_outcome
 from .runtime_client import RuntimeClient, plain
 from .stage_execution import CHATGPT_STAGES
 from .stage_tasks import StageTasks, blueprint_digest, public, timestamp
@@ -205,16 +206,13 @@ class Sessions:
                     task['contracts'] = {name: contract(name) for name in ('read-posting', 'validate')}
                 else:
                     from services.ready_submission import ReadySubmission
-                    runner = ReadySubmission(self.client, None, adapter=lambda context: None)
+                    runner = ReadySubmission(self.client, None)
                     old = runner.reusable_receipt(identity)
                     if old:
                         reconciliation = {'idempotency_key': 'existing-receipt', 'task_id': task_id, 'token': task['token']}
                         with self._effect(record, task, reconciliation):
-                            confirmed = old['status'] in {'Submitted successfully', 'Already submitted'}
-                            if confirmed:
-                                runner._record_confirmed(identity, old)
-                            else:
-                                runner._record_manual_required(identity, old)
+                            runner.reconcile(identity)
+                            confirmed = old['status'] in SUCCESS_OUTCOMES
                             task.update(state='completed', result={'application_id': identity,
                                 'status': 'succeeded' if confirmed else 'failed', 'stage': 'submit-prepared',
                                 'uncertain': old.get('status') == 'Submission unconfirmed',
@@ -328,7 +326,7 @@ class Sessions:
             if record['request']['stage'] != 'submit-prepared' or task['state'] == 'completed':
                 raise ValueError('No active submission package for this task')
             from services.ready_submission import ReadySubmission
-            context = ReadySubmission(self.client, None, adapter=lambda context: None).prepared_context(task['application_id'])
+            context = ReadySubmission(self.client, None).prepared_context(task['application_id'])
             if context['package_sha256'] != task['package_sha256']:
                 raise ValueError('Prepared package changed')
             return {'name': context['package']['name'], 'mime_type': 'application/pdf',
@@ -348,21 +346,21 @@ class Sessions:
             if task.get('submission_started'):
                 raise ValueError('Attempt already started. Inspect confirmation without submitting again')
             self._current(task)
-            runner = ReadySubmission(self.client, None, adapter=lambda context: None)
+            runner = ReadySubmission(self.client, None)
             context = runner.prepared_context(task['application_id'])
             if context['package_sha256'] != task['package_sha256'] or runner._receipt(task['application_id']):
                 raise ValueError('Package changed or an existing receipt prevents another attempt')
             with self._effect(record, task, data):
-                pending = {'status': 'Submission unconfirmed', 'application_id': task['application_id'],
-                           'package_sha256': task['package_sha256'], 'chatgpt_task_id': task['task_id'],
-                           'blockers': ['ChatGPT browser submission authorized; final outcome not yet observed.']}
-                self.client.store_file(runner.receipt_path(task['application_id']), json.dumps(pending).encode(), 'application/json')
+                runner.begin_submission(
+                    task['application_id'], task['package_sha256'],
+                    chatgpt_task_id=task['task_id'],
+                    explanation='ChatGPT browser submission authorized; final outcome not yet observed.')
                 task.update(submission_started=True, state='submission_started')
                 return self._settle(record, task, data, {'task_id': task['task_id'], 'may_submit': True,
                     'instruction': 'Perform the final submit action once in ChatGPT native browser, then record the observed result.'})
 
     def complete_submission(self, stage_task_id, data):
-        from services.ready_submission import ReadySubmission, OUTCOMES
+        from services.ready_submission import ReadySubmission
         with self.guard(), self._scope():
             record = self._run(stage_task_id)
             if record['request']['stage'] != 'submit-prepared':
@@ -372,16 +370,17 @@ class Sessions:
             if old is not None:
                 return old
             outcome = data.get('outcome')
-            if not isinstance(outcome, dict) or outcome.get('status') not in OUTCOMES:
-                raise ValueError('Invalid browser submission outcome')
-            success = outcome['status'] in {'Submitted successfully', 'Already submitted'}
-            if success and (not task.get('submission_started') or not str(outcome.get('confirmation_text') or '').strip()
-                            or not web_url(outcome.get('observed_url'))):
-                raise ValueError('Success requires a begun attempt, observed confirmation text and page URL')
-            if outcome.get('requires_human_verification') and success:
-                raise ValueError('An unverified submission cannot be recorded as successful')
-            if not success and not outcome.get('blockers'):
-                raise ValueError('A failed or unconfirmed submission requires an explanation')
+            begun = bool(task.get('submission_started'))
+            try:
+                validate_submission_outcome(outcome, native=True, begun=begun)
+            except ValueError as error:
+                outcome = {
+                    'status': 'Submission unconfirmed' if begun else 'Blocked',
+                    'failure_kind': 'system_error',
+                    'blockers': ['Invalid browser submission outcome: ' + str(error)],
+                }
+                validate_submission_outcome(outcome, native=True, begun=begun)
+            success = outcome['status'] in SUCCESS_OUTCOMES
             if not task.get('submission_started'):
                 self._current(task)
                 if success or outcome['status'] == 'Submission unconfirmed':
@@ -391,19 +390,14 @@ class Sessions:
                 if not current or current['status'] not in {'Prepared', 'Manual Apply Required', 'Applied', 'Interviewing', 'Rejected', 'Offer'}:
                     raise ValueError('Application changed incompatibly; reconcile the submission')
             with self._effect(record, task, data):
-                receipt = dict(outcome, application_id=task['application_id'], package_sha256=task['package_sha256'],
-                               chatgpt_task_id=task['task_id'], attempt={
-                                   'model': 'ChatGPT (host-selected model)', 'effort': 'host-selected',
-                                   'logic': ['Used ChatGPT native browser for this application.'],
-                                   'obstacles': outcome.get('blockers') or [], 'tackled': []})
-                if task.get('submission_started') and not success and receipt.get('failure_kind') == 'system_error':
-                    receipt['status'] = 'Submission unconfirmed'
-                runner = ReadySubmission(self.client, None, adapter=lambda context: None)
-                self.client.store_file(runner.receipt_path(task['application_id']), json.dumps(receipt).encode(), 'application/json')
-                if success:
-                    runner._record_confirmed(task['application_id'], receipt)
-                else:
-                    runner._record_manual_required(task['application_id'], receipt)
+                runner = ReadySubmission(self.client, None)
+                receipt = runner.complete_submission(
+                    task['application_id'], outcome, package_sha256=task['package_sha256'],
+                    chatgpt_task_id=task['task_id'], attempt={
+                        'model': 'ChatGPT (host-selected model)', 'effort': 'host-selected',
+                        'logic': ['Used ChatGPT native browser for this application.'],
+                        'obstacles': outcome.get('blockers') or [], 'tackled': []},
+                    native=True, begun=bool(task.get('submission_started')), outcome_validated=True)
                 task.update(state='completed', result={'application_id': task['application_id'], 'stage': 'submit-prepared',
                     'status': 'succeeded' if success else 'failed', 'submission': receipt,
                     'uncertain': receipt['status'] == 'Submission unconfirmed'})

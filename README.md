@@ -271,19 +271,22 @@ journal event.
 
 ## Architecture
 
-See [workflow, stage and task architecture](docs/architecture.md) and
+See [stage and task architecture](docs/architecture.md) and
 [application state machines](docs/state-machines.md).
 
-A **workflow** spans the job-search lifecycle. A **stage** defines one processing
+A **pipeline** spans the job-search lifecycle. A **stage** defines one processing
 step, a **stage task** requests its execution, a **worker** executes tasks, and
 an **agent run** invokes stateless decision logic. Use
 `services.stage_executor.StageExecutor` and the `/stages` / `/stage-tasks` API.
 The public contract is `openapi.yaml`; MCP tool definitions are generated from it.
 
-Active application state remains in Google Docs. PostgreSQL stores completed
-applications and, separately, operational execution commands, claims, and
-installation metadata. A queued execution command is not an active application
-stored in PostgreSQL. See [the cutover procedure](docs/stage-task-cutover.md)
+Active application state lives in Google Docs. Incomplete applications — those
+in `Discovered`, `Bookmarked`, `Validated`, `Prepared`, or `Manual Apply
+Required` states — exist only within the Google Docs application journal and
+associated Google Drive artifacts. PostgreSQL stores **completed** applications
+(archived records and deduplication data) and, separately, operational execution
+commands, claims, and installation metadata. A queued execution command is not
+an active application stored in PostgreSQL. See [the cutover procedure](docs/stage-task-cutover.md)
 for database migration, deployment configuration and ChatGPT MCP refresh.
 
 ### Stage execution flow

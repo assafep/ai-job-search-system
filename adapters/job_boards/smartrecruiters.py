@@ -6,13 +6,16 @@ whose list location is Israel.
 """
 
 import json
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
 
-from services.discovery_sources import ISRAEL_LOCATION
+from .interface import EmployerJobBoard, UnsupportedOperation
 
-from .greenhouse import _plain_text
+from .locations import ISRAEL_LOCATION
+
+from .parsing import plain_text as _plain_text
 
 
 BASE_URL = 'https://api.smartrecruiters.com/v1/companies/{}/postings'
@@ -30,18 +33,39 @@ def _in_israel(job):
     return bool(ISRAEL_LOCATION.search(text))
 
 
-class SmartRecruitersJobBoard:
-    def __init__(self, boards, opener=None, timeout=30):
-        if not isinstance(boards, dict) or not boards:
+class SmartRecruitersJobBoard(EmployerJobBoard):
+    provider_name = 'smartrecruiters'
+    hosts = ('jobs.smartrecruiters.com',)
+
+    def discovery_pages(self, context):
+        for token, company in (context.boards or self.boards).items():
+            yield 'https://careers.smartrecruiters.com/' + urllib.parse.quote(token, safe=''), company
+
+    def fetch_details_api(self, context, transport):
+        from .parsing import text
+        match = re.match(r'^/([^/]+)/(\d+)(?:-|/|$)', urllib.parse.urlsplit(context.posting_url).path)
+        if not match:
+            raise UnsupportedOperation('Not an exact SmartRecruiters posting URL')
+        url = self._detail_url(*match.groups())
+        payload = transport.read_json(url)
+        if payload.get('id') is not None and str(payload['id']) != match[2]:
+            raise ValueError('SmartRecruiters API returned a different posting')
+        sections = (payload.get('jobAd') or {}).get('sections') or {}
+        description = text('\n'.join((sections.get(key) or {}).get('text') or ''
+                           for key in ('jobDescription', 'qualifications', 'additionalInformation')))
+        return transport.details(context.posting_url, url, description)
+
+    def __init__(self, boards=None, opener=None, timeout=30):
+        if boards is not None and (not isinstance(boards, dict) or not boards):
             raise ValueError('at least one SmartRecruiters company identifier is required')
-        self.boards = boards
+        self.boards = boards or {}
         self.opener = opener or urllib.request.urlopen
         self.timeout = timeout
 
-    def list_jobs(self):
+    def list_jobs(self, *, boards=None, _transport=None):
         postings = []
-        for token, company in self.boards.items():
-            listed = [job for job in self._listed(token) if _in_israel(job)]
+        for token, company in (boards if boards is not None else self.boards).items():
+            listed = [job for job in self._listed(token, _transport) if _in_israel(job)]
             failures = 0
             for job in listed:
                 job_id = job.get('id')
@@ -49,7 +73,7 @@ class SmartRecruitersJobBoard:
                     failures += 1
                     continue
                 try:
-                    detail = self._json(self._detail_url(token, job_id), token)
+                    detail = self._json(self._detail_url(token, job_id), token, _transport)
                 except RuntimeError:
                     failures += 1
                     continue
@@ -65,14 +89,14 @@ class SmartRecruitersJobBoard:
                 raise RuntimeError('SmartRecruiters board {} descriptions were unreadable'.format(token))
         return postings
 
-    def _listed(self, token):
+    def _listed(self, token, _transport=None):
         quoted = urllib.parse.quote(token, safe='')
         offset = 0
         found = []
         total = None
         while total is None or offset < total:
             url = BASE_URL.format(quoted) + '?limit=100&offset={}'.format(offset)
-            payload = self._json(url, token)
+            payload = self._json(url, token, _transport)
             if not isinstance(payload, dict) or not isinstance(payload.get('content'), list):
                 raise RuntimeError('SmartRecruiters board {} returned an invalid response'.format(token))
             content = payload['content']
@@ -91,14 +115,13 @@ class SmartRecruitersJobBoard:
     def _detail_url(token, job_id):
         return BASE_URL.format(urllib.parse.quote(token, safe='')) + '/' + urllib.parse.quote(str(job_id), safe='')
 
-    def _json(self, url, token):
+    def _json(self, url, token, _transport=None):
         request = urllib.request.Request(url, headers={
             'Accept': 'application/json',
             'User-Agent': 'ai-job-search-system/1.0',
         })
         try:
-            response_context = (self.opener(request, timeout=self.timeout)
-                                if self.opener is urllib.request.urlopen else self.opener(request))
+            response_context = self._open(request, _transport)
             with response_context as response:
                 body = response.read().decode('utf-8')
         except urllib.error.HTTPError as error:

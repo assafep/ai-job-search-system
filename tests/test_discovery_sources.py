@@ -1,3 +1,4 @@
+from adapters.job_boards.interface import AdapterResult
 from datetime import datetime, timezone
 
 from services.discovery_sources import select_live_postings, fetch_employer_boards
@@ -54,20 +55,16 @@ def test_irrelevant_titles_skills_and_future_dates_are_excluded():
     assert select_live_postings(jobs, PROFILE, now=NOW) == []
 
 
-def test_comeet_and_lever_runtimes_use_the_catalog_and_profile_filter(monkeypatch):
-    class Board:
-        def __init__(self, boards):
-            self.boards = boards
-
-        def list_jobs(self):
-            assert self.boards
-            return [posting(posted_at=None, countries=['IL']),
-                    posting(location='New York', countries=['US'], posted_at=None)]
+def test_employer_runtimes_use_the_catalog_and_profile_filter(monkeypatch):
+    class Framework:
+        def list_jobs(self, context, source):
+            assert context.boards == {'example': 'Example'}
+            return AdapterResult(True, [posting(posted_at=None, countries=['IL']),
+                                       posting(location='New York', countries=['US'], posted_at=None)])
 
     monkeypatch.setattr('services.discovery_sources.source_boards', lambda source: {'example': 'Example'})
-    monkeypatch.setattr('adapters.job_boards.comeet.ComeetJobBoard', Board)
-    monkeypatch.setattr('adapters.job_boards.lever.LeverJobBoard', Board)
-    for source in ('comeet', 'lever'):
+    monkeypatch.setattr('adapters.job_boards.framework.get_framework', Framework)
+    for source in ('comeet', 'lever', 'greenhouse', 'ashby', 'smartrecruiters'):
         context = {'source_names': [source]}
         StageExecutor._enrich_discovery_context(context, PROFILE)
         assert len(context['job_postings']) == 1
@@ -75,66 +72,31 @@ def test_comeet_and_lever_runtimes_use_the_catalog_and_profile_filter(monkeypatc
 
 
 def test_himalayas_runtime_keeps_only_recent_israel_skill_matches(monkeypatch):
-    class Board:
-        def search(self, query, country='IL'):
-            assert query == 'backend'
-            assert country == 'IL'
-            return [posting(countries=['IL'], posting_url='https://himalayas.app/jobs/new'),
+    class Framework:
+        def search(self, context, source):
+            assert source == 'himalayas'
+            assert context.query == 'backend'
+            assert context.countries == ['IL']
+            return AdapterResult(True, [posting(countries=['IL'], posting_url='https://himalayas.app/jobs/new'),
                     posting(location='Remote', countries=[], posting_url='https://himalayas.app/jobs/remote'),
                     posting(posted_at='2020-01-01T00:00:00Z', countries=['IL'],
-                            posting_url='https://himalayas.app/jobs/old')]
+                            posting_url='https://himalayas.app/jobs/old')])
 
-    monkeypatch.setattr('adapters.job_boards.himalayas.HimalayasJobBoard', Board)
+    monkeypatch.setattr('adapters.job_boards.framework.get_framework', Framework)
     context = {'source_names': ['himalayas'], 'search_terms': ['backend']}
     StageExecutor._enrich_discovery_context(context, PROFILE)
     assert len(context['job_postings']) == 1
     assert context['job_postings'][0]['countries'] == ['IL']
 
 
-def test_smartrecruiters_runtime_uses_the_catalog_and_profile_filter(monkeypatch):
-    class Board:
-        def __init__(self, boards):
-            assert boards == {'example': 'Example'}
-
-        def list_jobs(self):
-            return [posting(countries=['IL']), posting(location='New York', countries=['US'])]
-
-    monkeypatch.setattr('services.discovery_sources.source_boards', lambda source: {'example': 'Example'})
-    monkeypatch.setattr('adapters.job_boards.smartrecruiters.SmartRecruitersJobBoard', Board)
-    context = {'source_names': ['smartrecruiters']}
-    StageExecutor._enrich_discovery_context(context, PROFILE)
-    assert len(context['job_postings']) == 1
-    assert context['job_postings'][0]['countries'] == ['IL']
-
-
-def test_greenhouse_runtime_uses_catalog_and_filters_before_discovery(monkeypatch):
-    class Board:
-        def __init__(self, boards):
-            assert boards == {'example': 'Example'}
-
-        def list_jobs(self):
-            return [posting(posted_at=None), posting(location='New York', posted_at=None)]
-
-    monkeypatch.delenv('GREENHOUSE_BOARDS', raising=False)
-    monkeypatch.setattr('services.discovery_sources.source_boards', lambda source: {'example': 'Example'})
-    monkeypatch.setattr('adapters.job_boards.greenhouse.GreenhouseJobBoard', Board)
-    context = {'source_names': ['greenhouse']}
-    StageExecutor._enrich_discovery_context(context, PROFILE)
-    assert len(context['job_postings']) == 1
-    assert context['job_postings'][0]['countries'] == ['IL']
-
-
 def test_one_broken_employer_does_not_discard_healthy_results():
-    class Board:
-        def __init__(self, boards):
-            self.broken = 'broken' in boards
+    class Framework:
+        def list_jobs(self, context, source):
+            if 'broken' in context.boards:
+                return AdapterResult(False, error='HTTP 404')
+            return AdapterResult(True, [posting()])
 
-        def list_jobs(self):
-            if self.broken:
-                raise RuntimeError('HTTP 404')
-            return [posting()]
-
-    jobs, errors = fetch_employer_boards(Board, {'broken': 'Broken', 'healthy': 'Healthy'})
+    jobs, errors = fetch_employer_boards('example', {'broken': 'Broken', 'healthy': 'Healthy'}, framework=Framework())
     assert len(jobs) == 1
     assert errors == ['broken: HTTP 404']
 
@@ -142,12 +104,9 @@ def test_one_broken_employer_does_not_discard_healthy_results():
 def test_all_failed_boards_raise_instead_of_reporting_zero_jobs():
     import pytest
 
-    class Broken:
-        def __init__(self, boards):
-            pass
-
-        def list_jobs(self):
-            raise RuntimeError('HTTP 503')
+    class Framework:
+        def list_jobs(self, context, source):
+            return AdapterResult(False, error='HTTP 503')
 
     with pytest.raises(RuntimeError, match='HTTP 503'):
-        fetch_employer_boards(Broken, {'broken': 'Broken'})
+        fetch_employer_boards('example', {'broken': 'Broken'}, framework=Framework())

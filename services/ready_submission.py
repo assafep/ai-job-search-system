@@ -8,7 +8,9 @@ from io import BytesIO
 
 from pypdf import PdfReader
 
-from adapters.browser.submission import adapter_from_environment
+from adapters.job_boards.framework import get_framework
+from adapters.job_boards.interface import SubmissionContext
+from adapters.job_boards.submission import OUTCOMES, SUCCESS_OUTCOMES, validate_submission_outcome
 from .event_attempt import with_attempt
 from .event_dispatcher import dispatch
 from .application_package import cover_matches_application
@@ -18,8 +20,6 @@ from .workload_effort import effort_for_stage
 from .workload_registry import registry_from_environment
 
 
-OUTCOMES = {'Submitted successfully', 'Already submitted', 'Prepared but not submitted',
-            'Submission unconfirmed', 'Blocked'}
 SUBMISSION_MODEL = "grok-4.7"
 
 
@@ -48,7 +48,7 @@ class ReadySubmission:
     def __init__(self, persistence, registry, adapter=None, manage_state=True):
         self.persistence = persistence
         self.registry = registry
-        self.adapter = adapter or adapter_from_environment()
+        self.framework = get_framework(submitter=adapter)
         self.manage_state = manage_state
 
     @staticmethod
@@ -88,6 +88,66 @@ class ReadySubmission:
             'application_id': application_id,
             'blockers': ['Submission receipt was empty or unreadable. Verify whether the application was received before applying again.'],
         }
+
+    def _store_receipt(self, application_id, receipt):
+        self.persistence.store_file(self.receipt_path(application_id), json.dumps(receipt).encode(), 'application/json')
+        return receipt
+
+    def begin_submission(self, application_id, package_sha256, *, package_name=None,
+                         original_posting_url=None, chatgpt_task_id=None, explanation=None):
+        """Persist uncertainty before a callback dispatch or native final click."""
+        receipt = {
+            'status': 'Submission unconfirmed',
+            'application_id': application_id,
+            'package_sha256': package_sha256,
+            'blockers': [explanation or 'Submission attempt started; no receipt observed yet.'],
+        }
+        if package_name:
+            receipt['package_name'] = package_name
+        if original_posting_url:
+            receipt['original_posting_url'] = original_posting_url
+        if chatgpt_task_id:
+            receipt['chatgpt_task_id'] = chatgpt_task_id
+        return self._store_receipt(application_id, receipt)
+
+    def complete_submission(self, application_id, outcome, *, package_sha256=None, package_name=None,
+                            original_posting_url=None, chatgpt_task_id=None, attempt=None,
+                            effort='medium', prior_logic=None, native=False, begun=False,
+                            outcome_validated=False):
+        """Persist a final outcome and apply its state transition exactly once."""
+        if not outcome_validated:
+            validate_submission_outcome(outcome, native=native, begun=begun)
+        result = dict(outcome)
+        if native and begun and result.get('failure_kind') == 'system_error' and result['status'] not in SUCCESS_OUTCOMES:
+            result['status'] = 'Submission unconfirmed'
+        receipt = dict(result, application_id=application_id)
+        if package_sha256:
+            receipt['package_sha256'] = package_sha256
+        if package_name:
+            receipt['package_name'] = package_name
+        if original_posting_url:
+            receipt['original_posting_url'] = original_posting_url
+        if chatgpt_task_id:
+            receipt['chatgpt_task_id'] = chatgpt_task_id
+        if attempt is not None:
+            receipt['attempt'] = attempt
+        receipt['attempt'] = describe_attempt(receipt, effort, prior_logic or [])
+        self._store_receipt(application_id, receipt)
+        if receipt['status'] in SUCCESS_OUTCOMES:
+            self._record_confirmed(application_id, receipt)
+        else:
+            self._record_manual_required(application_id, receipt)
+        return receipt
+
+    def reconcile(self, application_id):
+        """Apply state routing for a stored receipt without restarting submission."""
+        receipt = self.reusable_receipt(application_id)
+        if receipt:
+            if receipt['status'] in SUCCESS_OUTCOMES:
+                self._record_confirmed(application_id, receipt)
+            else:
+                self._record_manual_required(application_id, receipt)
+        return receipt
 
     def _record_confirmed(self, application_id, receipt):
         confirmation = receipt.get('confirmation_text') or receipt.get('application_reference')
@@ -156,8 +216,7 @@ class ReadySubmission:
             raise KeyError(application_id)
         receipt = self.reusable_receipt(application_id)
         if receipt:
-            if receipt['status'] in {'Submitted successfully', 'Already submitted'}:
-                self._record_confirmed(application_id, receipt)
+            self.reconcile(application_id)
             return dict(receipt, replayed=True)
         context = self.prepared_context(application_id)
         artifact = context['package']
@@ -166,24 +225,16 @@ class ReadySubmission:
         prior_logic = ['Checked that one combined PDF exists, every page has text, and the cover letter matches the employer and role.']
         # Durably mark the attempt before transmission. An interrupted adapter
         # must never cause an automatic duplicate application.
-        pending = {'status': 'Submission unconfirmed', 'application_id': application_id,
-                   'package_sha256': digest, 'blockers': ['Submission attempt started; no receipt observed yet.']}
-        self.persistence.store_file(self.receipt_path(application_id), json.dumps(pending).encode(), 'application/json')
-        result = self.adapter(context)
-        if not isinstance(result, dict) or result.get('status') not in OUTCOMES:
-            raise ValueError('submission adapter returned an invalid outcome; attempt remains unconfirmed')
-        if result['status'] in {'Submitted successfully', 'Already submitted'}:
-            if result.get('requires_human_verification'):
-                raise ValueError('successful submission cannot also require human verification')
-            if not (result.get('confirmation_text') or result.get('application_reference')):
-                raise ValueError('submission adapter supplied no confirmation; attempt remains unconfirmed')
-        receipt = dict(result, application_id=application_id, package_sha256=digest,
-                       package_name=artifact['name'], original_posting_url=app['posting_url'])
-        receipt["attempt"] = describe_attempt(receipt, effort, prior_logic)
-        self.persistence.store_file(self.receipt_path(application_id), json.dumps(receipt).encode(), 'application/json')
-        if result['status'] in {'Submitted successfully', 'Already submitted'}:
-            self._record_confirmed(application_id, receipt)
-        return receipt
+        self.begin_submission(application_id, digest, package_name=artifact['name'],
+                              original_posting_url=app['posting_url'])
+        result = self.framework.submit(SubmissionContext(
+            application=app, posting_url=app['posting_url'],
+            profile=context['applicant_profile'], package_bytes=context['package_bytes'],
+            package_name=artifact['name'], host_context=context)).data
+        return self.complete_submission(
+            application_id, result, package_sha256=digest, package_name=artifact['name'],
+            original_posting_url=app['posting_url'], effort=effort, prior_logic=prior_logic,
+            begun=True, outcome_validated=True)
 
     def reusable_receipt(self, application_id):
         """Return a definitive/uncertain prior outcome; never restart uncertainty."""

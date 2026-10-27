@@ -9,9 +9,12 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
+
+from .interface import JobBoardAdapter, UnsupportedOperation
+from .parsing import text as _text
 from datetime import datetime, timezone
 
-from .greenhouse import _plain_text
+from .parsing import plain_text as _plain_text
 
 
 BASE_URL = 'https://himalayas.app/jobs/api/search'
@@ -53,12 +56,29 @@ def _restrictions(values):
     return labels, sorted(countries)
 
 
-class HimalayasJobBoard:
+class HimalayasJobBoard(JobBoardAdapter):
+    provider_name = 'himalayas'
+    hosts = ('himalayas.app',)
+
+    def search_api(self, context, transport):
+        return self.search(context.query, country=next(iter(context.countries), 'IL'),
+                           max_pages=context.max_pages, _transport=transport)
+
+    def discovery_pages(self, context):
+        yield 'https://himalayas.app/jobs?' + urllib.parse.urlencode({'q': context.query}), ''
+
+    def fetch_details_api(self, context, transport):
+        url = _himalayas_endpoint(context.posting_url)
+        if not url:
+            raise UnsupportedOperation('Not an exact Himalayas posting URL')
+        source = transport.read_text(url, {'Accept': 'application/json'})
+        return transport.details(context.posting_url, url, _extract_himalayas(source, context.posting_url))
+
     def __init__(self, opener=None, timeout=30):
         self.opener = opener or urllib.request.urlopen
         self.timeout = timeout
 
-    def search(self, query, country='IL', max_pages=3):
+    def search(self, query, country='IL', max_pages=3, *, _transport=None):
         if max_pages < 1:
             raise ValueError('max_pages must be at least 1')
         found = {}
@@ -70,7 +90,7 @@ class HimalayasJobBoard:
                 'sort': 'recent',
                 'page': page,
             }
-            payload = self._read(BASE_URL + '?' + urllib.parse.urlencode(params))
+            payload = self._read(BASE_URL + '?' + urllib.parse.urlencode(params), _transport)
             jobs = payload.get('jobs') if isinstance(payload, dict) else None
             if not isinstance(jobs, list):
                 raise RuntimeError('Himalayas returned an invalid response')
@@ -82,14 +102,13 @@ class HimalayasJobBoard:
                 break
         return list(found.values())
 
-    def _read(self, url):
+    def _read(self, url, _transport=None):
         request = urllib.request.Request(url, headers={
             'Accept': 'application/json',
             'User-Agent': 'ai-job-search-system/1.0',
         })
         try:
-            response_context = (self.opener(request, timeout=self.timeout)
-                                if self.opener is urllib.request.urlopen else self.opener(request))
+            response_context = self._open(request, _transport)
             with response_context as response:
                 payload = json.loads(response.read().decode('utf-8'))
         except urllib.error.HTTPError as error:
@@ -122,3 +141,30 @@ class HimalayasJobBoard:
             'employment_type': job.get('employmentType') or '',
             'seniority': seniority,
         }
+
+
+def _himalayas_endpoint(posting_url):
+    """Map a public posting to Himalayas' documented exact-job API."""
+    parsed = urllib.parse.urlsplit(posting_url)
+    if (parsed.scheme != 'https' or parsed.netloc.lower() != 'himalayas.app'
+            or not re.fullmatch(r'/companies/[^/]+/jobs/[^/]+/?', parsed.path)):
+        return None
+    return 'https://himalayas.app/jobs/api' + parsed.path.rstrip('/')
+
+
+def _extract_himalayas(source, posting_url):
+    payload = json.loads(source)
+    job = payload.get('job') if isinstance(payload, dict) else None
+    if not isinstance(job, dict):
+        raise ValueError('Himalayas API response has no job object')
+    parsed = urllib.parse.urlsplit(posting_url)
+    expected = 'https://himalayas.app' + parsed.path.rstrip('/')
+    guid = job.get('guid')
+    company = parsed.path.split('/')[2]
+    if (not isinstance(guid, str) or guid.rstrip('/') != expected
+            or job.get('companySlug') != company):
+        raise ValueError('Himalayas API returned a different posting')
+    description = job.get('description')
+    if not isinstance(description, str):
+        raise ValueError('Himalayas API description must be HTML text')
+    return _text(description)

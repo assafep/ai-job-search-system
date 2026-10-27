@@ -11,25 +11,20 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
-from adapters.job_boards.ashby import AshbyJobBoard
-from adapters.job_boards.comeet import ComeetJobBoard
-from adapters.job_boards.greenhouse import GreenhouseJobBoard
-from adapters.job_boards.lever import LeverJobBoard
-from adapters.job_boards.smartrecruiters import SmartRecruitersJobBoard
+from adapters.job_boards.framework import get_framework
+from adapters.job_boards.interface import DiscoveryContext
 from .discovery_sources import select_live_postings, source_boards
 
 
 def audit(profile):
     """Inspect public feeds without a persistence client or registry writes."""
     results = []
-    for source, board_class in (
-            ('greenhouse', GreenhouseJobBoard), ('ashby', AshbyJobBoard),
-            ('comeet', ComeetJobBoard), ('lever', LeverJobBoard),
-            ('smartrecruiters', SmartRecruitersJobBoard)):
+    framework = get_framework()
+    for source in ('greenhouse', 'ashby', 'comeet', 'lever', 'smartrecruiters'):
         for token, company in source_boards(source).items():
             item = {'source': source, 'token': token, 'company': company}
             try:
-                jobs = board_class({token: company}).list_jobs()
+                jobs = framework.list_jobs(DiscoveryContext(boards={token: company}), source).unwrap()
                 item.update(total=len(jobs), selected=select_live_postings(jobs, profile))
             except (RuntimeError, ValueError, OSError) as error:
                 item['error'] = str(error)

@@ -203,100 +203,53 @@ class StageExecutor:
         preferred_countries = context.get("countries") or job_search.get("countries") or [
             item.upper() for item in locations if isinstance(item, str) and len(item) == 2
         ] or ["IL"]
+        from adapters.job_boards.framework import get_framework
+        from adapters.job_boards.interface import DiscoveryContext
+        from .discovery_sources import source_boards, select_live_postings, fetch_employer_boards
+        framework = get_framework()
+        request = DiscoveryContext(
+            query=query, countries=preferred_countries, locations=locations,
+            limit=int(context.get('results_per_page', 20 if source == 'adzuna' else 100)),
+            page=int(context.get('page', 1)), offset=int(context.get('offset', 0)))
         if source in {'greenhouse', 'ashby', 'comeet', 'lever', 'smartrecruiters'}:
-            from .discovery_sources import source_boards, select_live_postings, fetch_employer_boards
-            if source == 'greenhouse':
-                from adapters.job_boards.greenhouse import GreenhouseJobBoard, boards_from_environment
-                board_class = GreenhouseJobBoard
-                boards = boards_from_environment() or source_boards(source)
-            elif source == 'ashby':
-                from adapters.job_boards.ashby import AshbyJobBoard
-                board_class = AshbyJobBoard
-                boards = source_boards(source)
-            elif source == 'comeet':
-                from adapters.job_boards.comeet import ComeetJobBoard
-                board_class = ComeetJobBoard
-                boards = source_boards(source)
-            elif source == 'lever':
-                from adapters.job_boards.lever import LeverJobBoard
-                board_class = LeverJobBoard
-                boards = source_boards(source)
-            else:
-                from adapters.job_boards.smartrecruiters import SmartRecruitersJobBoard
-                board_class = SmartRecruitersJobBoard
-                boards = source_boards(source)
+            boards = source_boards(source)
             if context.get('discovery_board'):
                 token = context['discovery_board']
                 if token not in boards:
                     raise ValueError('Discovery board is not in the configured source catalog')
                 boards = {token: boards[token]}
-            postings, errors = fetch_employer_boards(board_class, boards)
-            context['job_postings'] = select_live_postings(
-                postings, profile, preferred_countries)
+            postings, errors = fetch_employer_boards(source, boards, framework=framework)
+            context['job_postings'] = select_live_postings(postings, profile, preferred_countries)
             if errors:
                 context['discovery_source_errors'] = errors
             return
-        if source == 'himalayas':
-            from adapters.job_boards.himalayas import HimalayasJobBoard
-            from .discovery_sources import select_live_postings
-            board = HimalayasJobBoard()
-            collected = {}
-            errors = []
+        if source in {'himalayas', 'jobicy'}:
+            from dataclasses import replace
             queries = [str(term).strip() for term in terms if str(term).strip()]
-            if not queries:
-                queries = ['backend', 'java', 'scala', 'python', 'data engineer']
-            country = preferred_countries[0] if preferred_countries else 'IL'
-            for term in queries[:6]:
-                try:
-                    for posting in board.search(query=term, country=country):
-                        url = posting.get('posting_url')
-                        if url:
-                            collected[url] = posting
-                except (RuntimeError, ValueError, OSError) as error:
-                    errors.append('{}: {}'.format(term, error))
-            if errors and not collected:
+            if source == 'himalayas':
+                queries = (queries or ['backend', 'java', 'scala', 'python', 'data engineer'])[:6]
+            else:
+                queries = queries or ['']
+            collected, errors, succeeded = {}, [], 0
+            for term in queries:
+                result = framework.search(replace(request, query=term), source)
+                if result.success:
+                    succeeded += 1
+                    for posting in result.data:
+                        collected[posting['posting_url']] = posting
+                else:
+                    errors.append('{}: {}'.format(term, result.error))
+            if errors and not succeeded:
                 raise RuntimeError('; '.join(errors))
-            context['job_postings'] = select_live_postings(
-                list(collected.values()), profile, preferred_countries)
+            postings = list(collected.values())
+            context['job_postings'] = (select_live_postings(postings, profile, preferred_countries)
+                                       if source == 'himalayas' else postings)
             if errors:
                 context['discovery_source_errors'] = errors
             return
-        if source == "jobicy":
-            from adapters.job_boards.jobicy import JobicyJobBoard
-            # Jobicy's tag is one keyword phrase, limited to 50 characters.
-            # Boolean OR strings exceed that limit and are not its query syntax.
-            board = JobicyJobBoard()
-            postings = {}
-            for term in terms or ['']:
-                for posting in board.search(
-                        query=str(term).strip(),
-                        count=int(context.get("results_per_page", 100)),
-                        geo=preferred_countries[0] if preferred_countries else ""):
-                    postings[posting['posting_url']] = posting
-            context["job_postings"] = list(postings.values())
-            return
-        if source == "freehire":
-            from adapters.job_boards.freehire import FreehireJobBoard
-            context["job_postings"] = FreehireJobBoard().search(
-                query=query,
-                countries=preferred_countries,
-                limit=int(context.get("results_per_page", 100)),
-            )
-            return
-        from adapters.job_boards.adzuna import AdzunaJobBoard, client_from_environment
-        if not query and not where:
-            raise ValueError("Adzuna discovery requires search_terms or locations")
-        # Use the applicant's preferred country for Adzuna API path
-        adzuna_country = preferred_countries[0].lower() if preferred_countries else "il"
-        adzuna_client = AdzunaJobBoard(
-            os.environ.get("ADZUNA_APP_ID", ""),
-            os.environ.get("ADZUNA_APP_KEY", ""),
-            country=adzuna_country,
-        )
-        context["job_postings"] = adzuna_client.search(
-            what=query, where=where, page=int(context.get("page", 1)),
-            results_per_page=int(context.get("results_per_page", 20)),
-        )
+        if source == 'adzuna' and not query and not where:
+            raise ValueError('Adzuna discovery requires search_terms or locations')
+        context['job_postings'] = framework.search(request, source).unwrap()
 
     def run(self, workload_id, agent_results=None, agent_provider=None, recover_incomplete=True):
         # A reconciliation tick is the recovery boundary for interrupted

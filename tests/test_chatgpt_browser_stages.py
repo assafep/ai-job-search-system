@@ -124,8 +124,6 @@ def test_submission_records_intent_before_browser_and_success_requires_evidence(
     assert sessions.begin_submission(stage_task_id, payload)['may_submit'] is False
     with pytest.raises(ValueError, match='already started'):
         sessions.begin_submission(stage_task_id, command(task, 'begin-again'))
-    with pytest.raises(ValueError, match='confirmation'):
-        sessions.complete_submission(stage_task_id, command(task, 'missing', outcome={'status': 'Submitted successfully'}))
     result_payload = command(task, 'finish', outcome={'status': 'Submitted successfully',
         'confirmation_text': 'Your application was received', 'observed_url': 'https://example.test/thanks'})
     result = sessions.complete_submission(stage_task_id, result_payload)
@@ -145,6 +143,55 @@ def test_unconfirmed_submission_routes_to_manual_and_blocks_new_runs(setup):
     assert app.status == 'Manual Apply Required'
     assert sessions.next(stage_task_id)['task']['status'] == 'reconciliation_required'
     assert tasks.claim('worker') == {'task': None}
+
+
+@pytest.mark.parametrize('outcome', [
+    {'status': 'Submitted successfully', 'confirmation_text': '   ', 'observed_url': 'https://example.test/thanks'},
+    {'status': 'Submitted successfully', 'confirmation_text': 'Received', 'observed_url': 'javascript:alert(1)'},
+    {'status': 'Submitted successfully', 'confirmation_text': 'Received', 'observed_url': ['https://example.test/thanks']},
+])
+def test_invalid_native_outcome_after_begin_is_unconfirmed_and_reconciled_manually(setup, outcome):
+    repository, app, tasks, sessions = setup
+    stage_task_id, task = admit(setup, 'submit-prepared')
+    sessions.begin_submission(stage_task_id, command(task, 'begin'))
+    result = sessions.complete_submission(stage_task_id, command(task, 'invalid', outcome=outcome))
+    assert result['result']['uncertain'] is True
+    assert result['result']['submission']['status'] == 'Submission unconfirmed'
+    assert app.status == 'Manual Apply Required'
+    assert sessions.next(stage_task_id)['task']['status'] == 'reconciliation_required'
+
+
+def test_native_system_error_routes_to_dead_letters_before_begin(setup):
+    repository, app, tasks, sessions = setup
+    stage_task_id, task = admit(setup, 'submit-prepared')
+    result = sessions.complete_submission(stage_task_id, command(task, 'preflight-error', outcome={
+        'status': 'Blocked', 'failure_kind': 'system_error', 'blockers': ['Invalid saved context']}))
+    assert result['result']['status'] == 'failed'
+    assert app.status == 'Dead Letters Queue'
+
+
+@pytest.mark.parametrize('outcome', [
+    {'status': ['Submitted successfully']},
+    {'status': 'Submission unconfirmed', 'blockers': ['No receipt observed']},
+])
+def test_invalid_native_outcome_before_begin_routes_to_dead_letters(setup, outcome):
+    repository, app, tasks, sessions = setup
+    stage_task_id, task = admit(setup, 'submit-prepared')
+    result = sessions.complete_submission(stage_task_id, command(task, 'invalid-before-begin', outcome=outcome))
+    assert result['result']['status'] == 'failed'
+    assert 'Invalid browser submission outcome' in result['result']['submission']['blockers'][0]
+    assert app.status == 'Dead Letters Queue'
+
+
+def test_native_system_error_after_begin_is_unconfirmed_manual_work(setup):
+    repository, app, tasks, sessions = setup
+    stage_task_id, task = admit(setup, 'submit-prepared')
+    sessions.begin_submission(stage_task_id, command(task, 'begin'))
+    result = sessions.complete_submission(stage_task_id, command(task, 'browser-error', outcome={
+        'status': 'Blocked', 'failure_kind': 'system_error', 'blockers': ['Browser result interrupted']}))
+    assert result['result']['uncertain'] is True
+    assert result['result']['submission']['status'] == 'Submission unconfirmed'
+    assert app.status == 'Manual Apply Required'
 
 
 def test_captcha_pause_is_durable_without_backend_fallback(setup):

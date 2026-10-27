@@ -2,7 +2,7 @@
 
 import os
 
-from adapters.job_boards.posting_details import fetch_posting_details
+from adapters.job_boards.framework import fetch_posting_details
 from adapters.llm.coding_agent import CodingAgentProvider
 from .agent_runner import run as run_agent
 from .runtime_config import load
