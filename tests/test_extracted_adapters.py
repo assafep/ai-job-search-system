@@ -73,6 +73,7 @@ def test_current_python_sources_do_not_depend_on_retired_runtime():
 
 def test_no_old_runtime_directories():
     root=Path(__file__).resolve().parents[1]
-    for directory in ("application_service","services","provisioning","api","stages"):
+    for directory in ("application_service","services","provisioning","stages"):
         assert not (root/directory).exists(),directory
     assert (root/"sql"/"gdtq"/"001_neon_index.sql").is_file()
+    assert (root/"api"/"index.py").is_file()
