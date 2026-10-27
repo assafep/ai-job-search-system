@@ -107,6 +107,13 @@ class StageTasks:
                 states = definition['input_states']
                 applications = [a for a in repository.list_applications()
                                 if (a.status if hasattr(a, 'status') else a['status']) in states]
+                if request['stage'] == 'submit-prepared' and host == 'workstation':
+                    # Restrict local execution to supported Comeet URLs at admission.
+                    # Other prepared applications remain eligible for native runs.
+                    from urllib.parse import urlsplit
+                    applications = [a for a in applications if
+                        (urlsplit(a.posting_url if hasattr(a, 'posting_url') else a['posting_url']).hostname or '').lower()
+                        == 'www.comeet.com']
                 ids = list(dict.fromkeys(a.application_id if hasattr(a, 'application_id') else a['application_id'] for a in applications))
                 if 'application_id' in request:
                     if request['application_id'] not in ids:
@@ -160,7 +167,8 @@ class StageTasks:
             record = next((r for r in records.values() if r['status'] == 'queued'
                            and r.get('execution_host', 'workstation') == 'workstation'
                            and (r['request']['stage'] not in CHATGPT_STAGES
-                                or r['request']['stage'] == 'submit-prepared')), None)
+                                or (r['request']['stage'] == 'submit-prepared'
+                                    and __import__('application_service.stage_execution', fromlist=['submission_backend']).submission_backend() == 'local-playwright'))), None)
             if record is None:
                 return {'task': None}
             record.update(status='running', worker_id=worker_id, claim_token=uuid.uuid4().hex,
