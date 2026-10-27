@@ -27,15 +27,15 @@ class ApplicationContextLoader:
         self.queue,self.artifacts,self.profile_path=queue,artifacts,profile_path
 
     def identity(self,item_id):
-        from application_service.google_docs_repository import application_tab_title
-        from application_service.journal_format import parse_application_title
+        from adapters.google.docs import application_tab_title
+        from adapters.google.journal import parse_application_title
         item=find_tab(self.queue.snapshot(),item_id)
         if item is None: raise QueueConflict("Cannot resolve identity for "+item_id)
         return parse_application_title(prop(item,"title"))
 
     def application(self,item_id):
-        from application_service.google_docs_repository import tab_paragraphs,first_posting_url
-        from application_service.journal_format import parse_application_title,parse_events
+        from adapters.google.docs import tab_paragraphs,first_posting_url
+        from adapters.google.journal import parse_application_title,parse_events
         item=find_tab(self.queue.snapshot(),item_id)
         if not item:raise QueueConflict("No application "+item_id)
         company,role=parse_application_title(prop(item,"title"))
@@ -51,7 +51,7 @@ class ApplicationContextLoader:
 
     def posting(self,application):
         from adapters.job_boards.posting_details import posting_artifact_name,parse_saved_posting
-        from application_service.google_drive_artifacts import application_folder_name
+        from adapters.google.drive import application_folder_name
         reference=None
         for event in reversed(application["events"]):
             reference=((event.get("outcome") or {}).get("data") or {}).get("posting_artifact")
@@ -65,9 +65,9 @@ class ApplicationContextLoader:
 def build_google_runtime(document_id,drive_root_url,db_path,*,max_tabs=100,
                          tab_soft_limit=90,manual_limit=20):
     """Use existing Google OAuth and Drive adapters; credential provision is external."""
-    from application_service.google_auth import token_from_environment
-    from application_service.google_docs_repository import GoogleDocsClient
-    from application_service.google_drive_artifacts import GoogleDriveArtifactStore
+    from adapters.google.auth import token_from_environment
+    from adapters.google.docs import GoogleDocsClient
+    from adapters.google.drive import GoogleDriveArtifactStore
     token=token_from_environment()
     if token is None: raise RuntimeError("Google OAuth credentials not configured")
     queue=GDTQ(GoogleDocsClient(token,document_id),max_tabs=max_tabs)
