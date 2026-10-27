@@ -202,3 +202,130 @@ def test_submission_requires_confirmation_and_never_retries_unknown(tmp_path):
     result=submit_prepared(item,idx,[uncertain])
     assert result["code"]=="SUBMISSION_UNCONFIRMED"
     assert len(attempts)==1
+
+def test_all_modules_compile_and_import():
+    import compileall
+    assert compileall.compile_dir("gdtq",quiet=1,force=True)
+    import gdtq.cli,gdtq.runtime,gdtq.manual,gdtq.integrations,gdtq.gmail
+    from gdtq.cli import doc_id
+    assert doc_id("https://docs.google.com/document/d/abcDEF/edit?tab=t.0")=="abcDEF"
+
+def test_provision_missing_queues_and_research_tab():
+    q=GDTQ(FakeDocs())
+    assert q.ensure_state_tabs(["Applied","Interviewing","Manual Apply Required"])==[
+        "Applied","Interviewing","Manual Apply Required"]
+    assert q.ensure_state_tabs(["Applied"])==[]
+    tab_id=q.create_research_tab("item-1","Interview research 2026-11-03","Notes for interview")
+    assert q.create_research_tab("item-1","Interview research 2026-11-03","Notes for interview")==tab_id
+    journal=q.application_events("item-1")
+    assert any(e.get("event_type")=="RESEARCH_TAB" and "Notes" in e["content"] for e in journal)
+
+def test_retry_backoff_blocks_repoll():
+    q=GDTQ(FakeDocs())
+    q.pop("Discovered")
+    future=(datetime.now(timezone.utc)+timedelta(hours=1)).isoformat()
+    event=Event("item-1","PROCESSING_COMPLETED","Discovered","Discovered",
+                "bookmark_discovered",outcome={"data":{"next_attempt_at":future}}).as_dict()
+    q.push("Discovered","Discovered","item-1",event)
+    assert q.pop("Discovered") is None
+    past=(datetime.now(timezone.utc)-timedelta(seconds=1)).isoformat()
+    q.append_event("item-1",Event("item-1","PROCESSING_COMPLETED","Discovered",
+               "Discovered","bookmark_discovered",outcome={"data":{"next_attempt_at":past}}).as_dict())
+    assert q.pop("Discovered").item_id=="item-1"
+
+def test_external_manual_claim_and_transition(tmp_path):
+    from gdtq.manual import manual_transition
+    docs=FakeDocs()
+    q=GDTQ(docs)
+    q.ensure_state_tabs(["Manual Apply Required","Applied"])
+    docs.document["tabs"][0]["childTabs"][0]["tabProperties"]["parentTabId"]=prop(
+        q.queue_tab(q.snapshot(),"Manual Apply Required"),"tabId")
+    idx=WorkIndex(tmp_path/"idx.db")
+    o=WorkloadOrchestrator(q,engine(),idx,lambda *_:None,
+                           identity=lambda item:("Example","Engineer"))
+    result=manual_transition(o,"Manual Apply Required","item-1","Applied",reason="Submitted by human")
+    assert result["queue"]=="Applied"
+    assert q.application_events("item-1")[0]["processor"]=="manual_update"
+
+def test_calendar_and_email_idempotency(tmp_path):
+    from gdtq.observers import CalendarObserver,EmailCorrespondenceObserver,ResearchAgent
+    idx=WorkIndex(tmp_path/"idx.db")
+    apps=lambda:[{"application_id":"app-1","company":"Acme","role":"Backend","status":"Applied"}]
+    results=[]
+    mails=lambda:[{"message_id":"mail-1","sender":"Acme recruiter","subject":"Schedule interview","body":"Please schedule an interview"}]
+    email=EmailCorrespondenceObserver(mails,apps,lambda *x:results.append(x),index=idx)
+    assert len(email.scan())==1
+    assert len(email.scan())==0
+    meetings=lambda:[{"event_id":"event-1","meeting_id":"meet-1","title":"Acme interview","start":"2026-11-01T09:00:00Z"}]
+    research=ResearchAgent(lambda _:[],lambda c:"Company interview research",
+                           lambda item,title,body:"research-tab-1")
+    calendar=CalendarObserver(meetings,apps,research,lambda *x:results.append(x),idx)
+    assert len(calendar.scan())==1
+    assert len(calendar.scan())==0
+    assert len(results)==2
+
+def test_utc_scheduler_respects_israel_local_report_hour(tmp_path):
+    from gdtq.observers import Scheduler
+    idx=WorkIndex(tmp_path/"idx.db")
+    class FakeOrchestrator:
+        def dispatch_tick(self):return None
+    reports=[]
+    scheduler=Scheduler(idx,FakeOrchestrator(),report=lambda:reports.append(True),
+                        report_timezone="Asia/Jerusalem",report_hour=8)
+    assert "report" not in scheduler.tick(datetime(2026,10,27,4,0,tzinfo=timezone.utc))
+    assert "report" in scheduler.tick(datetime(2026,10,27,6,0,tzinfo=timezone.utc))
+    assert "report" not in scheduler.tick(datetime(2026,10,27,6,1,tzinfo=timezone.utc))
+    assert len(reports)==1
+
+def test_gmail_sender_drafts_but_will_not_send_without_policy():
+    from gdtq.gmail import GmailActions
+    import io
+    sent=[]
+    class Response:
+        def __enter__(self):return self
+        def __exit__(self,*args):pass
+        def read(self):return b'{"id":"draft-1"}'
+    def opener(request,timeout=None):
+        sent.append((request.full_url,request.data))
+        return Response()
+    client=GmailActions("fake-token",allow_send=False,opener=opener)
+    with pytest.raises(PermissionError):
+        client.compose("recruiter@example.com","Re: Interview","My Calendly link",send=True)
+    assert client.compose("recruiter@example.com","Re: Interview","My Calendly link")=={"id":"draft-1"}
+    assert len(sent)==1 and sent[0][0].endswith("/drafts")
+    with pytest.raises(ValueError):client.compose("bad\nrecipient@example.com","x","y")
+
+def test_posting_reader_persists_artifact_and_event_reference(tmp_path):
+    index=WorkIndex(tmp_path/"idx.db")
+    store=FakeArtifactStore()
+    item={"item_id":"i1","company":"Acme","role":"Engineer",
+          "posting_url":"https://example.com/position/1"}
+    details={"description":"Java Python Kubernetes "*40}
+    output=bookmark_discovered(item,lambda url:details,index,store=store)
+    assert output["code"]=="BOOKMARKED"
+    artifact_path=output["data"]["posting_artifact"]
+    assert artifact_path in store.files
+    saved=json.loads(store.files[artifact_path])
+    assert saved["application_id"]=="i1"
+
+def test_duplicate_directory_does_not_replace_first_application(tmp_path):
+    index=WorkIndex(tmp_path/"idx.db")
+    a=index.reserve_identity("i1","Acme","Backend","https://one.example/jobs/1")
+    b=index.reserve_identity("i2","Acme","Backend","https://two.example/jobs/2")
+    assert a is None and b=="i1"
+
+def test_terminal_archive_replay_does_not_recreate_or_delete_again(tmp_path):
+    q=GDTQ(FakeDocs());idx=WorkIndex(tmp_path/"idx.db");store=FakeArtifactStore()
+    publisher=CompletionPublisher(q,store,idx)
+    first=publisher.complete("item-1","Acme","Backend","Rejected","declined")
+    second=publisher.complete("item-1","Acme","Backend","Rejected","declined")
+    assert second["replayed"] and second["archive_path"]==first["archive_path"]
+
+def test_legacy_tabs_do_not_expire_as_year_one(tmp_path):
+    from gdtq.retention import RetentionManager
+    q=GDTQ(FakeDocs());idx=WorkIndex(tmp_path/"idx.db")
+    store=FakeArtifactStore();publisher=CompletionPublisher(q,store,idx)
+    manager=RetentionManager(q,publisher,manual_limit=20)
+    q.ensure_state_tabs(["Applied","Interviewing","Manual Apply Required"])
+    q.client.document["tabs"][0]["childTabs"][0]["tabProperties"]["parentTabId"] = "q-discovered"
+    assert manager.sweep(lambda item:("Acme","Engineer"))==[]
