@@ -68,9 +68,9 @@ through `ComeetJobBoard.submit_application`. A command like
 an installation configured for workstation stages.
 
 There is no manual `SubmissionContext` construction and no need to call
-Playwright directly. The browser adapter uses a combined résumé/cover-letter
-PDF as **one** résumé attachment. A separate cover-letter form attachment is
-left blank rather than pretending the combined file is a separate letter.
+Playwright directly. The Comeet browser adapter intentionally uploads the **same combined résumé/cover-letter PDF**
+to both the résumé and cover-letter upload fields, when the fields exist. This
+is the established AJSS application-package policy.
 
 Only Comeet applications are admitted into local submissions; other Prepared
 applications remain eligible when the native backend is selected. Backend
