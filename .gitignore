@@ -20,3 +20,9 @@ logs/
 config/orchestrator-status.json
 deployment/*verification.pdf
 .vercel
+
+# GDTQ durable runtime data (backup outside Git)
+var/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm

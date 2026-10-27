@@ -1,23 +1,16 @@
 services:
-  application-service:
+  gdtq-worker:
     build:
       context: .
       dockerfile: deployment/docker/Dockerfile
-    ports:
-      - "8080:8080"
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
     environment:
-      # Leave the backend unset by default: once onboarding creates
-      # config/runtime.json, the API should select Google Drive automatically.
-      # Set REPOSITORY_BACKEND=memory explicitly for an isolated local run.
-      REPOSITORY_BACKEND: "${REPOSITORY_BACKEND:-}"
-      APPLICATION_SERVICE_URL: "http://application-service:8080"
-      APPLICATION_SERVICE_TOKEN: "${APPLICATION_SERVICE_TOKEN:-}"
-      GOOGLE_ACCESS_TOKEN: "${GOOGLE_ACCESS_TOKEN:-}"
-      GOOGLE_REFRESH_TOKEN: "${GOOGLE_REFRESH_TOKEN:-}"
-      GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID:-}"
-      GOOGLE_CLIENT_SECRET: "${GOOGLE_CLIENT_SECRET:-}"
-      GOOGLE_INTERVIEW_JOURNAL_URL: "${GOOGLE_INTERVIEW_JOURNAL_URL:-}"
-      GOOGLE_ARTIFACT_ROOT_URL: "${GOOGLE_ARTIFACT_ROOT_URL:-}"
-      GOOGLE_APPLICATION_ROOT_PATH: "${GOOGLE_APPLICATION_ROOT_PATH:-}"
+      AJSS_RESUME_DRIVE_PATH: "${AJSS_RESUME_DRIVE_PATH:-}"
+      AJSS_GDTQ_DB: "/app/var/ajss-gdtq.sqlite3"
+      DATABASE_URL: "${DATABASE_URL:-}"
     volumes:
-      - ./config:/app/config
+      - ./var:/app/var
+      - ./config/runtime.json:/app/config/runtime.json:ro

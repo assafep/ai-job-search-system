@@ -33,7 +33,7 @@ def bookmark_discovered(item,reader,index,*,smart_reader=None,recipe_proposals=N
                 recipe_proposals.propose(url,posting["deterministic_recipe"],"read")
             if store is not None:
                 from adapters.job_boards.posting_details import posting_content_bytes, posting_artifact_name
-                from application_service.google_drive_artifacts import application_folder_name
+                from adapters.google.drive import application_folder_name
                 base="Applications/"+application_folder_name(item["company"],item["role"])
                 path=base+"/"+posting_artifact_name(item["company"],item["role"],url)
                 store.save_path(path,posting_content_bytes({
@@ -65,10 +65,10 @@ def prepare_validated(item,profile,resume_pdf,writer,store,*,calendly_url=None):
                       "description":item["description"],"resume_pdf":resume_pdf})
         if not isinstance(cover,str) or len(cover.strip())<50:
             raise ValueError("Cover letter is missing or incomplete")
-        from services.document_generator import generate_application_pdf
+        from gdtq.document_generator import generate_application_pdf
         payload=generate_application_pdf(cover,resume_pdf=resume_pdf,applicant_profile=profile,
                                          calendly_url=calendly_url,application=item)
-        from application_service.google_drive_artifacts import application_folder_name
+        from adapters.google.drive import application_folder_name
         base="Applications/"+application_folder_name(item["company"],item["role"])
         saved=store.save_path(base+"/submission-package.pdf",payload,"application/pdf",
                               "submission-package-"+item["item_id"])
