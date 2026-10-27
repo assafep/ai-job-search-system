@@ -1,9 +1,26 @@
+# GDTQ is the default development/verification workflow.
+# The historical stage-task targets below remain for compatibility while the
+# old Application Service and its tests have not been retired.
+.PHONY: gdtq-test gdtq-doctor gdtq-run legacy-test
+
+gdtq-test:
+	@$(PYTHON) -m pytest -q tests/test_gdtq.py
+
+gdtq-doctor:
+	@$(PYTHON) -m gdtq.cli doctor
+
+gdtq-run:
+	@$(PYTHON) -m gdtq.cli run --database "$${AJSS_GDTQ_DB:-var/ajss-gdtq.sqlite3}"
+
+legacy-test:
+	@$(PYTHON) -m pytest -q -k 'not gdtq'
+
 PYTHON ?= python3
 
 .PHONY: test verify list test-agent test-workload journal-status journal-repair dispatch-event approval-list dry-run-bookmark dry-run-validate dry-run-discovery dry-run-interview dry-run-correspondence dry-run-reconcile dry-run-prepare dry-run-submit run-workload run-worker api compose-config
 
 test:
-	@env -u GOOGLE_ACCESS_TOKEN -u GOOGLE_REFRESH_TOKEN -u GOOGLE_CLIENT_ID -u GOOGLE_CLIENT_SECRET $(PYTHON) -m pytest -q
+	@$(MAKE) gdtq-test
 
 verify:
 	@env -u GOOGLE_ACCESS_TOKEN -u GOOGLE_REFRESH_TOKEN -u GOOGLE_CLIENT_ID -u GOOGLE_CLIENT_SECRET $(PYTHON) -m pytest -q

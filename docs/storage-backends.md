@@ -1,4 +1,25 @@
-# Storage Backends Catalog
+# AJSS storage — GDTQ and compatibility catalog
+
+**Current GDTQ persistence** is intentionally simpler than the legacy Application Service:
+
+| Data | System of record | Implementation |
+| --- | --- | --- |
+| Active application and nested research tabs | Google Docs | `gdtq.queue.GDTQ` |
+| Append-only outcome events and freeform notes | Google Docs application tab | `GDTQ.push` and `application_events` |
+| Candidate profile and resume | Google Drive `Applicant/` | `ApplicationContextLoader` |
+| Posting content and submission artifacts | Google Drive `Applications/<Company - Role>/` | `gdtq.stages` / existing artifact store |
+| Final outcome and complete history | Google Drive `Applications/` or `Failed/` | `CompletionPublisher` |
+| URL/company-role dedup and round-robin/claim checkpoints | Persistent local SQLite | `gdtq.store.WorkIndex` |
+| Legacy API, stage tasks and hosted coordination | PostgreSQL/Neon (compatibility only) | `application_service.database` |
+
+No ChatGPT-hosted persistent key/value storage is assumed. Back up the SQLite volume and treat Drive/Docs operation recovery as a cross-system reconciliation task. The 100-tab Docs maximum includes all child research tabs; the new runtime uses a 90-tab soft budget.
+
+---
+
+## Historical Application Service backend reference
+
+The following catalog describes the retained **legacy runtime**, not the GDTQ architecture. Some paths and ownership statements below were written for the old Application Service and are not normative for `gdtq/`.
+
 
 This document catalogs every storage medium used by the AI Job Search System — the actual databases, cloud services, and local filesystem paths that running processes read from and write to. This is not about business data entities; it is about the physical and logical storage locations.
 

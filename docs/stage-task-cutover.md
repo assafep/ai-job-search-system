@@ -1,5 +1,8 @@
 # Stage/task contract cutover
 
+> **Compatibility note:** Historical migration document for the old Application Service stage-task API. **Not a GDTQ database migration**. See [GDTQ](../gdtq/README.md).
+
+
 This is a breaking development change. There are no parallel route names,
 request-field aliases or import shims. A source rollout and data migration must
 be coordinated; do not rename the live registry while old code is serving it.

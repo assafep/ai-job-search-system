@@ -1,12 +1,6 @@
 # Job-board framework
 
-Static diagrams: [four-page PDF](diagrams/job-boards/job-board-architecture.pdf),
-[call flow](diagrams/job-boards/01-call-flow.svg),
-[class relationships](diagrams/job-boards/02-class-relationships.svg),
-[bookmark sequence](diagrams/job-boards/03-bookmark-sequence.svg), and
-[native submission sequence](diagrams/job-boards/04-native-submission-sequence.svg).
-
-Services use `adapters.job_boards.framework` for search, employer listing,
+The previously generated static diagram bundle has been retired. The source-level\nflowchart below and [GDTQ architecture](architecture.md) are the maintained design references.\n\nServices use `adapters.job_boards.framework` for search, employer listing,
 posting retrieval and submission dispatch. Every built-in board implements
 `JobBoardAdapter`. Board classes own endpoint selection and parsing; the framework
 owns transport configuration, route selection, validation and read retries.

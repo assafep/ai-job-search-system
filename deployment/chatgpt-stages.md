@@ -1,5 +1,8 @@
 # Run stage tasks from ChatGPT
 
+> **Compatibility note:** This document describes the **legacy ChatGPT-native stage-task interface**, which remains a compatibility interface. GDTQ uses injected stage outcomes and its own orchestrator; the new CLI does not automatically execute native ChatGPT browser stages. See [GDTQ](../gdtq/README.md).
+
+
 The Application Service owns application-state reads and writes. MCP tools are
 generated from `openapi.yaml`; do not maintain a second handwritten catalog.
 The remote endpoint remains `https://<deployment>/mcp`, with the existing OAuth

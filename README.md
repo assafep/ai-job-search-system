@@ -36,7 +36,7 @@ See [GDTQ component, operational and migration instructions](gdtq/README.md), [a
 Use Python 3.12+ and run the existing onboarding only when the Google Drive folders, candidate profile or OAuth grant are missing. **Do not start the legacy stage runner afterward.**
 
 ```bash
-python -m pip install -e . pytest
+python -m pip install -r requirements.txt\npython -m pip install pytest jsonschema
 python -m gdtq.cli doctor
 python -m pytest -q tests/test_gdtq.py
 ```

@@ -1,5 +1,8 @@
 # Persistence Entities Catalog
 
+> **Compatibility note:** The model below documents legacy Application Service entities and PostgreSQL mappings. GDTQ stores active applications in Google Docs, with SQLite identity/checkpoint indexes and Drive JSON archives; see [GDTQ](../gdtq/README.md).
+
+
 This document catalogs every persistence storage entity in the AI Job Search System, organized by backend. Each entity shows its structure, which API endpoints access it, which code modules own it, and what scope of the application may read or write it.
 
 ## Backends at a Glance

@@ -1,5 +1,8 @@
 # Drive and applicant onboarding
 
+> **Compatibility note:** The onboarding workflow remains available for credentials, applicant profile and Drive folder access. Its legacy stage-task runner and API deployment instructions do **not** start GDTQ; see [GDTQ](../gdtq/README.md).
+
+
 Run `python3 -m services.onboarding` for a new installation, or
 `python3 -m services.onboarding --applicant` for the Drive/applicant stages on an
 existing installation. Install `requirements.txt`, gcloud and OpenSSL first.

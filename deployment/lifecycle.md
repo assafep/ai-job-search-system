@@ -1,5 +1,8 @@
 # Provisioning and deployment lifecycle
 
+> **Compatibility note:** This is the provisioning lifecycle for the retained **Application Service**, not for the GDTQ queue daemon. Existing OAuth and profile resources may be reused; do not start both journal writers. See [GDTQ](../gdtq/README.md).
+
+
 Design and provider review: 2026-10-24. Operator guide:
 [README.md](README.md). Run `./deployment/ctl.sh`.
 
