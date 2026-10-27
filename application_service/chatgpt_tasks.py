@@ -99,7 +99,8 @@ class Sessions:
     def _run(self, stage_task_id):
         record = self._load(stage_task_id)
         name = record['request']['stage']
-        if name in CHATGPT_STAGES and record['status'] == 'queued' and not record.get('claim_token'):
+        if (name in CHATGPT_STAGES and record.get('execution_host') == 'chatgpt'
+                and record['status'] == 'queued' and not record.get('claim_token')):
             record['execution_host'] = 'chatgpt'
             if not record.get('chatgpt'):
                 record['blueprint_digest'] = blueprint_digest(name)
