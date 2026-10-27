@@ -1,5 +1,12 @@
 # Provisioning package
 
+> **Legacy provisioning/compatibility:** the `up`, stage-task runner and connection-generation flows below belong to the old Application Service. They remain useful for Google OAuth, profile onboarding and API clients, but do **not** install, migrate or launch GDTQ. See [GDTQ](../gdtq/README.md).
+
+---
+
+## Historical / compatibility reference
+
+
 This package is the implementation behind [deployment/ctl.sh](../deployment/ctl.sh). The operator guide is [deployment/README.md](../deployment/README.md). The task contract is [deployment/lifecycle.md](../deployment/lifecycle.md).
 
 | Module | Role |

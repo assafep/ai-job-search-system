@@ -1,25 +1,9 @@
-# Google Drive adapter
+# Google Docs and Drive storage
 
-Reads and writes Drive/Docs only through the Application Service. The
-Interviews Journal is organized as six top-level state tabs, with application
-tabs nested beneath them. Application tabs contain a human-readable event
-journal: a date paragraph followed by bulleted notes. Research tabs nested under
-an application are preserved and are not treated as applications.
+GDTQ uses **Google Docs tabs as live queue membership**, not Google Drive file-parent movement. Each state has a top-level tab and an `<State>-onFlight` sibling. The application is one child tab with a stable tab ID; nested research tabs follow the application through state moves.
 
-Artifacts are stored under the configured Drive root using one application
-folder named:
+`gdtq.queue.GDTQ` uses the existing revision-checked `application_service.google_docs_repository.GoogleDocsClient`; `gdtq.downstream.CompletionPublisher` uses `application_service.google_drive_artifacts.GoogleDriveArtifactStore`. In-flight `pop(A)` moves the item to `A-onFlight`, then `push(A,B,item,event)` appends a structured event and moves the same tab directly to B.
 
-    <root>/<company_name> / <role_name>/<artifact>
+Documents have a **100-tab limit**, counting root, in-flight, application and research tabs. A 90-tab soft capacity policy expires eligible low-priority/manual items only after archiving their complete history. Completed JSON resides under `Applications/<Company - Role>/final-event-<tabId>.json` or `Failed/<Company - Role>/...`; posting and submission artifacts stay under the same application folder. Applicant profile: `Applicant/applicant_profile.json`.
 
-The optional `application_root_path` setting can insert a root-relative parent,
-for example `applications/<company_name> / <role_name>`. The default remains
-the direct-root layout for compatibility with the existing Drive tree.
-
-Artifact references are appended to the corresponding application journal.
-Authentication remains outside local runtime configuration. The repository
-loads the journal and artifact-root URLs from `config/runtime.json` created by
-onboarding, unless explicit environment-variable overrides are provided.
-
-The applicant profile is stored at `.ai-job-search-system/applicant_profile.json`
-under the configured root and is accessed through the Application Service's `/profile`
-resource. Previously misnamed files are renamed in place on the next profile write.
+Auth and identifiers are provisioned through the existing onboarding; never commit credentials. See [GDTQ runbook](../../gdtq/README.md) and [storage model](../../docs/storage-backends.md).

@@ -1,5 +1,12 @@
 # AJSS Application Service
 
+> **Compatibility subsystem.** This HTTP/MCP Application Service still exists for onboarding, existing API clients and its own tests, but **GDTQ is the intended queue and workflow engine**. Its canonical state rules are in `config/gdtq-routing.json`, not the stage-task API. Do not run competing journal writers. See [GDTQ](../gdtq/README.md).
+
+---
+
+## Historical / compatibility reference
+
+
 The HTTP contract is in [`../openapi.yaml`](../openapi.yaml). With no runtime
 configuration, the backend is an in-memory reference implementation. Once
 onboarding creates `config/runtime.json`, the API automatically selects the

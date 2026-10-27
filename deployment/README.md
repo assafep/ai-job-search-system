@@ -1,5 +1,12 @@
 # Provision and deployment
 
+> **Migration warning:** this deployment guide primarily provisions the **older Application Service and stage-task workers**. The GDTQ CLI is a separate single-writer runtime; this provisioning flow does not currently install or supervise GDTQ. See [GDTQ deployment and runbook](../gdtq/README.md) before starting any process that mutates the same Google document.
+
+---
+
+## Historical / compatibility reference
+
+
 One entry point with separate deployment and activation commands:
 
 1. **Provision** — make resources exist: a host, a database, a Drive folder.

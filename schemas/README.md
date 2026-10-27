@@ -1,9 +1,7 @@
-# Shared schemas
+# Schemas
 
-Store provider-neutral domain and workload schemas here. Agent output schemas
-remain next to their agent instructions.
+**Current GDTQ contracts:** [`gdtq/`](gdtq/) contains the shared `processing-outcome.schema.json`, `event-envelope.schema.json` and one outcome schema per registered worker (bookmarking, validation, preparation, submission, email, calendar, research and manual transitions). Each outcome `code` enum must have an exhaustive mapping in [`config/gdtq-routing.json`](../config/gdtq-routing.json). `gdtq.policy.StateTransitionEngine` validates this at initialization.
 
-`applicant-profile.schema.json` defines the stable envelope used by onboarding,
-the Application Service, and application workloads. Its inner profile fields remain
-open so the resume/profile extraction process can evolve without changing the
-stage contract.
+**Shared applicant schema:** `applicant-profile.schema.json` continues to describe the persisted candidate profile, used by onboarding and several adapters.
+
+The older `agents/*/output.schema.json` contracts remain **provider prompt-output schemas**; they do not replace GDTQ's outcome envelopes. Keep payload `execution_status` distinct from domain `code`. See [state map](../docs/state-machines.md).

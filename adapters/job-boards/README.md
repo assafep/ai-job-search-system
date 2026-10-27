@@ -1,5 +1,12 @@
 # Job-board adapters
 
+> **Shared adapter library:** GDTQ continues to reuse the API-first and scraping-capable `adapters.job_boards` framework for posting retrieval. Older paragraphs below mention scheduled discovery and legacy stage-task flows; these refer to the compatibility runtime, not `gdtq.dispatch`. GDTQ's submission stage requires an injected and explicitly authorized submitter; no automatic fallback executes by default.
+
+---
+
+## Historical / compatibility reference
+
+
 Services enter through `adapters.job_boards.framework` for discovery, posting
 retrieval and native-host submission dispatch. Every board implements the shared
 API/scraping capability contract. Configure transport defaults and per-board

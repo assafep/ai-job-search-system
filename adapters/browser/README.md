@@ -1,21 +1,11 @@
-# Browser adapter
+# Browser integration — controlled compatibility surface
 
-Optional boundary for sites that require browser interaction. It must be
-invoked by a workload runtime, never by a stateless agent.
+**The old browser trial scripts and playbooks are not part of GDTQ's default runtime.** The new `gdtq.stages.submit_prepared` accepts *injected*, approved per-site submission strategies and records a begun/uncertain receipt before attempting external submission.
 
-Every unsuccessful auto-apply attempt moves postings from `Prepared`
-to `Manual Apply Required`, with a reason recorded by the auto-apply runtime.
-Distinguish human verification, missing answers, unsupported destinations,
-preparation errors, and ambiguous receipts accurately. Never bypass checks or
-blindly retry an ambiguous submission. Prepared queue membership
-authorizes submission without a separate approval pause. The manual queue is
-not consumed automatically.
+The existing `comeet.cjs`, `comeet.py`, `chrome_session.cjs`, `submission.py`, trial scripts and site recipes are compatibility/experimental tools. Do not assume their behavior is production-safe; never use them as an implicit fallback or as permission to submit.
 
-`chrome_session.cjs` attaches to the user's already-running normal Chrome via
-Chrome DevTools MCP's `--autoConnect` consent flow. Enable remote debugging at
-`chrome://inspect/#remote-debugging`, then approve Chrome's connection dialog.
-It does not copy/export cookies, restart Chrome, or close the browser when
-disconnected. Its JSON-lines interface accepts MCP tool names/arguments.
-`trial_session.cjs` instead uses isolated per-site profiles; these are different
-from the user's normal signed-in Chrome session. Read the relevant playbook
-before invoking learned recipes.
+Automatic job application submission requires authorization, a verified form/recipient, a saved package and a confirmed receipt. If the submit result is ambiguous (timeout after button press, site error, missing confirmation), do not click submit again without reconciliation. Unknown or unsupported sites move to **Manual Apply Required**.
+
+Strong-model fallback may propose a reusable site adapter, but `gdtq.recipes.RecipeProposalRegistry` stores **data-only** proposals for review and testing; generated code is never auto-imported.
+
+See [GDTQ runbook](../../gdtq/README.md) and [shared job-board framework](../job-boards/README.md).

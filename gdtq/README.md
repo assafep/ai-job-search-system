@@ -63,7 +63,7 @@ Automated forms, Gmail sending, Calendar polling, research web tools and strong-
 fallback must be injected using real credentials/permissions. Without them, only
 configured operations run; the code does not claim integrations succeeded.
 
-The old `services.orchestrator` remains intact. **Do not run it and GDTQ as
+The old `services.orchestrator` remains as a compatibility entry point. **Do not run it and GDTQ as
 simultaneous writers to the same Google document.** Switch over under an exclusive
 lock and migrate existing in-flight records first.
 
@@ -77,3 +77,7 @@ The default `AJSS_GMAIL_ALLOW_SEND=0` creates drafts rather than sending.
 Set to `1` only after explicitly authorizing account access and recipients.
 This is a process-level opt-in; enabling it does not install Chrome or grant
 browser submit permissions.
+
+## Cleaned-up repository guidance
+
+The root [README](../README.md), [architecture](../docs/architecture.md), [state map](../docs/state-machines.md), [agents](../agents/README.md) and [tests](../tests/README.md) now describe GDTQ as the primary design. Legacy Application Service provisioning, stage-task runners and PostgreSQL migrations remain only for compatibility. Obsolete diagrams, scratch diagnostics and IDE metadata are removed; do not reintroduce a competing queue/state workflow.

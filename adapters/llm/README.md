@@ -1,5 +1,12 @@
 # LLM adapters
 
+> **Shared LLM providers:** `gdtq.cli` reuses `OpenAIProvider` and `services.agent_runner` for cover letters and optional interview research. The old `AGENT_PROVIDER`, Scout and Codex runner configuration below describes compatibility stage paths. GDTQ business outcomes are validated separately using `schemas/gdtq/`.
+
+---
+
+## Historical / compatibility reference
+
+
 Provider-specific wrappers should implement the callable boundary expected by
 `services.agent_runner.run`: receive prompt text and a serialized context,
 return a decoded object or JSON string, and perform no persistence or external

@@ -1,93 +1,18 @@
-# Tests
+# Testing
 
-The side-effect-free contract runner makes individual agents and workloads easy
-to exercise without credentials or external connections.
-
-List available targets:
+## GDTQ (current)
 
 ```bash
-python3 -m services.test_runner list
+python -m pip install -r requirements.txt
+python -m pip install pytest
+python -m gdtq.cli doctor
+PYTHONPATH=. python -m pytest -q tests/test_gdtq.py
 ```
 
-The equivalent parameterized Make targets are convenient for a single test
-drive:
+This test suite uses fake Google Docs and Drive implementations, SQLite temporary databases, and fake Gmail/Calendar adapters. It covers legal transitions/exhaustive code mapping, wrong-item claims, in-flight moves, retry backoff, deduplication, terminal archive verification, manual updates, observer idempotency, PDF/report timing, and explicit Gmail send permission. No live credentials or website submits are required. GitHub Actions runs the focused suite via [`gdtq-tests.yml`](../.github/workflows/gdtq-tests.yml).
 
-```bash
-make test-agent AGENT=interview-prep \
-  FIXTURE=tests/fixtures/agents/interview-prep/input.json
+## Legacy regression suite
 
-make test-workload STAGE=prepare-interview \
-  FIXTURE=tests/fixtures/workloads/prepare-interview.json \
-  AGENT_RESULTS=tests/fixtures/workloads/prepare-interview-agent-results.json
-```
+The other `tests/test_*.py` files exercise the previous Application Service, stage-task, provisioning and ATS framework. They remain valuable while their code is still imported or deployed. Use `python -m pytest -q` (with all project requirements installed) when testing compatibility changes.
 
-Both commands remain side-effect free. `test-agent` can also receive
-`OUTPUT=...` to validate a captured agent response against its schema.
-
-Test an agent contract without invoking an LLM:
-
-```bash
-python3 -m services.test_runner agent job-discovery \
-  --fixture tests/fixtures/agents/job-discovery/input.json
-```
-
-Validate a captured/model-produced output against the agent schema:
-
-```bash
-python3 -m services.test_runner agent job-discovery \
-  --fixture tests/fixtures/agents/job-discovery/input.json \
-  --output tests/fixtures/agents/job-discovery/output.json
-```
-
-Dry-run one workload:
-
-```bash
-python3 -m services.test_runner workload prepare-interview \
-  --fixture tests/fixtures/workloads/prepare-interview.json
-```
-
-The same workload plan can be invoked directly:
-
-```bash
-python3 -m services.workload_runner prepare-interview \
-  --fixture tests/fixtures/workloads/prepare-interview.json
-```
-
-To test the persistence mapping for a captured agent result, add
-`--agent-results`. This still performs no writes:
-
-```bash
-python3 -m services.workload_runner prepare-interview \
-  --fixture tests/fixtures/workloads/prepare-interview.json \
-  --agent-results tests/fixtures/workloads/prepare-interview-agent-results.json
-```
-
-The results file must be an object keyed by agent name, for example
-`{"interview-prep": {"briefing": "..."}}`.
-The agent name must be one of the agents used by the selected stage.
-
-Live persistence is opt-in and requires completed onboarding plus a running
-Application Service:
-
-```bash
-python3 -m services.workload_runner prepare-interview \
-  --fixture tests/fixtures/workloads/prepare-interview.json \
-  --agent-results tests/fixtures/workloads/prepare-interview-agent-results.json \
-  --execute
-```
-
-The direct runner shows which stateless agents would be called and which data
-layer operations are proposed for the workload. It also reports approval
-requirements for external actions; `ask` and `deny` never execute in dry-run
-mode.
-
-These commands do not call Google Drive, Gmail, Calendar, browser adapters, or
-the Application Service. They only load fixtures, assemble a contract, and print
-JSON results.
-
-Run `make verify PYTHON=.venv/bin/python` (or use another Python 3.10+ interpreter)
-for the complete local pass, including the test suite,
-compilation, all four stage dry-tasks, and Compose configuration validation.
-
-Live stage execution must call `services.runtime_config.load()` first; this
-raises an onboarding error when `config/runtime.json` is absent or incomplete.
+Do **not** treat unit tests as certification of live Google Docs tab reparenting, Gmail OAuth permission, external submission confirmation or concurrent multi-process writers. Perform a separate integration pass using a non-production Google document before switching runtimes.
