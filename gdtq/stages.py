@@ -14,7 +14,7 @@ from adapters.job_boards.submission import validate_submission_outcome
 def outcome(agent,item_id,code,summary="",data=None,status="SUCCESS",attempt_id=None):
     return ProcessingOutcome(agent,item_id,code,status,summary,data or {},attempt_id).as_dict()
 
-def bookmark_discovered(item,reader,index,*,smart_reader=None,recipe_proposals=None):
+def bookmark_discovered(item,reader,index,*,smart_reader=None,recipe_proposals=None,store=None):
     """reader(url) -> {description, ...}; smart_reader is an opt-in expensive fallback."""
     agent="bookmark_discovered"
     item_id=item["item_id"]; url=item["posting_url"]
@@ -31,6 +31,17 @@ def bookmark_discovered(item,reader,index,*,smart_reader=None,recipe_proposals=N
             if recipe_proposals and posting.get("deterministic_recipe"):
                 # A proposed recipe is data, never executable without security review.
                 recipe_proposals.propose(url,posting["deterministic_recipe"],"read")
+            if store is not None:
+                from adapters.job_boards.posting_details import posting_content_bytes, posting_artifact_name
+                from application_service.google_drive_artifacts import application_folder_name
+                base="Applications/"+application_folder_name(item["company"],item["role"])
+                path=base+"/"+posting_artifact_name(item["company"],item["role"],url)
+                store.save_path(path,posting_content_bytes({
+                    "posting_url":url,"source_url":posting.get("resolved_url") or url,
+                    "description":posting["description"],"application_id":item_id}),
+                    "application/json","posting-"+item_id)
+                return outcome(agent,item_id,"BOOKMARKED","Posting downloaded and archived",
+                    {"posting_artifact":path,"description_length":len(posting["description"])})
             return outcome(agent,item_id,"BOOKMARKED","Posting downloaded",{"posting":posting})
         except Exception as exc:
             failures.append({"error":str(exc),"kind":type(exc).__name__,
