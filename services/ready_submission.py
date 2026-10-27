@@ -227,10 +227,14 @@ class ReadySubmission:
         # must never cause an automatic duplicate application.
         self.begin_submission(application_id, digest, package_name=artifact['name'],
                               original_posting_url=app['posting_url'])
+        # Backend selection is supplied by the durable workstation task, not
+        # inferred from the presence of a browser or from the job posting.
+        host_context = dict(context)
+        host_context['browser_backend'] = getattr(self, 'browser_backend', 'native')
         result = self.framework.submit(SubmissionContext(
             application=app, posting_url=app['posting_url'],
             profile=context['applicant_profile'], package_bytes=context['package_bytes'],
-            package_name=artifact['name'], host_context=context)).data
+            package_name=artifact['name'], host_context=host_context)).data
         return self.complete_submission(
             application_id, result, package_sha256=digest, package_name=artifact['name'],
             original_posting_url=app['posting_url'], effort=effort, prior_logic=prior_logic,

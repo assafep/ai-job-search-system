@@ -10,7 +10,7 @@ import hashlib
 import json
 import os
 import uuid
-from .stage_execution import execution_host, execution_enabled
+from .stage_execution import execution_host, execution_enabled, submission_backend
 from urllib.parse import parse_qs, urlparse
 
 
@@ -97,19 +97,33 @@ class StageTasks:
                     raise ValueError('idempotency_key already used with another request')
                 return public(records[identity])
             definition = definitions()[request['stage']]
+            host = execution_host(request['stage'])
+            if host == 'workstation' and request['stage'] == 'submit-prepared':
+                from .stage_execution import submission_backend
+                if submission_backend() != 'local-playwright':
+                    raise ValueError('Workstation submission requires the local-playwright backend')
             selected = None
             if definition['trigger']['poll_kind'] == 'queue':
                 states = definition['input_states']
                 applications = [a for a in repository.list_applications()
                                 if (a.status if hasattr(a, 'status') else a['status']) in states]
+                if request['stage'] == 'submit-prepared' and host == 'workstation':
+                    # Restrict local execution to supported Comeet URLs at admission.
+                    # Other prepared applications remain eligible for native runs.
+                    from urllib.parse import urlsplit
+                    applications = [a for a in applications if
+                        (urlsplit(a.posting_url if hasattr(a, 'posting_url') else a['posting_url']).hostname or '').lower()
+                        == 'www.comeet.com']
                 ids = list(dict.fromkeys(a.application_id if hasattr(a, 'application_id') else a['application_id'] for a in applications))
+                if request['stage'] == 'submit-prepared' and host == 'workstation' and not ids:
+                    raise ValueError('No Prepared Comeet applications are available for local submission')
                 if 'application_id' in request:
                     if request['application_id'] not in ids:
                         raise ValueError('Application is not eligible for this stage')
                     ids = [request['application_id']]
                 selected = ids[:request['limit']] if 'limit' in request else ids
             record = dict(stage_task_id=identity, stage=request['stage'], request=request, application_ids=selected,
-                          execution_host=execution_host(request['stage']),
+                          execution_host=host,
                           blueprint_digest=blueprint_digest(request['stage']),
                           status='queued', created_at=timestamp(), updated_at=timestamp())
             records[identity] = record
@@ -153,8 +167,10 @@ class StageTasks:
                 return {'task': None}
             from .stage_execution import CHATGPT_STAGES
             record = next((r for r in records.values() if r['status'] == 'queued'
-                           and r['request']['stage'] not in CHATGPT_STAGES
-                           and r.get('execution_host', 'workstation') == 'workstation'), None)
+                           and r.get('execution_host', 'workstation') == 'workstation'
+                           and (r['request']['stage'] not in CHATGPT_STAGES
+                                or (r['request']['stage'] == 'submit-prepared'
+                                    and submission_backend() == 'local-playwright'))), None)
             if record is None:
                 return {'task': None}
             record.update(status='running', worker_id=worker_id, claim_token=uuid.uuid4().hex,

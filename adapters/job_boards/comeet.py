@@ -44,6 +44,41 @@ class ComeetJobBoard(EmployerJobBoard):
     provider_name = 'comeet'
     hosts = ('www.comeet.com', 'comeet.com', 'www.comeet.co')
 
+    def submit_application(self, context, submitter):
+        """Submit through the configured host; optionally use local Playwright.
+
+        The default remains the framework's native browser callback. The
+        local adapter is explicitly opted into through host_context and runs
+        once, without retries or implicit fallback after a failed submit.
+        """
+        options = context.host_context or {}
+        backend = options.get('browser_backend', 'native')
+        if backend == 'native':
+            return super().submit_application(context, submitter)
+        if backend != 'local-playwright':
+            raise ValueError('Unsupported Comeet submission browser backend: {}'.format(backend))
+        from adapters.browser.comeet import submit as browser_submit
+
+        application = dict(context.application)
+        application.setdefault('posting_url', context.posting_url)
+        if not application.get('posting_url'):
+            raise ValueError('Comeet submission requires a posting URL')
+        parsed = urllib.parse.urlsplit(application['posting_url'])
+        if parsed.scheme != 'https' or (parsed.hostname or '').lower() != 'www.comeet.com':
+            raise ValueError('Local Comeet submission requires an HTTPS www.comeet.com posting URL')
+        if not context.package_bytes or not context.package_name:
+            raise ValueError('Comeet submission requires a prepared application PDF')
+
+        payload = {
+            'application': application,
+            'applicant_profile': context.profile,
+            'package_bytes': context.package_bytes,
+            'package': {'name': context.package_name},
+        }
+        if 'reasoning_effort' in options:
+            payload['reasoning_effort'] = options['reasoning_effort']
+        return browser_submit(payload)
+
     def discovery_pages(self, context):
         for token, company in (context.boards or self.boards).items():
             yield _board_identity(token)[1], company
