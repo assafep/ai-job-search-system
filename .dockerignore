@@ -1,0 +1,13 @@
+.git
+.venv
+__pycache__
+*.py[cod]
+.pytest_cache
+var
+logs
+.env
+config/runtime.json
+config/*.tmp
+config/*.lock
+node_modules
+.vercel

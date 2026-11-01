@@ -1,6 +1,6 @@
-# AJSS — GDTQ architecture diagrams
+# AJSS architecture diagrams
 
-These diagrams describe the **GDTQ-only branch**. They are maintained as Mermaid source and rendered directly by GitHub. The executable source of truth is the code under `gdtq/` and `adapters/`, plus `config/gdtq-routing.json` and `schemas/gdtq/`; diagrams do not define runtime behavior.
+These diagrams describe the AJSS system and its GDTQ tab-queue runtime. They are maintained as Mermaid source and rendered directly by GitHub. The executable source of truth is the code under `gdtq/` and `adapters/`, plus `config/gdtq-routing.json` and `schemas/gdtq/`; diagrams do not define runtime behavior.
 
 ## 1. System component architecture
 
@@ -198,7 +198,7 @@ The fixed hierarchy diagram is **illustrative**, not a complete enumeration of c
 
 ```mermaid
 flowchart LR
-  subgraph Host["One GDTQ worker (Python 3.12 / Docker)"]
+  subgraph Host["One AJSS worker (Python 3.12 / Docker)"]
     Scheduler["Scheduler"]
     O["Orchestrator + typed worker handlers"]
     SQLITE[("Persistent SQLite volume")]

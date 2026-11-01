@@ -1,6 +1,6 @@
 # Job-board framework
 
-The current GDTQ booking stage uses the adapter framework's public ATS API-first reader and bounded scraping fallback. Board-specific implementations are in `adapters/job_boards/` (Greenhouse, Ashby, Comeet, Lever and others).
+The current AJSS application stage uses the GDTQ runtime and the adapter framework's public ATS API-first reader with a bounded scraping fallback. Board-specific implementations are in `adapters/job_boards/` (Greenhouse, Ashby, Comeet, Lever and others).
 
 `adapters.job_boards.posting_details.fetch_posting_details(url)` returns normalized posting data through the common framework and validates a full description. The job URL and resolved content source remain distinct.
 

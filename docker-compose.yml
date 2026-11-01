@@ -1,8 +1,32 @@
 services:
+  gdtq-dev:
+    build:
+      context: .
+      dockerfile: deployment/docker/Dockerfile
+      target: development
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      AJSS_GDTQ_DB: "/app/var/ajss-gdtq.sqlite3"
+      DATABASE_URL: "${DATABASE_URL:-}"
+    volumes:
+      - ./gdtq:/app/gdtq
+      - ./adapters:/app/adapters
+      - ./api:/app/api
+      - ./agents:/app/agents
+      - ./config:/app/config
+      - ./schemas:/app/schemas
+      - ./sql:/app/sql
+      - ./tests:/app/tests
+      - ./var:/app/var
+    profiles: [dev]
+
   gdtq-worker:
     build:
       context: .
       dockerfile: deployment/docker/Dockerfile
+      target: runtime
     restart: unless-stopped
     env_file:
       - path: .env

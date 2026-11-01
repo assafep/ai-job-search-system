@@ -1,17 +1,21 @@
-PYTHON ?= python3
-.PHONY: test doctor run verify docker-build
+COMPOSE ?= docker compose
+DEV_SERVICE ?= gdtq-dev
+.PHONY: setup test doctor run verify docker-build
+
+setup:
+	@$(COMPOSE) --profile dev build $(DEV_SERVICE)
 
 test:
-	@$(PYTHON) -m pytest -q tests/
+	@$(COMPOSE) --profile dev run --rm $(DEV_SERVICE) python -m pytest -q tests/
 
 doctor:
-	@$(PYTHON) -m gdtq.cli doctor
+	@$(COMPOSE) --profile dev run --rm $(DEV_SERVICE) python -m gdtq.cli doctor
 
 verify: doctor test
-	@$(PYTHON) -m compileall -q gdtq adapters
+	@$(COMPOSE) --profile dev run --rm $(DEV_SERVICE) python -m compileall -q gdtq adapters
 
 run:
-	@$(PYTHON) -m gdtq.cli run --database "$${AJSS_GDTQ_DB:-var/ajss-gdtq.sqlite3}"
+	@$(COMPOSE) up gdtq-worker
 
 docker-build:
-	@docker compose build gdtq-worker
+	@$(COMPOSE) build gdtq-worker

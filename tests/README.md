@@ -1,6 +1,6 @@
 # Tests
 
-The current repository has one runtime: GDTQ.
+The current repository has one runtime: AJSS, using GDTQ for Google Docs tab queues.
 
 ```bash
 python -m pip install -r requirements.txt pytest

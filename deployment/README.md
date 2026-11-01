@@ -1,10 +1,10 @@
-# GDTQ worker deployment
+# AJSS worker deployment
 
-The repository only deploys **one GDTQ worker**, not the former REST/MCP Application Service.
+The repository deploys **one AJSS worker** using GDTQ as its Google Docs tab-queue runtime, not the former REST/MCP Application Service.
 
 ## Requirements
 
-- Python 3.12+ or Docker Compose
+- Docker Compose
 - A configured Google document with source/target queue tabs and a Drive root
 - Google OAuth refresh-token environment variables or an equivalent authorized token
 - A profile and resume PDF accessible in Drive, `AJSS_RESUME_DRIVE_PATH`
@@ -15,14 +15,15 @@ The repository only deploys **one GDTQ worker**, not the former REST/MCP Applica
 
 ```bash
 # keep secrets in a local .env file, never in Git
-docker compose build gdtq-worker
-docker compose up gdtq-worker
+make setup
+make verify
+make run
 ```
 
 Mount a local `config/runtime.json` with `google_drive.interview_journal_url` and `google_drive.artifact_root_url`. The Compose service mounts `./var` for durable SQLite.
 
-GDTQ runs a one-second round-robin scheduler. Real ATS API/browser submissions and outbound Gmail sending require separately provided, explicitly authorized adapters. Email/Calendar observers are opt-in and drafts are the default. Before a production cutover, test Google tab reparenting and lease recovery on a disposable document; back up both Docs artifacts and SQLite.
+AJSS runs a one-second round-robin scheduler over the GDTQ queues. Real ATS API/browser submissions and outbound Gmail sending require separately provided, explicitly authorized adapters. Email/Calendar observers are opt-in and drafts are the default. Before a production cutover, test Google tab reparenting and lease recovery on a disposable document; back up both Docs artifacts and SQLite.
 
 ## Database
 
-GDTQ now requires managed Neon PostgreSQL via `DATABASE_URL` for normal operation. The previous local SQLite volume is only an explicit offline-test fallback (`AJSS_ALLOW_LOCAL_SQLITE=1`). Run the additive migration under [sql/gdtq](../sql/gdtq/README.md) on a test branch and verify zero missing identities before activating a production worker.
+AJSS now requires managed Neon PostgreSQL via `DATABASE_URL` for normal operation. The previous local SQLite volume is only an explicit offline-test fallback (`AJSS_ALLOW_LOCAL_SQLITE=1`). Run the additive migration under [sql/gdtq](../sql/gdtq/README.md) on a test branch and verify zero missing identities before activating a production worker.

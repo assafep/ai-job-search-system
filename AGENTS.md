@@ -1,6 +1,6 @@
 # AJSS contributor instructions
 
-**Only GDTQ is the runtime.** There is no legacy Application Service or stage-task API. Do not add new dependencies on `application_service`, `services`, `provisioning`, `stages`, `sql` or `api`.
+**AJSS has one runtime: GDTQ.** GDTQ is the Google Docs tab-queue abstraction used by AJSS; it is not the product name. There is no legacy Application Service or stage-task API. Do not add new dependencies on `application_service`, `services`, `provisioning`, `stages`, `sql` or `api`.
 
 - Queue semantics: `pop(A)` re-parents the item under `A-onFlight`; `push(A,B,item,event)` appends the event and moves the item to B.
 - Agents only produce typed outcomes. `gdtq.policy.OutcomeValidator` and `StateTransitionEngine` validate/route; `WorkloadOrchestrator` alone commits state and controls terminal completion.
