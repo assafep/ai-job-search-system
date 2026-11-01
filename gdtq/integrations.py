@@ -2,7 +2,7 @@
 from __future__ import annotations
 from email.utils import parseaddr
 from adapters.google_events import GoogleEventSource
-from application_service.google_auth import token_from_environment
+from adapters.google.auth import token_from_environment
 from .gmail import GmailActions
 from .observers import EmailCorrespondenceObserver,CalendarObserver,ResearchAgent,daily_report
 from .reporting import DailyReportAgent
@@ -10,7 +10,7 @@ from .stages import reply_to_interview_request
 from .runtime import ApplicationContextLoader
 
 def research_provider(provider):
-    from services.agent_runner import run
+    from gdtq.agent_runner import run
     def invoke(context):
         output=run("interview-prep",context,provider)
         return output["briefing"]

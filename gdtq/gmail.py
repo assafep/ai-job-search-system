@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64,json,urllib.request
 from email.message import EmailMessage
 from email.utils import parseaddr
-from application_service.google_auth import access_token_value
+from adapters.google.auth import access_token_value
 
 class GmailActionError(RuntimeError):pass
 

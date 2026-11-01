@@ -159,8 +159,8 @@ class GDTQ:
     def application_events(self,item_id):
         tab=find_tab(self.snapshot(),item_id)
         if tab is None:raise QueueConflict("Unknown application")
-        from application_service.google_docs_repository import tab_paragraphs
-        from application_service.journal_format import parse_events
+        from adapters.google.docs import tab_paragraphs
+        from adapters.google.journal import parse_events
         legacy=[{"event_type":"LEGACY_JOURNAL","event_id":e.get("event_id"),
                  "date":e.get("date"),"notes":e.get("bullets",[])}
                 for e in parse_events(tab_paragraphs(tab),item_id)]

@@ -1,4 +1,0 @@
-# Interview briefing
-
-<!-- Template placeholder. -->
-

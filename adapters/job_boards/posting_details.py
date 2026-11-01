@@ -34,7 +34,7 @@ def posting_artifact_name(company, role, posting_url=None):
     label = re.sub(r'[\\/:*?"<>|]+', '-', label).strip()
     suffix = ''
     if posting_url:
-        from application_service.journal_format import normalize_posting_url
+        from adapters.google.journal import normalize_posting_url
         suffix = ' - ' + hashlib.sha256(normalize_posting_url(posting_url).encode()).hexdigest()[:16]
     return 'Job Posting - {}{}.json'.format(label[:180], suffix)
 
@@ -62,7 +62,7 @@ def find_posting_artifact(artifacts, events, posting_url=None):
             if selected:
                 return selected
     if posting_url:
-        from application_service.journal_format import normalize_posting_url
+        from adapters.google.journal import normalize_posting_url
         suffix = hashlib.sha256(normalize_posting_url(posting_url).encode()).hexdigest()[:16]
         named = [item for item in postings if suffix in str(item.get('name') or '')]
         if len(named) == 1:
@@ -79,7 +79,7 @@ def read_posting_artifact(persistence, application_id, expected_posting_url):
     artifact, reads it, parses it, and validates the URL matches.
     """
     from dataclasses import asdict, is_dataclass
-    from application_service.journal_format import normalize_posting_url
+    from adapters.google.journal import normalize_posting_url
 
     artifacts = [asdict(item) if is_dataclass(item) else item
                  for item in persistence.list_artifacts(application_id)]

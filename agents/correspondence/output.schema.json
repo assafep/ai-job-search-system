@@ -1,2 +1,0 @@
-{"type":"object","required":["intent","proposed_action"],"properties":{"intent":{"type":"string"},"proposed_action":{"type":"string"},"draft":{"type":"string"}}}
-

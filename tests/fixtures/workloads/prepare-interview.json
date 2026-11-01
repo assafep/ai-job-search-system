@@ -1,6 +1,0 @@
-{
-  "trigger": {"type": "calendar_event", "event_id": "fixture-event-1"},
-  "application_id": "app_fixture",
-  "approval_mode": "dry_run"
-}
-
