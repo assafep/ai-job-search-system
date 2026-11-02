@@ -6,7 +6,6 @@ module and behind the stage approval policy.
 """
 
 import json
-import os
 import re
 import urllib.error
 import urllib.parse
@@ -17,24 +16,6 @@ from .parsing import plain_text as _plain_text
 
 
 BASE_URL = "https://boards-api.greenhouse.io/v1/boards"
-
-
-def boards_from_environment(environ=None):
-    environ = os.environ if environ is None else environ
-    raw = environ.get("GREENHOUSE_BOARDS", "")
-    if not raw.strip():
-        return {}
-    try:
-        boards = json.loads(raw)
-    except json.JSONDecodeError as error:
-        raise ValueError("GREENHOUSE_BOARDS must be a JSON object of token to company") from error
-    if not isinstance(boards, dict) or any(
-        not isinstance(token, str) or not token.strip()
-        or not isinstance(company, str) or not company.strip()
-        for token, company in boards.items()
-    ):
-        raise ValueError("GREENHOUSE_BOARDS must map non-empty board tokens to company names")
-    return {token.strip(): company.strip() for token, company in boards.items()}
 
 
 class GreenhouseJobBoard(EmployerJobBoard):
@@ -104,5 +85,3 @@ class GreenhouseJobBoard(EmployerJobBoard):
         }
 
 
-def client_from_environment(environ=None, opener=None):
-    return GreenhouseJobBoard(boards_from_environment(environ), opener=opener)

@@ -4,7 +4,7 @@ WORKDIR /app
 COPY requirements.txt requirements-dev.txt /app/
 
 FROM base AS source
-COPY gdtq /app/gdtq
+COPY ajss /app/ajss
 COPY adapters /app/adapters
 COPY agents /app/agents
 COPY config/gdtq-routing.json /app/config/gdtq-routing.json
@@ -18,4 +18,4 @@ COPY --from=source /app /app
 FROM base AS runtime
 RUN pip install --no-cache-dir -r requirements.txt
 COPY --from=source /app /app
-CMD ["python","-m","gdtq.cli","run","--database","/app/var/ajss-gdtq.sqlite3"]
+CMD ["python","-m","ajss.cli","run","--database","/app/var/ajss-gdtq.sqlite3"]

@@ -6,14 +6,14 @@ from pathlib import Path
 from uuid import uuid4
 import pytest
 
-from gdtq.queue import GDTQ, QueueConflict, find_tab, prop
-from gdtq.contracts import Event
-from gdtq.store import WorkIndex,posting_keys
-from gdtq.policy import StateTransitionEngine,RoutingError
-from gdtq.scoring import score_posting,decide_match
-from gdtq.downstream import CompletionPublisher
-from gdtq.stages import bookmark_discovered, submit_prepared
-from gdtq.dispatch import WorkloadOrchestrator
+from ajss.queue import GDTQ, QueueConflict, find_tab, prop
+from ajss.queue.contracts import Event
+from ajss.queue.store import WorkIndex,posting_keys
+from ajss.queue.policy import StateTransitionEngine,RoutingError
+from ajss.worker.scoring import score_posting,decide_match
+from ajss.worker.downstream import CompletionPublisher
+from ajss.worker.stages import bookmark_discovered, submit_prepared
+from ajss.worker.dispatch import WorkloadOrchestrator
 
 def tab(tab_id,title,parent=None,index=0):
     p={"tabId":tab_id,"title":title,"index":index}
@@ -185,10 +185,12 @@ def test_bookmark_permanent_vs_transient_error(tmp_path):
     def failure(url):raise ValueError("HTTP 404")
     permanent=bookmark_discovered(item,failure,index)
     assert permanent["execution_status"]=="PERMANENT_FAILURE"
+    assert index.lookup_identity("A","Backend",item["posting_url"]) is None
     item2=dict(item,item_id="i2",role="Frontend",posting_url="https://example.com/2")
     def temporary(url):raise TimeoutError("timeout")
     retry=bookmark_discovered(item2,temporary,index)
     assert retry["execution_status"]=="RETRYABLE_FAILURE"
+    assert index.lookup_identity("A","Frontend",item2["posting_url"]) is None
 
 def test_submission_requires_confirmation_and_never_retries_unknown(tmp_path):
     idx=WorkIndex(tmp_path/"idx.db")
@@ -206,8 +208,8 @@ def test_submission_requires_confirmation_and_never_retries_unknown(tmp_path):
 def test_all_modules_compile_and_import():
     import compileall
     assert compileall.compile_dir("gdtq",quiet=1,force=True)
-    import gdtq.cli,gdtq.runtime,gdtq.manual,gdtq.integrations,gdtq.gmail
-    from gdtq.cli import doc_id
+    import ajss.cli, ajss.worker.runtime, ajss.worker.manual, ajss.worker.integrations, ajss.worker.gmail
+    from ajss.cli import doc_id
     assert doc_id("https://docs.google.com/document/d/abcDEF/edit?tab=t.0")=="abcDEF"
 
 def test_provision_missing_queues_and_research_tab():
@@ -234,7 +236,7 @@ def test_retry_backoff_blocks_repoll():
     assert q.pop("Discovered").item_id=="item-1"
 
 def test_external_manual_claim_and_transition(tmp_path):
-    from gdtq.manual import manual_transition
+    from ajss.worker.manual import manual_transition
     docs=FakeDocs()
     q=GDTQ(docs)
     q.ensure_state_tabs(["Manual Apply Required","Applied"])
@@ -248,24 +250,28 @@ def test_external_manual_claim_and_transition(tmp_path):
     assert q.application_events("item-1")[0]["processor"]=="manual_update"
 
 def test_calendar_and_email_idempotency(tmp_path):
-    from gdtq.observers import CalendarObserver,EmailCorrespondenceObserver,ResearchAgent
+    from ajss.worker.observers import CalendarObserver,EmailCorrespondenceObserver,ResearchAgent
     idx=WorkIndex(tmp_path/"idx.db")
     apps=lambda:[{"application_id":"app-1","company":"Acme","role":"Backend","status":"Applied"}]
     results=[]
+    def commit(*args):
+        from ajss.worker.effects import apply_effects
+        apply_effects(args[1],{"index":idx})
+        results.append(args)
     mails=lambda:[{"message_id":"mail-1","sender":"Acme recruiter","subject":"Schedule interview","body":"Please schedule an interview"}]
-    email=EmailCorrespondenceObserver(mails,apps,lambda *x:results.append(x),index=idx)
+    email=EmailCorrespondenceObserver(mails,apps,commit,index=idx)
     assert len(email.scan())==1
     assert len(email.scan())==0
     meetings=lambda:[{"event_id":"event-1","meeting_id":"meet-1","title":"Acme interview","start":"2026-11-01T09:00:00Z"}]
     research=ResearchAgent(lambda _:[],lambda c:"Company interview research",
                            lambda item,title,body:"research-tab-1")
-    calendar=CalendarObserver(meetings,apps,research,lambda *x:results.append(x),idx)
+    calendar=CalendarObserver(meetings,apps,research,commit,idx)
     assert len(calendar.scan())==1
     assert len(calendar.scan())==0
     assert len(results)==2
 
 def test_utc_scheduler_respects_israel_local_report_hour(tmp_path):
-    from gdtq.observers import Scheduler
+    from ajss.worker.observers import Scheduler
     idx=WorkIndex(tmp_path/"idx.db")
     class FakeOrchestrator:
         def dispatch_tick(self):return None
@@ -278,7 +284,7 @@ def test_utc_scheduler_respects_israel_local_report_hour(tmp_path):
     assert len(reports)==1
 
 def test_gmail_sender_drafts_but_will_not_send_without_policy():
-    from gdtq.gmail import GmailActions
+    from ajss.worker.gmail import GmailActions
     import io
     sent=[]
     class Response:
@@ -303,6 +309,9 @@ def test_posting_reader_persists_artifact_and_event_reference(tmp_path):
     details={"description":"Java Python Kubernetes "*40}
     output=bookmark_discovered(item,lambda url:details,index,store=store)
     assert output["code"]=="BOOKMARKED"
+    assert store.files=={}
+    from ajss.worker.effects import apply_effects
+    output=apply_effects(output,{"index":index,"store":store})
     artifact_path=output["data"]["posting_artifact"]
     assert artifact_path in store.files
     saved=json.loads(store.files[artifact_path])
@@ -322,7 +331,7 @@ def test_terminal_archive_replay_does_not_recreate_or_delete_again(tmp_path):
     assert second["replayed"] and second["archive_path"]==first["archive_path"]
 
 def test_legacy_tabs_do_not_expire_as_year_one(tmp_path):
-    from gdtq.retention import RetentionManager
+    from ajss.worker.retention import RetentionManager
     q=GDTQ(FakeDocs());idx=WorkIndex(tmp_path/"idx.db")
     store=FakeArtifactStore();publisher=CompletionPublisher(q,store,idx)
     manager=RetentionManager(q,publisher,manual_limit=20)

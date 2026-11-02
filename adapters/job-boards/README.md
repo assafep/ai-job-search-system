@@ -4,6 +4,6 @@ The current AJSS application stage uses the GDTQ runtime and the adapter framewo
 
 `adapters.job_boards.posting_details.fetch_posting_details(url)` returns normalized posting data through the common framework and validates a full description. The job URL and resolved content source remain distinct.
 
-`submit_prepared` uses explicitly injected, authorized site actions; it checkpoints the attempt before external I/O. Never retry a receipt whose status is unknown. Strong-model site recipes are proposed for review and testing, **never automatically installed or executed**.
+`submit_prepared` uses explicitly injected, authorized site actions; it checkpoints the attempt before external I/O. Never retry a receipt whose status is unknown. No browser strategy is wired into the default runtime.
 
-See [GDTQ](../../gdtq/README.md).
+See [GDTQ](../../ajss/README.md).

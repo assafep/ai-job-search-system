@@ -1,5 +1,5 @@
 services:
-  gdtq-dev:
+  ajss-dev:
     build:
       context: .
       dockerfile: deployment/docker/Dockerfile
@@ -10,8 +10,10 @@ services:
     environment:
       AJSS_GDTQ_DB: "/app/var/ajss-gdtq.sqlite3"
       DATABASE_URL: "${DATABASE_URL:-}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
-      - ./gdtq:/app/gdtq
+      - ./ajss:/app/ajss
       - ./adapters:/app/adapters
       - ./api:/app/api
       - ./agents:/app/agents
@@ -22,7 +24,33 @@ services:
       - ./var:/app/var
     profiles: [dev]
 
-  gdtq-worker:
+  ajss-onboard:
+    build:
+      context: .
+      dockerfile: deployment/docker/Dockerfile
+      target: development
+    command: ["python", "-m", "ajss.cli", "onboard-serve"]
+    init: true
+    restart: unless-stopped
+    environment:
+      AJSS_GDTQ_DB: "/app/var/ajss-gdtq.sqlite3"
+      DRIVE_METADATA_CACHE_SECONDS: "3600"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./ajss:/app/ajss
+      - ./adapters:/app/adapters
+      - ./api:/app/api
+      - ./agents:/app/agents
+      - ./config:/app/config
+      - ./schemas:/app/schemas
+      - ./sql:/app/sql
+      - ./tests:/app/tests
+      - ./var:/app/var
+      - ./.env:/app/.env
+    profiles: [dev]
+
+  ajss-worker:
     build:
       context: .
       dockerfile: deployment/docker/Dockerfile
@@ -32,9 +60,11 @@ services:
       - path: .env
         required: false
     environment:
-      AJSS_RESUME_DRIVE_PATH: "${AJSS_RESUME_DRIVE_PATH:-}"
+      GOOGLE_RESUME_DRIVE_PATH: "${GOOGLE_RESUME_DRIVE_PATH:-}"
       AJSS_GDTQ_DB: "/app/var/ajss-gdtq.sqlite3"
       DATABASE_URL: "${DATABASE_URL:-}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./var:/app/var
       - ./config/runtime.json:/app/config/runtime.json:ro

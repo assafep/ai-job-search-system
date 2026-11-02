@@ -1,0 +1,33 @@
+{
+  "type": "object",
+  "required": ["company", "role", "posting_url", "description"],
+  "properties": {
+    "company": {
+      "type": ["string", "null"],
+      "description": "Company name from the posting"
+    },
+    "role": {
+      "type": ["string", "null"],
+      "description": "Job title or role name"
+    },
+    "posting_url": {
+      "type": "string",
+      "format": "uri",
+      "description": "Exact URL of the job posting"
+    },
+    "resolved_url": {
+      "type": ["string", "null"],
+      "format": "uri",
+      "description": "Final page, canonical posting, or exact public data endpoint used to verify the supplied posting"
+    },
+    "description": {
+      "type": "string",
+      "description": "Complete posting text extracted verbatim, preserving original structure, section headings, bullet points, and line breaks. Should match the length of the original posting content."
+    },
+    "read_failure": {
+      "type": "string",
+      "description": "Short reason if the page could not be read; empty string when successful"
+    }
+  },
+  "additionalProperties": false
+}

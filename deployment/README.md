@@ -7,8 +7,8 @@ The repository deploys **one AJSS worker** using GDTQ as its Google Docs tab-que
 - Docker Compose
 - A configured Google document with source/target queue tabs and a Drive root
 - Google OAuth refresh-token environment variables or an equivalent authorized token
-- A profile and resume PDF accessible in Drive, `AJSS_RESUME_DRIVE_PATH`
-- `OPENAI_API_KEY` for cover letter and optional interview research
+- A profile and resume PDF accessible in Drive, `GOOGLE_RESUME_DRIVE_PATH`
+- `AJSS_LLM_PROVIDER` and `AJSS_LLM_API_KEY` for cover letters, profile extraction, and optional interview research
 - Durable SQLite storage under `./var/` and a **single** active writer per document
 
 ## Local Docker

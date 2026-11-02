@@ -1,13 +1,16 @@
 """Google Drive artifact storage for application folders."""
 
+import http.client
 import json
 import os
 import mimetypes
 import re
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from io import BytesIO
 from time import monotonic
 
 from .auth import access_token_value
@@ -15,6 +18,16 @@ from .paths import normalize_file_path
 
 
 FOLDER_MIME = "application/vnd.google-apps.folder"
+GOOGLE_DOC_MIME = "application/vnd.google-apps.document"
+
+
+# Address bar after a folder is open. Query strings such as ?usp=sharing are ignored.
+FOLDER_URL_RE = re.compile(r"https://drive\.google\.com/drive/(?:u/\d+/)?folders/[^/?#]+")
+
+
+def is_drive_folder_url(value):
+    """True for the address-bar URL of an open Drive folder."""
+    return bool(FOLDER_URL_RE.search(value or ""))
 
 
 def folder_id_from_url(value):
@@ -29,6 +42,90 @@ def safe_folder_name(value):
 
 
 APPLICATIONS_DIRECTORY = "Applications"
+
+
+class DriveTransport:
+    """One HTTPS connection per host, reused for later Drive calls.
+
+    A server that closes an idle connection is dialed once more. HTTP error
+    responses are returned to the caller and are not retried.
+    """
+
+    def __init__(self, timeout, connector=None):
+        self.timeout = timeout
+        self._connector = connector or (
+            lambda host: http.client.HTTPSConnection(host, timeout=timeout)
+        )
+        self._connections = {}
+        self._lock = threading.Lock()
+
+    def exchange(self, method, url, data=None, headers=None):
+        headers = dict(headers or {})
+        for _redirect in range(5):
+            parts = urllib.parse.urlsplit(url)
+            if parts.scheme != "https" or not parts.hostname:
+                raise ValueError("Drive requests must use https")
+            path = parts.path or "/"
+            if parts.query:
+                path += "?" + parts.query
+            status, response_headers, body = self._round_trip(
+                parts.hostname, method, path, data, headers,
+            )
+            if status in (301, 302, 303, 307, 308):
+                location = response_headers.get("Location") or response_headers.get("location")
+                if not location:
+                    break
+                target = urllib.parse.urljoin(url, location)
+                moved = urllib.parse.urlsplit(target)
+                if moved.hostname != parts.hostname:
+                    return self._read_elsewhere(target)
+                if status in (301, 302, 303):
+                    method = "GET"
+                    data = None
+                url = target
+                continue
+            if status >= 400:
+                raise urllib.error.HTTPError(
+                    url, status, "Drive request failed", response_headers, BytesIO(body),
+                )
+            return body
+        raise urllib.error.HTTPError(url, status, "Drive redirect failed", response_headers, BytesIO(body))
+
+    def _round_trip(self, host, method, path, data, headers):
+        with self._lock:
+            for attempt in (1, 2):
+                connection = self._connections.get(host)
+                if connection is None:
+                    connection = self._connector(host)
+                    self._connections[host] = connection
+                try:
+                    connection.request(method, path, body=data, headers=headers)
+                    response = connection.getresponse()
+                    body = response.read()
+                except urllib.error.HTTPError:
+                    raise
+                except (http.client.HTTPException, OSError, TimeoutError):
+                    self._drop(host)
+                    if attempt == 2:
+                        raise
+                    continue
+                if response.headers.get("connection", "").lower() == "close":
+                    self._drop(host)
+                return response.status, response.headers, body
+        raise RuntimeError("Drive connection was not attempted")
+
+    def _drop(self, host):
+        connection = self._connections.pop(host, None)
+        if connection is not None:
+            try:
+                connection.close()
+            except OSError:
+                pass
+
+    def _read_elsewhere(self, url):
+        request = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            return response.read()
 
 
 def application_folder_name(company, role):
@@ -51,20 +148,34 @@ class GoogleDriveArtifactStore:
         self._children_cache = {}
         self._listing_cache = {}
         self.creator = None
+        self.transport = None
+
+    def keep_alive(self):
+        """Reuse one HTTPS connection for later reads and writes on this client."""
+        if self.transport is None:
+            self.transport = DriveTransport(self.timeout)
+        return self.transport
+
+    def _exchange(self, method, url, data=None, headers=None):
+        if self.transport is None:
+            request = urllib.request.Request(url, data=data, method=method)
+            for name, value in (headers or {}).items():
+                request.add_header(name, value)
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                return response.read()
+        return self.transport.exchange(method, url, data, headers)
 
     def _forget_metadata(self):
         self._children_cache.clear()
         self._listing_cache.clear()
 
     def _request(self, method, url, payload=None, content_type="application/json"):
-        request = urllib.request.Request(url, method=method)
-        request.add_header("Authorization", "Bearer " + access_token_value(self.access_token))
+        headers = {"Authorization": "Bearer " + access_token_value(self.access_token)}
         if payload is not None:
-            request.add_header("Content-Type", content_type)
+            headers["Content-Type"] = content_type
         try:
-            with urllib.request.urlopen(request, data=payload, timeout=self.timeout) as response:
-                raw = response.read()
-                return json.loads(raw.decode("utf-8")) if raw else {}
+            raw = self._exchange(method, url, payload, headers)
+            return json.loads(raw.decode("utf-8")) if raw else {}
         except urllib.error.HTTPError:
             self._forget_metadata()
             raise
@@ -78,17 +189,14 @@ class GoogleDriveArtifactStore:
 
     def _replace_content(self, file_id, content, mime_type):
         self._listing_cache.clear()
-        request = urllib.request.Request(
-            "https://www.googleapis.com/upload/drive/v3/files/{}?uploadType=media&fields=id,name,mimeType,parents,webViewLink".format(file_id),
-            method="PATCH",
-            data=content,
-        )
-        request.add_header("Authorization", "Bearer " + access_token_value(self.access_token))
-        request.add_header("Content-Type", mime_type)
+        url = "https://www.googleapis.com/upload/drive/v3/files/{}?uploadType=media&fields=id,name,mimeType,parents,webViewLink".format(file_id)
+        headers = {
+            "Authorization": "Bearer " + access_token_value(self.access_token),
+            "Content-Type": mime_type,
+        }
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                raw = response.read()
-                return json.loads(raw.decode("utf-8")) if raw else {}
+            raw = self._exchange("PATCH", url, content, headers)
+            return json.loads(raw.decode("utf-8")) if raw else {}
         except urllib.error.HTTPError:
             self._forget_metadata()
             raise
@@ -149,6 +257,23 @@ class GoogleDriveArtifactStore:
         self._listing_cache.pop(parent_id, None)
         return folder
 
+    def list_root_files(self):
+        """List direct children of the configured Drive directory."""
+        return self._list_children(self.root_folder_id)
+
+    def ensure_application_directory(self):
+        """Create the standard application-artifact directory when missing."""
+        return self._ensure_folder(self.root_folder_id, self.application_root_path)
+
+    def create_google_doc(self, name):
+        """Create a native Google Doc directly inside the configured directory."""
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError('Google Doc name must be nonempty')
+        return self._create_metadata({
+            'name': name.strip(), 'mimeType': GOOGLE_DOC_MIME,
+            'parents': [self.root_folder_id],
+        })
+
     def save_path(self, path, content, mime_type=None, idempotency_key=None):
         normalized = normalize_file_path(path)
         parts = normalized.split("/")
@@ -172,7 +297,14 @@ class GoogleDriveArtifactStore:
                                          mime_type or mimetypes.guess_type(filename)[0] or 'application/octet-stream')
         return self._save_in_folder(parent_id, filename, content, mime_type, app_properties)
 
-    def read_path(self, path):
+    def stat_id(self, file_id):
+        """File metadata for one Drive id. This does not download the file."""
+        quoted = urllib.parse.quote(str(file_id), safe="")
+        url = "https://www.googleapis.com/drive/v3/files/{}?fields=id,name,mimeType".format(quoted)
+        return self._request("GET", url)
+
+    def stat_path(self, path):
+        """File metadata for a path under the Drive root. A missing file raises KeyError."""
         normalized = normalize_file_path(path)
         parts = normalized.split("/")
         parent_id = self.root_folder_id
@@ -184,6 +316,10 @@ class GoogleDriveArtifactStore:
         file = self._find_child(parent_id, parts[-1])
         if not file:
             raise KeyError(normalized)
+        return file
+
+    def read_path(self, path):
+        file = self.stat_path(path)
         return {"file": file, "content": self.read(file["id"])}
 
     def _save_in_folder(self, folder_id, filename, content, mime_type=None, app_properties=None):
@@ -205,8 +341,6 @@ class GoogleDriveArtifactStore:
 
     def read(self, file_id):
         url = "https://www.googleapis.com/drive/v3/files/{}?alt=media".format(file_id)
-        request = urllib.request.Request(url, method="GET")
-        request.add_header("Authorization", "Bearer " + access_token_value(self.access_token))
-        with urllib.request.urlopen(request, timeout=self.timeout) as response:
-            return response.read()
+        headers = {"Authorization": "Bearer " + access_token_value(self.access_token)}
+        return self._exchange("GET", url, None, headers)
 

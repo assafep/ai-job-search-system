@@ -4,7 +4,7 @@ import hmac
 import os
 from fastapi import FastAPI,Request,HTTPException
 from fastapi.responses import JSONResponse
-from gdtq import service
+from ajss.worker import service
 
 app=FastAPI(title="AJSS MCP",docs_url=None,redoc_url=None,openapi_url=None)
 VERSION="2025-06-18"
@@ -21,7 +21,7 @@ TOOLS=[
      "inputSchema":{"type":"object","properties":{"item_id":{"type":"string","minLength":1}},
                     "required":["item_id"],"additionalProperties":False}},
 ]
-WRITE_TOOL={"name":"dispatch_once","description":"Process at most one GDTQ item synchronously; requires explicit deployment opt-in and Google credentials.",
+WRITE_TOOL={"name":"dispatch_once","description":"Process at most one queue item synchronously; requires explicit deployment opt-in and Google credentials.",
  "inputSchema":{"type":"object","properties":{},"additionalProperties":False}}
 
 def tools_available():
@@ -59,7 +59,7 @@ def rpc_response(body):
     if method=="initialize":
         return {"jsonrpc":"2.0","id":req_id,"result":{
             "protocolVersion":VERSION,"capabilities":{"tools":{"listChanged":False}},
-            "serverInfo":{"name":"ajss-gdtq","version":"0.1.0"}}}
+            "serverInfo":{"name":"ajss","version":"0.1.0"}}}
     if method=="ping":
         return {"jsonrpc":"2.0","id":req_id,"result":{}}
     if method=="tools/list":
@@ -83,7 +83,7 @@ def rpc_response(body):
 @app.get("/api/health")
 @app.get("/health")
 def health():
-    return {"service":"ajss-gdtq","status":"alive","database_configured":bool(os.getenv("DATABASE_URL") or os.getenv("AJSS_DATABASE_URL")),"dispatch_enabled":os.getenv("AJSS_ENABLE_DISPATCH")=="1"}
+    return {"service":"ajss","status":"alive","database_configured":bool(os.getenv("DATABASE_URL") or os.getenv("AJSS_DATABASE_URL")),"dispatch_enabled":os.getenv("AJSS_ENABLE_DISPATCH")=="1"}
 
 @app.post("/api/index/mcp")
 @app.post("/api/mcp")

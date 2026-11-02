@@ -4,7 +4,7 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 from api.index import app,rpc_response,tools_available
-from gdtq.postgres_index import historical_keys,canonical_legacy_url
+from ajss.queue.postgres import historical_keys,canonical_legacy_url
 
 def test_init_and_tools_available_by_default(monkeypatch):
     monkeypatch.delenv("AJSS_ENABLE_DISPATCH",raising=False)

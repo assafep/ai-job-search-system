@@ -9,7 +9,13 @@ keys, 22 completed snapshots, 46 applications without any posting key.
 All are terminal Rejected/Invalidated. Rebuilt identities use both exact
 legacy URL and `lower(trim(company)) || ' / ' || lower(trim(role))`.
 
-Apply `001_neon_index.sql` **only to a temporary test branch first** with a
+The onboarding wizard creates the empty queue tables the runtime queries
+(`gdtq_identities`, `gdtq_items`, `gdtq_checkpoints`, `gdtq_event_log`) and an
+empty `posting_keys` table when that legacy table is absent. It does not run
+the inserts in `001_neon_index.sql`, it does not read or write `applications`,
+and it does not modify an existing `posting_keys` table. The setup check fails
+when any of those tables, or a column the runtime reads, is missing. Apply
+`001_neon_index.sql` **only to a temporary test branch first** with a
 role authorized to create tables in schema `public`. Run the read-only
 queries in `002_verify.sql`, confirm zero missing applications and zero
 lost legacy keys, and re-run the migration to prove idempotency. Only then

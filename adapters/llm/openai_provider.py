@@ -1,13 +1,16 @@
-"""Small OpenAI Responses API adapter for stateless stage agents.
+"""OpenAI-compatible chat adapter for stateless stage agents.
 
-The adapter deliberately receives only prompt text and serialized context. It
-does not receive persistence clients or any other external-system handles.
+The adapter receives prompt text and serialized context. It does not receive
+persistence clients or any other external-system handles. The provider name
+and base URL come from adapters.llm.providers.
 """
 
 import json
 import os
 import urllib.error
 import urllib.request
+
+from adapters.llm.providers import resolve_llm
 
 
 def _safe_error_detail(detail, secret):
@@ -17,20 +20,65 @@ def _safe_error_detail(detail, secret):
     return detail
 
 
+def _message_text(result):
+    choices = result.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        return ""
+    message = choices[0].get("message")
+    if not isinstance(message, dict):
+        return ""
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                parts.append(item["text"])
+        return "".join(parts)
+    return ""
+
+
+def _json_object(text):
+    body = text.strip()
+    if body.startswith("```"):
+        lines = body.splitlines()[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        body = "\n".join(lines).strip()
+    try:
+        value = json.loads(body)
+    except json.JSONDecodeError as error:
+        raise RuntimeError("Model response was not valid JSON: {}".format(error)) from error
+    if not isinstance(value, dict):
+        raise RuntimeError("Model response was not a JSON object")
+    return value
+
+
 class OpenAIProvider:
-    """Callable-compatible provider backed by the OpenAI Responses API."""
+    """Callable-compatible provider backed by chat completions."""
 
     def __init__(self, api_key=None, model=None, endpoint=None, opener=None):
-        self.api_key = api_key or os.environ.get("OPENAI_API_KEY")
-        self.model = model or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
-        self.endpoint = endpoint or os.environ.get(
-            "OPENAI_RESPONSES_URL", "https://api.openai.com/v1/responses"
-        )
+        self.settings = resolve_llm(os.environ, api_key=api_key, model=model, endpoint=endpoint)
+        self.api_key = self.settings.api_key
+        self.model = self.settings.model
+        self.endpoint = self.settings.endpoint
+        self.key_required = self.settings.key_required
         self.opener = opener or urllib.request.urlopen
 
+    @property
+    def configured(self):
+        return self.settings.configured
+
     def generate(self, prompt, context):
-        if not self.api_key:
-            raise RuntimeError("OPENAI_API_KEY is not configured")
+        if not self.endpoint:
+            raise RuntimeError(
+                "Set AJSS_LLM_PROVIDER to grok, openai, anthropic, gemini, or an http(s) base URL"
+            )
+        if self.key_required and not self.api_key:
+            raise RuntimeError("Set AJSS_LLM_API_KEY")
+        if not self.model:
+            raise RuntimeError("Set AJSS_LLM_MODEL to the model served at " + self.endpoint)
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("prompt must be a non-empty string")
         if not isinstance(context, dict):
@@ -42,15 +90,17 @@ class OpenAIProvider:
         )
         payload = {
             "model": self.model,
-            "input": input_text,
-            "text": {"format": {"type": "json_object"}},
+            "messages": [{"role": "user", "content": input_text}],
         }
+        if self.settings.json_object:
+            payload["response_format"] = {"type": "json_object"}
         request = urllib.request.Request(
             self.endpoint,
             method="POST",
             data=json.dumps(payload).encode("utf-8"),
         )
-        request.add_header("Authorization", "Bearer " + self.api_key)
+        if self.api_key:
+            request.add_header("Authorization", "Bearer " + self.api_key)
         request.add_header("Content-Type", "application/json")
         request.add_header("Accept", "application/json")
         try:
@@ -58,26 +108,14 @@ class OpenAIProvider:
                 result = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as error:
             detail = error.read().decode("utf-8", "replace")
-            raise RuntimeError("OpenAI Responses API returned {}: {}".format(
-                error.code, _safe_error_detail(detail, self.api_key)))
+            raise RuntimeError("Model API returned {}: {}".format(
+                error.code, _safe_error_detail(detail, self.api_key))) from error
         except urllib.error.URLError as error:
-            raise RuntimeError("OpenAI Responses API unavailable: {}".format(error.reason))
-
-        output_text = result.get("output_text")
+            raise RuntimeError("Model API unavailable: {}".format(error.reason)) from error
+        output_text = _message_text(result)
         if not output_text:
-            for item in result.get("output", []):
-                for content in item.get("content", []):
-                    if content.get("type") == "output_text" and content.get("text"):
-                        output_text = content["text"]
-                        break
-                if output_text:
-                    break
-        if not output_text:
-            raise RuntimeError("OpenAI response did not contain output text")
-        try:
-            return json.loads(output_text)
-        except json.JSONDecodeError as error:
-            raise RuntimeError("OpenAI response was not valid JSON: {}".format(error))
+            raise RuntimeError("Model response did not contain message text")
+        return _json_object(output_text)
 
 
 provider = OpenAIProvider()

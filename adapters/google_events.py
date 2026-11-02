@@ -2,6 +2,7 @@
 
 import base64
 import json
+import os
 import re
 import urllib.error
 import urllib.parse
@@ -41,23 +42,43 @@ def body_text(payload):
     return '\n'.join(plain or html)[:30000]
 
 
+_ENV_REFRESH = {
+    'gmail': 'GOOGLE_GMAIL_REFRESH_TOKEN',
+    'calendar': 'GOOGLE_CALENDAR_REFRESH_TOKEN',
+}
+
+
+def saved_scope_access(kind, path=None, opener=None):
+    """Refresh a read-only Gmail or Calendar token, or return None."""
+    from pathlib import Path
+    from adapters.google.auth import GoogleAccessToken
+    token_path = path or Path(__file__).resolve().parents[1] / '.onboarding' / (kind + '-user.json')
+    saved = None
+    if token_path.is_file():
+        try:
+            saved = json.loads(token_path.read_text())
+        except (OSError, ValueError):
+            saved = None
+    if isinstance(saved, dict) and SCOPES[kind] in str(saved.get('scope') or '').split():
+        fields = [saved.get('refresh_token'), saved.get('client_id'), saved.get('client_secret')]
+        if all(fields):
+            return GoogleAccessToken(*fields, opener=opener)
+    refresh = (os.environ.get(_ENV_REFRESH[kind]) or '').strip()
+    client_id = (os.environ.get('GOOGLE_CLIENT_ID') or '').strip()
+    client_secret = (os.environ.get('GOOGLE_CLIENT_SECRET') or '').strip()
+    if refresh and client_id and client_secret:
+        return GoogleAccessToken(refresh, client_id, client_secret, opener=opener)
+    return None
+
+
 def saved_gmail_access(path=None, opener=None):
     """Refresh the onboarding Gmail token, or return None."""
-    from pathlib import Path
-    token_path = path or Path(__file__).resolve().parents[1] / '.onboarding' / 'gmail-user.json'
-    if not token_path.is_file():
-        return None
-    try:
-        saved = json.loads(token_path.read_text())
-    except (OSError, ValueError):
-        return None
-    if SCOPES['gmail'] not in (saved.get('scope') or '').split():
-        return None
-    fields = [saved.get('refresh_token'), saved.get('client_id'), saved.get('client_secret')]
-    if not all(fields):
-        return None
-    from adapters.google.auth import GoogleAccessToken
-    return GoogleAccessToken(*fields, opener=opener)
+    return saved_scope_access('gmail', path, opener)
+
+
+def saved_calendar_access(path=None, opener=None):
+    """Refresh the onboarding Calendar token, or return None."""
+    return saved_scope_access('calendar', path, opener)
 
 
 class GoogleEventSource:
@@ -69,8 +90,8 @@ class GoogleEventSource:
 
     def _get(self, source, path, params=None):
         token_source = self.access_token
-        if source == 'gmail' and not self._explicit_token:
-            dedicated = saved_gmail_access(opener=self.opener)
+        if source in SCOPES and not self._explicit_token:
+            dedicated = saved_scope_access(source, opener=self.opener)
             if dedicated is not None:
                 token_source = dedicated
         token = access_token_value(token_source)

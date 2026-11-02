@@ -1,6 +1,6 @@
 # AJSS architecture diagrams
 
-These diagrams describe the AJSS system and its GDTQ tab-queue runtime. They are maintained as Mermaid source and rendered directly by GitHub. The executable source of truth is the code under `gdtq/` and `adapters/`, plus `config/gdtq-routing.json` and `schemas/gdtq/`; diagrams do not define runtime behavior.
+These diagrams describe the AJSS system and its GDTQ tab-queue runtime. They are maintained as Mermaid source and rendered directly by GitHub. The executable source of truth is the code under `ajss/` and `adapters/`, plus `config/gdtq-routing.json` and `schemas/`; diagrams do not define runtime behavior.
 
 ## 1. System component architecture
 
@@ -228,4 +228,4 @@ The deployed variant has a **stateless remote MCP/API gateway** on Vercel that c
 
 ## Maintenance rule
 
-When changing `gdtq/queue.py`, `dispatch.py`, `downstream.py`, `retention.py`, `config/gdtq-routing.json`, or deployment boundaries, update the relevant diagram in the same pull request. Keep diagrams architecture-level and avoid copying state policy into a second authoritative configuration.
+When changing `ajss/queue/tabs.py`, `dispatch.py`, `downstream.py`, `retention.py`, `config/gdtq-routing.json`, or deployment boundaries, update the relevant diagram in the same pull request. Keep diagrams architecture-level and avoid copying state policy into a second authoritative configuration.

@@ -1,0 +1,13 @@
+name: AJSS tests
+on:
+  push:
+  pull_request:
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker compose --profile dev build ajss-dev
+      - run: docker compose --profile dev run --rm ajss-dev python -m compileall -q ajss adapters
+      - run: docker compose --profile dev run --rm ajss-dev python -m ajss.cli doctor
+      - run: docker compose --profile dev run --rm ajss-dev python -m pytest -q tests/

@@ -8,6 +8,6 @@ This package is the standalone Google boundary. No REST/MCP Application Service 
 - `journal.py`: pure journal parsing and old event reader compatibility within active Docs tabs.
 - `paths.py`: root-relative Drive path validation.
 
-AJSS's **Google Doc Tab Queue** abstraction is implemented in `gdtq.queue`, not here. Queue movement is `A → A-onFlight → B`; the document and its nested tabs are the live application state. Only the orchestrator invokes queue mutations. Never expose access tokens or profile content in logs.
+AJSS's **Google Doc Tab Queue** abstraction is implemented in `ajss.queue`, not here. Queue movement is `A → A-onFlight → B`; the document and its nested tabs are the live application state. Only the orchestrator invokes queue mutations. Never expose access tokens or profile content in logs.
 
 Gmail and Calendar reader implementations are in `adapters/google_events.py` and require appropriate OAuth scopes; Gmail sends are opt-in and draft-only by default.

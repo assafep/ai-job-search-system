@@ -8,7 +8,20 @@
     "schema_version": {"type": "integer", "minimum": 1},
     "updated_on": {"type": "string"},
     "source_resume": {"type": "object"},
-    "personal": {"type": "object"},
+    "personal": {
+      "type": "object",
+      "properties": {
+        "name": {"type": "string"},
+        "email": {"type": "string"},
+        "phone": {"type": "string"},
+        "linkedin_url": {"type": "string"},
+        "location": {"type": "string"},
+        "calendly_url": {
+          "type": "string",
+          "description": "https://calendly.com/… link supplied during onboarding. Cover letters include it. The résumé extractor does not invent this value."
+        }
+      }
+    },
     "professional": {"type": "object"},
     "skills": {"type": "object"},
     "employment": {"type": "array"},
